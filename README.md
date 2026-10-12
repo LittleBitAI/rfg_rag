@@ -39,10 +39,12 @@ jupyter lab                 # 커널: 위 .venv (Python 3.10)
 - 모델을 처음 받을 때 KURE-v1 약 2.3GB와 Qwen2.5-VL-3B 약 7.5GB를 내려받습니다. C 드라이브가 부족하면 `0-1` 셀의 `HF_CACHE_DIR`를 지정하세요.
 
 ### 🪙 토큰 절약 (02 · 03 의 `0-2` 셀)
+공용 키로는 `gpt-5-mini` 와 `gpt-5-nano` 만 쓸 수 있습니다.
+
 | 설정 | 효과 |
 |---|---|
-| `LLM_MODEL = "gpt-6-luna"` + `REASONING_EFFORT = "none"` | 추론 토큰 0, 1M 토큰당 입력 $0.10 · 출력 $0.50 (gpt-5-mini 는 $0.25 · $2.00) |
-| `REASONING_EFFORT` = none · minimal · low · medium · high · xhigh · max | 낮을수록 추론 토큰 감소. 모델이 지원하지 않는 값은 가장 가까운 낮은 값으로 자동 조정 (gpt-5-mini: none→minimal, xhigh/max→high) |
+| `LLM_MODEL = "gpt-5-nano"` + `REASONING_EFFORT = "minimal"` | 추론 토큰 최소, 1M 토큰당 입력 $0.05 · 출력 $0.40 (gpt-5-mini 는 $0.25 · $2.00) |
+| `REASONING_EFFORT` = minimal · low · medium · high | 낮을수록 추론 토큰 감소 |
 | `JUDGE_MODEL` · `JUDGE_REASONING_EFFORT` | RAGAS 심판(평가 토큰의 대부분)의 모델·추론 강도 |
 | `EVAL_MODE = "free"` | 골든 데이터셋(`eval/golden_set.jsonl`, 02 의 `0-5`)으로 **토큰 0** 평가 — Key Fact(답변/근거) · Semantic Sim |
 | 03 `LIVE_RAGAS = False` | 챗봇 답변마다 RAGAS 심판 호출 안 함 |

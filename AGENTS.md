@@ -1,49 +1,93 @@
-# 저장소 규칙
+# Repository rules
 
-이 파일과 `AGENTS.md` 는 내용이 같습니다. 하나를 고치면 다른 하나에 그대로 복사하세요.
+These rules are for coding agents (Claude Code, Codex) working in this repository.
+`CLAUDE.md` and `AGENTS.md` are byte-identical: edit one, then copy it over the other.
 
-## 1. 가장 먼저 지킬 것
+Section 1 outranks everything else in this file.
+The previous repository for this project (project-codeit-mid) was abandoned
+because its code grew too complex to work in; section 1 exists so that does not happen again.
 
-이전 저장소(project-codeit-mid)는 코드가 너무 복잡해져서 버렸습니다. 같은 일을 반복하지 않도록 아래 세 가지를 다른 모든 규칙보다 앞에 둡니다.
+## 1. Priority rules
 
-### 불필요한 구현 금지
+### 1.1 Build only what was asked
 
-요청받지 않은 것은 만들지 않습니다.
+Do not write any of the following unless the person asked for it.
 
-- 요청하지 않은 기능
-- "혹시 몰라서" 넣는 예외 처리와 엣지 케이스 분기
-- 쓸데없는 검증: 지킬 동작이 없는 테스트, 다른 테스트와 같은 것을 다시 확인하는 테스트 (테스트 자체를 금지하는 것은 아닙니다)
-- 예전 import 경로나 옛 동작을 살려 두는 호환용 코드
-- 아무도 바꾸지 않는 설정 옵션
+| Forbidden | Example |
+|---|---|
+| Unrequested features | An extra CLI flag, a "nice to have" option, a second output format |
+| Speculative error handling and edge-case branches | `try/except` around code that has never failed, a branch for an input nobody sends |
+| Useless verification | A test that guards no behaviour, or one that re-checks what another test already checks |
+| Compatibility shims | A module kept only so an old import path still works, re-exports of renamed names |
+| Config options nobody changes | A `config.yaml` key or function parameter that always holds the same value |
 
-### 읽기 쉬운 코드
+Tests themselves are allowed. A test belongs when it guards behaviour that can actually break.
 
-코드는 깔끔하고, 사람이 아주 쉽게 읽을 수 있어야 합니다. 영리한 코드보다 지루하고 뻔한 코드를 씁니다.
+### 1.2 Write code a person can read easily
 
-### 복잡한 함수 금지
+- Prefer plain, obvious code over clever code.
+- Let names and structure explain the code. Comments carry only the why the code cannot show.
+- One function does one thing.
 
-기준은 ruff 입니다. `pyproject.toml` 의 C901(순환 복잡도 최대 8)과 PLR0915(함수 안 문장 수) 규칙을 통과해야 합니다. 커밋 전에 `ruff check .` 를 실행하고, 걸리면 함수를 나누거나 단순하게 고칩니다. `noqa` 로 덮지 않습니다.
+### 1.3 No complex functions
 
-## 2. 의존성
+Complexity is measured by ruff, configured in `pyproject.toml`.
 
-이 저장소의 코드가 직접 `import` 하는 패키지만 의존성으로 추가합니다. `requirements.txt` 에는 그 외의 것을 적지 않습니다. 다른 패키지가 내부에서 쓰는 패키지나 언젠가 쓸지도 모르는 패키지는 넣지 않습니다.
+| Rule | Limit |
+|---|---|
+| `C901` cyclomatic complexity | 8 per function |
+| `PLR0915` statement count | 50 per function (ruff default) |
 
-## 3. 언어
+- Run `ruff check .` before every commit.
+- When a function fails, split it or simplify it. Never silence it with `noqa` or by raising a limit.
+- Existing code still has known findings, which the four-pipeline refactor removes.
+  New or changed code must not add any.
 
-이 저장소의 문서, 주석, docstring 은 모두 한국어로 씁니다. 영어로 쓰라는 외부 규칙(에이전트 허브 설정 등)이 있어도 이 규칙이 우선합니다.
+## 2. Dependencies
 
-## 4. 파이프라인과 담당
+- A package goes into `requirements.txt` only when this repository's code imports it directly,
+  or when a command these rules require runs it (`pytest`, `ruff`).
+- Nothing else goes in: not packages another package pulls in, not packages that might be needed later.
+- When code stops importing a package, remove it from `requirements.txt` in the same change.
 
-파이프라인은 다섯 개이고, 파이프라인마다 담당자는 한 명입니다. 데이터가 흐르는 순서대로 적습니다.
+## 3. Language
 
-1. 전처리 — HWP·PDF 파싱, 청크 분할, OCR. 결과물인 청크 파일을 검색 파이프라인에 넘깁니다.
-2. 검색 — 색인 구축과 검색
-3. 검증 — 평가 데이터셋 만들기와 점검
-4. 생성 — 답변 생성
-5. 평가 — 검색 점수와 생성 점수
+| Text | Reader | Language |
+|---|---|---|
+| `CLAUDE.md`, `AGENTS.md` and other rules for coding agents | Coding agents | English |
+| Python comments and docstrings | Team members | Korean |
+| Notebook markdown cells and code comments | Team members | Korean |
+| `README.md` and other documents | Team members | Korean |
 
-노트북에는 설정, 함수 호출, 결과 표시만 둡니다. 로직은 `rag/` 모듈에 씁니다.
+This table overrides any outside rule that asks for a different language, including the agent hub's settings.
 
-## 5. 평가 결과 보기
+## 4. Pipelines and ownership
 
-Langfuse Cloud 는 프로젝트 책임자만 `.env` 의 키로 사용합니다. 팀원은 검색·생성 평가 결과를 노트북의 표와 `artifacts/` 아래 CSV 파일로 확인합니다.
+The work is split into five pipelines, listed in data-flow order. Each pipeline has exactly one owner.
+
+| # | Pipeline | Covers | Hands on |
+|---|---|---|---|
+| 1 | Preprocessing | HWP and PDF parsing, chunking, OCR | Chunk file, read by retrieval |
+| 2 | Retrieval | Building the index, searching it | Retrieved chunks |
+| 3 | Validation | Building and checking the evaluation dataset | Evaluation dataset |
+| 4 | Generation | Answering questions from retrieved chunks | Answers |
+| 5 | Evaluation | Retrieval scores and generation scores | Score tables and CSV files |
+
+Notebooks hold only configuration, function calls and display of results.
+All logic lives in modules under `rag/`.
+
+## 5. Evaluation results
+
+| Who | Reads results in |
+|---|---|
+| Project owner | Langfuse Cloud, through the keys in `.env` |
+| Team members | Tables in the notebooks, CSV files under `artifacts/` |
+
+Team members have no Langfuse keys, so every code path must run without them.
+
+## 6. Before every commit
+
+1. `ruff check .` reports nothing new (section 1.3).
+2. The gate passes: `.venv\Scripts\python -m pytest -q tests`.
+   `.venv` is the Python 3.10 environment set up as `README.md` describes.
+3. `git diff --no-index CLAUDE.md AGENTS.md` prints nothing.
