@@ -41,7 +41,7 @@ class HybridIndex:
         self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"))
         self.rcfg = cfg["retrieval"]
 
-    @observe(as_type="retriever")
+    @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str) -> list[dict]:
         """질문 → 상위 top_k 청크(score = 하이브리드 점수). 두 기관 이상을 비교하는 질문이면 기관별로 찾아 번갈아 섞는다"""
         route = self.router.route(question)

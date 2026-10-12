@@ -3,15 +3,18 @@
   Generation   답이 질문에 맞고 핵심을 담았나    answer_relevancy · 답변 속 핵심 사실 비율
   Grounding    답이 검색 근거 안에서만 나왔나    faithfulness
   End-to-End   최종 답이 정답과 맞나, 얼마 들었나  factual_correctness · 지연 시간 · 토큰 · 예상 비용
+.env 에 Langfuse 키가 있으면 질문별 점수를 04 생성의 추적(answer-question)에 붙인다.
 담당: 평가."""
 from __future__ import annotations
 
+import math
 import os
 import re
 from pathlib import Path
 
 import pandas as pd
 from langchain_openai import ChatOpenAI
+from langfuse import get_client
 from ragas import EvaluationDataset, evaluate
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper
@@ -47,6 +50,18 @@ def _key_fact_ratio(facts: list[str], text: str) -> float:
     return sum(any(_norm(alt) in hay for alt in str(f).split("|")) for f in facts) / len(facts)
 
 
+def _send_scores(rows: list[dict], scores: list[dict]):
+    """질문별 점수를 그 질문의 Langfuse 추적에 붙인다. trace_id 가 없으면(키 없이 생성한 답) 보내지 않는다"""
+    langfuse = get_client()
+    for r, s in zip(rows, scores):
+        if not r["trace_id"]:
+            continue
+        for name, value in s.items():
+            if not math.isnan(value):
+                langfuse.create_score(trace_id=r["trace_id"], name=name, value=value, data_type="NUMERIC")
+    langfuse.flush()
+
+
 def _table(rows: list[dict], scores: list[dict]) -> pd.DataFrame:
     """질문별 표 + 맨 아래 '평균' 행"""
     df = pd.DataFrame([{"id": r["id"], "question": r["question"], **s} for r, s in zip(rows, scores)])
@@ -61,6 +76,7 @@ def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
     scores = [{"context_precision": s["llm_context_precision_with_reference"], "context_recall": s["context_recall"],
                "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))}
               for r, s in zip(rows, ragas)]
+    _send_scores(rows, scores)
     return _table(rows, scores)
 
 
@@ -70,6 +86,7 @@ def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
     ragas = _ragas(rows, [ResponseRelevancy()], cfg, embeddings=Embedder(cfg["embedding"]))
     scores = [{"answer_relevancy": s["answer_relevancy"], "key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])}
               for r, s in zip(rows, ragas)]
+    _send_scores(rows, scores)
     return _table(rows, scores)
 
 
@@ -77,13 +94,17 @@ def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Grounding: 답의 주장들이 검색한 청크로 뒷받침되나 (낮으면 환각)"""
     rows = read_jsonl(answers_path)
     ragas = _ragas(rows, [Faithfulness()], cfg)
-    return _table(rows, [{"faithfulness": s["faithfulness"]} for s in ragas])
+    scores = [{"faithfulness": s["faithfulness"]} for s in ragas]
+    _send_scores(rows, scores)
+    return _table(rows, scores)
 
 
 def evaluate_end_to_end(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """End-to-End: 최종 답이 정답과 사실이 맞는지 + 질문당 지연 시간·토큰·예상 비용(USD)"""
     rows = read_jsonl(answers_path)
     ragas = _ragas(rows, [FactualCorrectness()], cfg)
+    # 지연 시간 · 토큰 · 비용은 추적에 이미 있으므로 점수로는 factual_correctness 만 보낸다
+    _send_scores(rows, [{"factual_correctness": s["factual_correctness(mode=f1)"]} for s in ragas])
     usd_in, usd_out = cfg["llm"]["usd_per_1m_tokens"]
     scores = [{"factual_correctness": s["factual_correctness(mode=f1)"], "latency_s": r["latency_s"],
                "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"],

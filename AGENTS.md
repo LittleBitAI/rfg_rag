@@ -104,7 +104,7 @@ so a bad answer can be traced to where it went wrong.
 
 | Who | Reads results in |
 |---|---|
-| Project owner | The same tables, plus retrieval and generation traces in Langfuse Cloud through the keys in `.env` |
+| Project owner | The same tables, plus one Langfuse Cloud trace per question (`answer-question` holding `retrieve-context` and `generate-answer`) with the evaluation scores attached, through the keys in `.env` |
 | Team members | Tables in `05_evaluation.ipynb`, CSV files under `artifacts/` |
 
 Team members have no Langfuse keys, so every code path must run without them.

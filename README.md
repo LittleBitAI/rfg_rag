@@ -21,10 +21,10 @@ python -m pip install -r requirements.txt
 
 ```dotenv
 OPENAI_API_KEY=sk-...
-# (선택 · 프로젝트 책임자만) 검색 · 생성 추적을 Langfuse Cloud 로 보냄. 없으면 보내지 않고 똑같이 동작
+# (선택 · 프로젝트 책임자만) 검색 · 생성 추적과 평가 점수를 Langfuse Cloud 로 보냄. 없으면 보내지 않고 똑같이 동작
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=https://cloud.langfuse.com
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
 RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴더도 가능).
@@ -56,7 +56,7 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 
 - Retrieval 이 낮으면 검색 문제, Retrieval 은 높은데 Grounding 이 낮으면 환각, 둘 다 높은데 End-to-End 가 낮으면 정답 · 질문을 다시 볼 차례입니다.
 - 심판 LLM 은 `config.yaml` 의 `evaluation.judge_model`(`gpt-5-mini`)입니다. 평가할 때마다 OpenAI 비용이 듭니다.
-- 프로젝트 책임자는 Langfuse Cloud 에서 검색 · 생성 추적(질문 · 검색 청크 · 답)을 봅니다. 점수는 노트북 표와 CSV 에만 있습니다.
+- 프로젝트 책임자는 Langfuse Cloud 에서 질문마다 추적 하나(`answer-question` 안에 검색 `retrieve-context` · 생성 `generate-answer` — 모델 · 토큰 · 비용 포함)를 보고, 05 의 질문별 점수도 그 추적에 붙어 있습니다. 키가 없는 팀원은 노트북 표와 CSV 로 봅니다.
 
 ### 평가 데이터셋 (03 검증)
 - `eval/golden_set.jsonl`: 직접 만든 질문 · 정답(`reference`) · 핵심 사실(`key_facts`).
