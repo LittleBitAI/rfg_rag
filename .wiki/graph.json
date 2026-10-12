@@ -22,6 +22,16 @@
    "a": "CLAUDE.md",
    "b": "README.md",
    "kind": "link"
+  },
+  {
+   "a": "README.md",
+   "b": "AGENTS.md",
+   "kind": "link"
+  },
+  {
+   "a": "README.md",
+   "b": "CLAUDE.md",
+   "kind": "link"
   }
  ],
  "orphans": [],

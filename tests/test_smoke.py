@@ -7,7 +7,7 @@ import pytest
 
 import rag
 
-MODULES = sorted(m.name for m in pkgutil.iter_modules(rag.__path__, "rag."))
+MODULES = sorted(m.name for m in pkgutil.walk_packages(rag.__path__, "rag."))
 
 
 # requirements.txt 가 설치된 .venv 에서 돈다. 없는 모듈은 어떤 것이든 실패다.
