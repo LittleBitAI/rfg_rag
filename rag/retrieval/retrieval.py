@@ -58,8 +58,10 @@ class HybridIndex:
 
     def _search(self, question: str, top_k: int, doc_ids: set | None) -> list[dict]:
         allowed = np.isin(self.doc_ids, list(doc_ids)) if doc_ids else np.ones(len(self.chunks), dtype=bool)
-        dense, sparse = _minmax(self._dense(question, allowed)), _minmax(self._sparse(question, allowed))
         w = float(self.rcfg["dense_weight"])
+        # 가중치 0 인 쪽은 후보도 내지 않는다 — 내면 점수 0 짜리 무관한 청크가 결과에 섞인다
+        dense = _minmax(self._dense(question, allowed)) if w > 0 else {}
+        sparse = _minmax(self._sparse(question, allowed)) if w < 1 else {}
         fused = {i: w * dense.get(i, 0.0) + (1 - w) * sparse.get(i, 0.0) for i in dense.keys() | sparse.keys()}
         best = sorted(fused, key=fused.get, reverse=True)[:top_k]
         return [{**self.chunks[i], "score": round(fused[i], 4)} for i in best]

@@ -163,10 +163,11 @@ def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:
     kept, report, questions, convs = [], [], set(), set()
     for it in items:
         problem = _problem(it, questions, convs)
-        questions.add(it["question"])
         if it["conv"]:
             convs.add(it["conv"])
         report.append({"id": it["id"], "질문": it["question"], "점검": problem or "통과"})
         if not problem:
+            # 통과한 항목만 질문을 차지한다 — 정답 없는 골든 항목이 같은 질문의 온전한 yaml 항목을 막지 않게
+            questions.add(it["question"])
             kept.append({k: it[k] for k in ("id", "question", "reference", "key_facts")})
     return kept, pd.DataFrame(report)
