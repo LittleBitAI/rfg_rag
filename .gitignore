@@ -1,4 +1,5 @@
 .env
+.venv/
 artifacts/
 data/
 hf_cache/

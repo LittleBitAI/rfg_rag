@@ -4,8 +4,7 @@
   - PyTorch 는 반드시 CUDA 12.8+ 빌드(cu128 이상). cu124 이하에는 sm_120 커널이 없어 'no kernel image' 오류
   - 데스크톱은 화면·브라우저가 VRAM 을 1~2GB 쓰므로 여유를 둠
   - 임베딩(KURE-v1 fp16 ≈ 1.1GB) batch 32 / 파인튜닝 bf16 논리배치 64 · mini 8 (AdamW 상태 포함 ≈ 11~12GB)
-  - VLM(Qwen2.5-VL-3B bf16 ≈ 7.5GB) 은 파싱 때만 올리고 해제, 이미지 해상도 상한 768·28·28
-■ 원격 L4 24GB : 임베딩 batch 64, mini 16, 해상도 1024·28·28
+■ 원격 L4 24GB : 임베딩 batch 64, mini 16
 ■ Windows      : DataLoader worker 0 (노트북+spawn 이슈 회피), expandable_segments 미지원이라 설정 안 함
 """
 from __future__ import annotations
@@ -145,34 +144,28 @@ def profile_name(info: dict) -> str:
 
 def profile_overrides(info: dict) -> dict:
     """감지 결과 → config 덮어쓰기 값 (dotted key → value)"""
-    vram, ram, cpus = info["vram_gb"], info["ram_gb"], info["cpus"]
+    vram, cpus = info["vram_gb"], info["cpus"]
     windows = info.get("os") == "Windows"
     usable = bool(info.get("gpu")) and info.get("kernel_ok") is not False
     o: dict = {}
     if not usable:
         o.update({"embedding.device": "cpu", "embedding.batch_size": 8, "embedding.fp16": False,
-                  "parsing.image_parser": None, "finetune.enabled": False})
+                  "finetune.enabled": False})
     elif vram >= 20:  # 원격 L4 24GB 등
         o.update({"embedding.device": "cuda", "embedding.batch_size": 64, "embedding.fp16": True,
                   "embedding.shard_every_batches": 10,
-                  "finetune.batch_size": 64, "finetune.mini_batch_size": 16,
-                  "parsing.image_parser": "hf-vlm", "parsing.vlm_max_pixels": 1024 * 28 * 28})
+                  "finetune.batch_size": 64, "finetune.mini_batch_size": 16})
     elif vram >= 14:  # 로컬 RTX 5070 Ti 16GB (데스크톱 화면 사용분 고려)
         o.update({"embedding.device": "cuda", "embedding.batch_size": 32, "embedding.fp16": True,
                   "embedding.shard_every_batches": 10,
                   "finetune.batch_size": 64, "finetune.mini_batch_size": 8,
-                  "finetune.gradient_checkpointing": False,
-                  "parsing.image_parser": "hf-vlm", "parsing.vlm_max_pixels": 768 * 28 * 28})
+                  "finetune.gradient_checkpointing": False})
     else:
         o.update({"embedding.device": "cuda", "embedding.batch_size": 16, "embedding.fp16": True,
                   "finetune.batch_size": 32, "finetune.mini_batch_size": 4,
-                  "finetune.gradient_checkpointing": True, "parsing.image_parser": None})
-    if usable:
-        o["parsing.vlm_model"] = "Qwen/Qwen2.5-VL-3B-Instruct"
+                  "finetune.gradient_checkpointing": True})
     o["finetune.dataloader_num_workers"] = 0 if windows else max(0, min(4, cpus - 2))
     o["qa_generation.max_workers"] = max(2, min(4, cpus))  # API 동시 요청 (rate limit 고려)
-    if ram and ram <= 16:
-        o["parsing.vlm_max_pixels"] = min(o.get("parsing.vlm_max_pixels", 1024 * 28 * 28), 1024 * 28 * 28)
     return o
 
 
