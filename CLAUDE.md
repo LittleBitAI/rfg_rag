@@ -40,13 +40,13 @@ Complexity is measured by ruff, configured in `pyproject.toml`.
 
 - Run `ruff check .` before every commit.
 - When a function fails, split it or simplify it. Never silence it with `noqa` or by raising a limit.
-- Existing code still has known findings, which the four-pipeline refactor removes.
-  New or changed code must not add any.
+- `ruff check .` reports nothing today; keep it that way.
 
 ## 2. Dependencies
 
 - A package goes into `requirements.txt` only when this repository's code imports it directly,
-  or when a command these rules require runs it (`pytest`, `ruff`).
+  or when a command these rules require runs it (`pytest`, `ruff`),
+  or when running the notebooks needs it (`ipykernel`), or as the `torch` CUDA build `sentence-transformers` runs on.
 - Nothing else goes in: not packages another package pulls in, not packages that might be needed later.
 - When code stops importing a package, remove it from `requirements.txt` in the same change.
 
@@ -71,20 +71,41 @@ The work is split into five pipelines, listed in data-flow order. Each pipeline 
 | 2 | Retrieval | Building the index, searching it | Retrieved chunks |
 | 3 | Validation | Building and checking the evaluation dataset | Evaluation dataset |
 | 4 | Generation | Answering questions from retrieved chunks | Answers |
-| 5 | Evaluation | Retrieval scores and generation scores | Score tables and CSV files |
+| 5 | Evaluation | Four evaluations of one answers file: Retrieval, Generation, Grounding, End-to-End | Four score tables and CSV files |
 
+| # | Notebook | Modules |
+|---|---|---|
+| 1 | `01_preprocessing.ipynb` | `rag/preprocessing/parsing.py`, `rag/preprocessing/chunking.py` |
+| 2 | `02_retrieval.ipynb` | `rag/retrieval/indexing.py`, `rag/retrieval/retrieval.py` |
+| 3 | `03_validation.ipynb` | `rag/validation/validation.py` |
+| 4 | `04_generation.ipynb` | `rag/generation/generation.py` |
+| 5 | `05_evaluation.ipynb` | `rag/evaluation/evaluation.py` |
+
+`rag/config.py` holds the shared config and `.env` loading.
+Each notebook reads the previous notebook's outputs from `artifacts/`.
 Notebooks hold only configuration, function calls and display of results.
 All logic lives in modules under `rag/`.
 
-Images in documents become text through a local OCR model (`rapidocr`, `tesseract`) or the OpenAI API (`llm`).
-Do not add a local VLM such as Qwen2.5-VL; the team decided against running one.
+Images in documents become text only through the OpenAI API (LangChain's `LLMImageBlobParser`),
+and only when `OCR = True` in `01_preprocessing.ipynb`; it is `False` by default.
+Do not add a local OCR model or a local VLM such as Qwen2.5-VL; the team decided against running one.
 
 ## 5. Evaluation results
 
+All four evaluations score the same answers file from `04_generation.ipynb`,
+so a bad answer can be traced to where it went wrong.
+
+| Evaluation | Judges | Metrics | CSV |
+|---|---|---|---|
+| Retrieval | Did search bring back what the answer needs | RAGAS context_precision, context_recall; key facts in retrieved chunks | `artifacts/retrieval.csv` |
+| Generation | Does the answer address the question and hold the key facts | RAGAS answer_relevancy; key facts in the answer | `artifacts/generation.csv` |
+| Grounding | Does the answer stay within the retrieved chunks | RAGAS faithfulness | `artifacts/grounding.csv` |
+| End-to-End | Is the final answer right, and what did it cost | RAGAS factual_correctness; latency, tokens, estimated cost | `artifacts/end_to_end.csv` |
+
 | Who | Reads results in |
 |---|---|
-| Project owner | Langfuse Cloud, through the keys in `.env` |
-| Team members | Tables in the notebooks, CSV files under `artifacts/` |
+| Project owner | The same tables, plus retrieval and generation traces in Langfuse Cloud through the keys in `.env` |
+| Team members | Tables in `05_evaluation.ipynb`, CSV files under `artifacts/` |
 
 Team members have no Langfuse keys, so every code path must run without them.
 

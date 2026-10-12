@@ -1,0 +1,148 @@
+"""① 전처리 — 청크 분할: 본문은 RecursiveCharacterTextSplitter(문서 단위 연결 + 페이지·섹션 추적), 표는 행 단위 분할(헤더 반복).
+담당: 전처리.  결과(artifacts/chunks.jsonl · docs.jsonl)를 02 검색과 03 검증이 읽는다."""
+from __future__ import annotations
+
+import bisect
+import re
+import statistics
+from collections import Counter
+from pathlib import Path
+
+import pandas as pd
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from ..config import write_jsonl
+
+# 앞에 올수록 우선 분할하는 구분자 (글머리 기호는 다음 청크의 시작에 남김), 마지막 "" 는 글자 단위 안전장치
+SEPARATORS = [
+    r"\n\s*\n",                                   # 문단
+    r"\n(?=\s*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ][.\s])",              # Ⅰ.
+    r"\n(?=\s*\d{1,2}\.\s)",                      # 1.
+    r"\n(?=\s*[가-하]\.\s)",                       # 가.
+    r"\n(?=\s*\(?\d{1,2}\)\s)",                   # 1)
+    r"\n(?=\s*[○◦❍●]|\s*ㅇ\s)",                   # ○
+    r"\n(?=\s*[□■❏◆◇▪])",                        # □
+    r"\n(?=\s*[-–•·]\s?)",                        # -
+    r"\n(?=\s*※)",                               # ※
+    r"\n",                                        # 줄바꿈
+    r"(?<=[다요함음임됨]\.)\s+|(?<=[.?!])\s+",       # 문장
+    r"\s+",                                       # 공백
+    "",
+]
+
+_HEADING = [  # (level, pattern, 최대 길이) — 짧은 줄만 제목으로 인정
+    (1, re.compile(r"^\s*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ][.\s]\s*\S"), 40),
+    (1, re.compile(r"^\s*제\s*\d+\s*[장편]\s*\S"), 40),
+    (2, re.compile(r"^\s*\d{1,2}\.\s+\S"), 30),
+    (3, re.compile(r"^\s*\d{1,2}\.\d{1,2}\.?\s+\S"), 35),
+    (4, re.compile(r"^\s*\d{1,2}\.\d{1,2}\.\d{1,2}\.?\s+\S"), 35),
+    (4, re.compile(r"^\s*[가-하]\.\s+\S"), 22),
+]
+
+
+def _heading_index(full: str) -> tuple[list[int], list[str]]:
+    """본문 전체에서 제목 줄 위치와 '상위 > 하위' 섹션 경로 계산"""
+    offs, paths, stack, pos = [], [], {}, 0
+    for ln in full.split("\n"):
+        t = ln.strip()
+        if t and not t.endswith(("다.", "함.", "음.", "함", "음")):
+            for lvl, pat, max_len in sorted(_HEADING, key=lambda x: -x[0]):  # 1.1.1 을 1. 보다 먼저 검사
+                if len(t) <= max_len and pat.match(t):
+                    stack = {k: v for k, v in stack.items() if k < lvl}
+                    stack[lvl] = t
+                    offs.append(pos)
+                    paths.append(" > ".join(stack[k] for k in sorted(stack)))
+                    break
+        pos += len(ln) + 1
+    return offs, paths
+
+
+def _split_table(md: str, size: int) -> list[str]:
+    """표를 size 글자 안쪽으로 행 단위 분할, 조각마다 헤더(캡션 줄 + 헤더 2줄)를 반복"""
+    lines = md.split("\n")
+    i = next((k for k, ln in enumerate(lines) if ln.startswith("|---")), None)
+    if i is None or len(md) <= size:
+        return [md]
+    head = "\n".join(lines[: i + 1])
+    out, cur, cur_len = [], [], len(head)
+    for r in lines[i + 1:]:
+        if cur and cur_len + len(r) + 1 > size:
+            out.append(head + "\n" + "\n".join(cur))
+            cur, cur_len = [], len(head)
+        cur.append(r)
+        cur_len += len(r) + 1
+    if cur:
+        out.append(head + "\n" + "\n".join(cur))
+    return out
+
+
+def _record_texts(record: dict, splitter, size: int, table_size: int) -> list[str]:
+    """표·그림 레코드 → 청크 본문들. 표는 행 단위, 셀 하나가 매우 긴 표 조각과 그림 설명은 본문 분할기로"""
+    if record["kind"] == "image_caption":
+        return splitter.split_text(record["text"])
+    out = []
+    for part in _split_table(record["text"], table_size):
+        out += splitter.split_text(part) if len(part) > size + table_size else [part]
+    return out
+
+
+def _doc_pieces(doc: dict, splitter, size: int, table_size: int) -> list[tuple[str, int | None, str, str]]:
+    """문서 1개 → [(본문, 쪽, kind, 섹션)]. 본문 레코드는 이어 붙여 나누고, 시작 위치로 쪽·섹션을 역추적한다.
+    표·그림은 '나온 위치'(앞 본문 길이)의 섹션을 붙인다."""
+    full, starts, pages, anchors = "", [], [], []
+    for r in doc["records"]:
+        if r["kind"] == "text":
+            starts.append(len(full))
+            pages.append(r["page"])
+            full += r["text"] + "\n\n"
+        else:
+            anchors.append((r, len(full)))
+    offs, paths = _heading_index(full)
+
+    def section_at(off: int) -> str:
+        i = bisect.bisect_right(offs, off) - 1
+        return paths[i] if i >= 0 else ""
+
+    pieces = []
+    for d in splitter.create_documents([full]) if full.strip() else []:
+        start = d.metadata["start_index"]
+        pieces.append((d.page_content, pages[bisect.bisect_right(starts, start) - 1], "text", section_at(start)))
+    for r, off in anchors:
+        section = section_at(max(off - 1, 0))
+        pieces += [(text, r["page"], r["kind"], section) for text in _record_texts(r, splitter, size, table_size)]
+    return pieces
+
+
+def chunk_documents(docs: list[dict], ccfg: dict) -> list[dict]:
+    """청크마다 머리말 '문서: <제목> | p.N | 섹션: 1. 사업개요 > 1.1 …' 을 붙인다 (text = 머리말 + body)"""
+    size = int(ccfg["chunk_size"])
+    table_size = int(size * float(ccfg["table_size_factor"]))
+    splitter = RecursiveCharacterTextSplitter(chunk_size=size, chunk_overlap=round(size * float(ccfg["overlap_ratio"])),
+                                              separators=SEPARATORS, is_separator_regex=True, keep_separator="start",
+                                              add_start_index=True, strip_whitespace=True)
+    chunks = []
+    for doc in docs:
+        pieces = [p for p in _doc_pieces(doc, splitter, size, table_size) if len(p[0].strip()) >= int(ccfg["min_chunk_chars"])]
+        for i, (text, page, kind, section) in enumerate(pieces):
+            header = f"문서: {doc['title']}" + (f" | p.{page}" if page else "") + (f" | 섹션: {section}" if section else "")
+            chunks.append({"chunk_id": f"{doc['doc_id']}::c{i:05d}", "doc_id": doc["doc_id"], "source": doc["source"],
+                           "title": doc["title"], "doc_type": doc["doc_type"], "page": page, "kind": kind,
+                           "section": section, "text": header + "\n" + text.strip(), "body": text.strip()})
+    return chunks
+
+
+def save_chunks(docs: list[dict], chunks: list[dict], out_dir: Path):
+    """02 검색·03 검증으로 넘기는 파일: chunks.jsonl, docs.jsonl(기관 라우팅용 문서 목록 — 레코드 제외)"""
+    write_jsonl(chunks, out_dir / "chunks.jsonl")
+    write_jsonl([{k: v for k, v in d.items() if k != "records"} for d in docs], out_dir / "docs.jsonl")
+
+
+def chunk_summary(chunks: list[dict]) -> pd.DataFrame:
+    """청크 품질 지표: 종류별 개수 · 길이 · 문장 중간 절단 비율 · 섹션 부착률"""
+    body = [c for c in chunks if c["kind"] == "text"]
+    cut = sum(1 for c in body if not re.search(r"(?:[.?!:;)\]」』%]|[다요음함임됨])\s*$", c["body"]))
+    lens = [len(c["body"]) for c in chunks]
+    return pd.DataFrame([{"청크 수": len(chunks), **Counter(c["kind"] for c in chunks),
+                          "평균 길이": round(statistics.mean(lens), 1), "중앙값": int(statistics.median(lens)),
+                          "문장 중간 절단(%)": round(100 * cut / max(len(body), 1), 1),
+                          "섹션 부착(%)": round(100 * sum(bool(c["section"]) for c in chunks) / len(chunks), 1)}])

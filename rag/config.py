@@ -1,33 +1,28 @@
+"""공통 설정 — config.yaml 과 .env 를 읽고, 파이프라인 사이에 주고받는 jsonl 파일을 읽고 쓴다."""
 from __future__ import annotations
 
-import copy
-import os
+import json
+from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
-DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.yaml")
-
-
-def load_config(path: str | None = None, overrides: list[str] | None = None) -> dict:
-    with open(path or DEFAULT_CONFIG, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    for ov in overrides or []:
-        set_by_path(cfg, *ov.split("=", 1))
-    return cfg
+ROOT = Path(__file__).resolve().parent.parent
+ARTIFACTS = ROOT / "artifacts"
 
 
-def set_by_path(cfg: dict, dotted: str, raw_value):
-    """'split.seed', '7' → cfg['split']['seed'] = 7 (YAML 문법으로 해석)"""
-    value = yaml.safe_load(raw_value) if isinstance(raw_value, str) else raw_value
-    node = cfg
-    keys = dotted.strip().split(".")
-    for k in keys[:-1]:
-        node = node.setdefault(k, {})
-    node[keys[-1]] = value
+def load_config() -> dict:
+    """.env 의 키(OPENAI_API_KEY, LANGFUSE_*)를 환경 변수로 올리고 config.yaml 을 돌려준다."""
+    load_dotenv(ROOT / ".env")
+    return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
 
-def merged(cfg: dict, section: str, **kw) -> dict:
-    """UI 에서 넘어온 값으로 섹션을 덮어쓴 사본"""
-    c = copy.deepcopy(cfg)
-    c[section].update({k: v for k, v in kw.items() if v is not None})
-    return c
+def write_jsonl(rows: list[dict], path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
