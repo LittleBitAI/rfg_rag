@@ -4,19 +4,32 @@
  "nodes_from": ".wiki/corpus.json",
  "edges": [
   {
+   "a": "AGENTS.md",
+   "b": "CLAUDE.md",
+   "kind": "link"
+  },
+  {
+   "a": "AGENTS.md",
+   "b": "README.md",
+   "kind": "link"
+  },
+  {
    "a": "CLAUDE.md",
    "b": "AGENTS.md",
    "kind": "link"
+  },
+  {
+   "a": "CLAUDE.md",
+   "b": "README.md",
+   "kind": "link"
   }
  ],
- "orphans": [
-  "CLAUDE.md"
- ],
+ "orphans": [],
  "counts": {
   "docs": 3,
-  "linked": 1,
+  "linked": 3,
   "read": 0,
-  "orphans": 1,
+  "orphans": 0,
   "pages": 0,
   "decisions": 1,
   "injectable_decisions": 0
