@@ -31,6 +31,36 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 노트북은 VS Code · PyCharm · Jupyter 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.
 처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)을 내려받습니다.
 
+## 팀 VM `codeit` 에서 작업 (VS Code Remote-SSH, GPU NVIDIA L4)
+코드는 그대로이고, VS Code 가 VM 에 접속해 VM 의 GPU 로 실행합니다. 임베딩은 GPU 가 있으면 알아서 `cuda` 를 씁니다.
+
+1. 내 PC 의 `~/.ssh/config` 에 항목을 넣습니다 (`User` 는 본인 VM 계정, 키는 `gcloud compute ssh` 가 만든 것).
+   ```
+   Host codeit
+       HostName 35.255.64.243
+       User spai13xx
+       IdentityFile ~/.ssh/google_compute_engine
+       IdentitiesOnly yes
+       ServerAliveInterval 30
+   ```
+2. VS Code 에서 `Remote-SSH: Connect to Host...` → `codeit` 을 고르고, 처음 한 번 VM 터미널에서 설치합니다.
+   ```bash
+   git clone https://github.com/LittleBitAI/rfg_rag ~/rfg_rag && cd ~/rfg_rag
+   python3.10 -m venv .venv
+   .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+   .venv/bin/python -m pip install -r requirements.txt
+   .venv/bin/python -c "import torch; print(torch.cuda.is_available())"   # True
+   ```
+3. `.env` 와 `data/` 는 git 에 없으므로 내 PC 에서 **한 번** 복사합니다. VM 은 여럿이 같이 쓰므로 `.env` 는 본인만 읽게 합니다.
+   ```bash
+   scp .env codeit:rfg_rag/.env
+   scp -r data codeit:rfg_rag/
+   ssh codeit chmod 600 rfg_rag/.env
+   ```
+4. VS Code 에서 폴더 `~/rfg_rag` 를 열고 노트북 커널로 `.venv` 를 고릅니다.
+
+`artifacts/` 는 복사하지 않습니다. 기기마다 그 기기에서 돌린 노트북 결과가 쌓입니다 (내 PC 와 VM 의 결과는 따로).
+
 ## 파이프라인 · 담당
 
 | 파이프라인 | 노트북 | 파일 | 다음 파이프라인에 넘기는 것 |
@@ -84,7 +114,7 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 
 ```bash
 ruff check .                              # 함수 복잡도 (C901 ≤ 8, PLR0915 ≤ 50)
-.venv\Scripts\python -m pytest -q tests   # rag/ 모든 모듈 import 확인
+.venv\Scripts\python -m pytest -q tests   # rag/ 모든 모듈 import 확인 (Linux: .venv/bin/python -m pytest -q tests)
 ```
 
 - `.env` · `data/` · `artifacts/` 는 커밋하지 않습니다.

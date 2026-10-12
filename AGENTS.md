@@ -112,6 +112,7 @@ Team members have no Langfuse keys, so every code path must run without them.
 ## 6. Before every commit
 
 1. `ruff check .` reports nothing new (section 1.3).
-2. The gate passes: `.venv\Scripts\python -m pytest -q tests`.
+2. The gate passes: `.venv\Scripts\python -m pytest -q tests` on Windows,
+   `.venv/bin/python -m pytest -q tests` on Linux (the team VM `codeit`).
    `.venv` is the Python 3.10 environment set up as `README.md` describes.
 3. `git diff --no-index CLAUDE.md AGENTS.md` prints nothing.
