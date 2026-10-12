@@ -194,11 +194,7 @@ class Pipeline:
 
     # ------------------------------------------------------------ 2. parse (파일 단위 체크포인트)
     def fp_parse(self) -> str:
-        pc = dict(self.cfg["parsing"])
-        if not (pc.get("caption_images") or pc.get("image_parser")):  # 캡션을 끈 경우 VLM 설정은 결과에 영향 없음
-            for k in ("vlm_model", "vlm_max_new_tokens", "vlm_max_pixels"):
-                pc.pop(k, None)
-        return fingerprint(pc, "parse-v3-hwploader")
+        return fingerprint(self.cfg["parsing"], "parse-v3-hwploader")
 
     def stage_parse(self, files: list[str]) -> list[dict]:
         self._guard("stage_parse")
@@ -208,8 +204,7 @@ class Pipeline:
         from .vision import make_image_parser
 
         pc = self.cfg["parsing"]
-        kind = pc.get("image_parser") or ("hf-vlm" if pc.get("caption_images") else None)
-        captioner = make_image_parser(kind, pc, self.p("captions.jsonl"), self.log)  # LangChain images_parser
+        captioner = make_image_parser(pc.get("image_parser"), pc)  # LangChain images_parser
         docs = []
         for i, f in enumerate(files, 1):
             cache = os.path.join(out_dir, make_doc_id(f) + ".json")
@@ -230,8 +225,6 @@ class Pipeline:
             else:
                 self.log(f"[parse] ({i}/{len(files)}) 캐시 사용: {d['source']}")
             docs.append(d)
-        if captioner is not None and hasattr(captioner, "close"):
-            captioner.close()
         agg = {}
         for d in docs:
             for k in ("total_pages", "skipped_pages", "kept_pages"):

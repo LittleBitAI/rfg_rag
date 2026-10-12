@@ -493,7 +493,7 @@ def final_params(cfg: dict, extra: dict | None = None, save_to: str | None = Non
     """노트북에서 최종 적용된 하이퍼파라미터를 표로 출력(+JSON 저장)"""
     keys = {
         "로더(라이브러리)": ("parsing", ["pdf_text_loader", "pypdf", "pdf_table_loader", "table_settings", "image_parser",
-                                     "vlm_model", "hwp_loader", "hwp", "hwp_front_matter"]),
+                                     "hwp_loader", "hwp", "hwp_front_matter"]),
         "파싱": ("parsing", ["skip_first_pages", "hanja_mode", "extract_tables", "remove_page_numbers",
                            "repeated_line_ratio", "drop_table_text_from_body", "table_dedupe_threshold",
                            "join_broken_lines", "join_min_line_len", "fix_bullet_glyphs"]),

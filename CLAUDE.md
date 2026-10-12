@@ -76,6 +76,9 @@ The work is split into five pipelines, listed in data-flow order. Each pipeline 
 Notebooks hold only configuration, function calls and display of results.
 All logic lives in modules under `rag/`.
 
+Images in documents become text through a local OCR model (`rapidocr`, `tesseract`) or the OpenAI API (`llm`).
+Do not add a local VLM such as Qwen2.5-VL; the team decided against running one.
+
 ## 5. Evaluation results
 
 | Who | Reads results in |

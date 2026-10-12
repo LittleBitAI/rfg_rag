@@ -11,7 +11,7 @@ from pathlib import Path
 
 KEYS = {
     "OPENAI_API_KEY": {"required": True, "prefix": "sk-", "desc": "gpt-5-mini 생성·QA·RAGAS 심판"},
-    "HF_TOKEN": {"required": False, "prefix": "hf_", "desc": "HuggingFace 모델 다운로드(KURE-v1, Qwen2.5-VL) 속도제한 완화"},
+    "HF_TOKEN": {"required": False, "prefix": "hf_", "desc": "HuggingFace 모델 다운로드(KURE-v1) 속도제한 완화"},
 }
 
 

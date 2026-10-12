@@ -19,7 +19,7 @@ RFP ZIP(PDF + HWP)을 넣으면 **파싱 → 청크 → BM25 + HF 임베딩/FAIS
 nvidia-smi                                             # 드라이버 570 이상
 python3.10 -m venv .venv && .venv\Scripts\activate     # Linux/WSL: source .venv/bin/activate
 # PyTorch — RTX 50(Blackwell sm_120)은 CUDA 12.8 이상 빌드 필수 (cu124 이하 = 'no kernel image' 오류)
-python3.10 -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+python3.10 -m pip install torch --index-url https://download.pytorch.org/whl/cu128
 python3.10 -m pip install -r requirements.txt jupyterlab
 python3.10 -m pip install langchain-hwp-hwpx-loader    # HWP/HWPX 로더 (requirements 에도 포함)
 copy .env.example .env      # Linux: cp  → OPENAI_API_KEY=sk-... / HF_TOKEN=hf_... 입력
@@ -36,7 +36,7 @@ jupyter lab                 # 커널: 위 .venv (Python 3.10)
   - **`.env`가 시스템 환경변수보다 우선**합니다. UTF-8, 메모장 BOM, ANSI(cp949)를 모두 읽습니다.
   - `.env`에 값이 없을 때만 입력창이 뜹니다(VS Code는 창 맨 위). 입력값은 메모리에만 두고, `save_to_env=True`일 때만 `.env`에 저장합니다. 화면에는 `sk-pr…1234`처럼 가려서 표시합니다.
 - 01은 `REQUIRE_GPU = True`(기본)라서 5070 Ti를 못 쓰면 원인을 알려주며 멈춥니다. 02는 생성이 API라 GPU가 없어도 CPU로 질문을 임베딩합니다.
-- 모델을 처음 받을 때 KURE-v1 약 2.3GB와 Qwen2.5-VL-3B 약 7.5GB를 내려받습니다. C 드라이브가 부족하면 `0-1` 셀의 `HF_CACHE_DIR`를 지정하세요.
+- 모델을 처음 받을 때 KURE-v1 약 2.3GB를 내려받습니다. C 드라이브가 부족하면 `0-1` 셀의 `HF_CACHE_DIR`를 지정하세요.
 
 ### 🪙 토큰 절약 (02 · 03 의 `0-2` 셀)
 공용 키로는 `gpt-5-mini` 와 `gpt-5-nano` 만 쓸 수 있습니다.
@@ -79,7 +79,6 @@ jupyter lab                 # 커널: 위 .venv (Python 3.10)
 |---|---|---|
 | 임베딩 | fp16 · batch 32 · 10배치마다 샤드 | fp16 · batch 64 · 10배치마다 샤드 |
 | OOM 대응 | 배치를 절반씩 자동 축소 | 동일 |
-| 그래프 캡션(Qwen2.5-VL-3B, bf16 ≈ 7.5GB) | 켬 · 해상도 상한 768·28·28 · 파싱 후 해제 | 켬 · 1024·28·28 |
 | 파인튜닝 | bf16 · 논리배치 64 / mini 8 (≈11~12GB) | bf16 · 64 / 16 |
 | DataLoader worker | Windows 0 / Linux 최대 4 | 2 |
 | 기타 | TF32 켬 · 모델 1회 적재 공유 | + `expandable_segments` (Linux) |
@@ -104,7 +103,6 @@ python main.py app --share  # Gradio UI
 |---|---|---|
 | ZIP 추출 | 파일 | 이미 추출된 파일은 크기 비교 후 건너뜀 |
 | 파싱(PDF/HWP) | **문서 1개마다** JSON | 끝난 문서는 캐시 사용 |
-| 그래프 캡션(VLM) | **이미지 1개마다** JSONL | 캡션된 이미지는 다시 돌리지 않음 |
 | 임베딩(GPU) | **N배치마다 샤드 `.npy`** + progress.json | 마지막 샤드 다음 청크부터 재개. OOM이면 배치를 절반씩 줄여 재시도하고, 줄인 값을 기억 |
 | QA 생성 | **QA 1건마다** JSONL (fsync) | 실패 건만 재시도 |
 | 임베딩 파인튜닝 | HF Trainer `checkpoint-XXXX` (가중치+옵티마이저+스케줄러+RNG) | 마지막 checkpoint 에서 `resume_from_checkpoint`. `auto_find_batch_size`로 OOM 대응 |
@@ -121,7 +119,7 @@ python main.py app --share  # Gradio UI
 | PDF 표 | LangChain **PyMuPDFLoader** `extract_tables="markdown"` (`PDF_TABLE_LOADER`) | 여러 줄 셀은 `<br>`로 보존, 본문에 섞인 표 평문은 제거 |
 | PDF 이미지 | PyMuPDFLoader `extract_images=True, images_parser=…` | langchain-community 0.3.x의 이미지 건너뛰기 버그를 0.4.2 코드로 패치 |
 | HWP 5.x / HWPX | **langchain-hwp-hwpx-loader** `HwpHwpxLoader` (본문·표 Markdown·각주·이미지) | `mode="single"`, 표는 본문 제자리에 Markdown. 탭 자리 깨진 글자 정리, 세로 병합 셀 칸 보정. 쪽 정보가 없어 표지·목차를 자동 감지해 제외 |
-| 이미지 → 텍스트 | LangChain `images_parser` 형식: `hf-vlm`(Qwen2.5-VL), `rapidocr`, `tesseract`, `llm` | `IMAGE_PARSER`. 같은 이미지는 캐시하고, 여러 쪽에 반복되는 로고는 제외 |
+| 이미지 → 텍스트 | LangChain `images_parser` 형식: `rapidocr`·`tesseract`(로컬 OCR), `llm`(API). 로컬 VLM 은 쓰지 않음 | `IMAGE_PARSER`(기본 None). 같은 이미지는 캐시하고, 여러 쪽에 반복되는 로고는 제외 |
 | 한자 | `必(필)` 병기 + BM25(kiwi) 독음 색인 | `hanja_mode` |
 | 임베딩 | HF **`nlpai-lab/KURE-v1`** | 대안: `BAAI/bge-m3`, `dragonkue/BGE-m3-ko` |
 
@@ -164,7 +162,7 @@ rag/
   query_rules.py          (선택·기본 꺼짐) 규칙 전처리 — 노트북은 사용하지 않음
   hw.py / credentials.py  L4·5070 Ti 프로필, CUDA 점검 / OPENAI_API_KEY·HF_TOKEN (.env 우선)
   text_utils.py           정규화·한자·토크나이저(Kiwi 멀티스레드) + HwpHwpxLoader 출력 후처리(깨진 글자·병합셀·표지/목차 감지)
-  vision.py               LangChain images_parser (hf-vlm 등) + PyMuPDF 이미지 버그 패치
+  vision.py               LangChain images_parser (로컬 OCR·LLM) + PyMuPDF 이미지 버그 패치
   qa_gen.py / config.py / async_utils.py
 ```
 

@@ -1,9 +1,8 @@
 # Python 3.10 이상 (python3.10 -m pip install -r requirements.txt)
 # ── PyTorch 는 먼저 CUDA 12.8+ 빌드로 설치하세요 (노트북 0-0 셀이 자동 처리)
 #    RTX 50(5070 Ti, Blackwell sm_120) 은 cu128 이상 필수 — cu124 이하는 'no kernel image' 오류
-#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#    pip install torch --index-url https://download.pytorch.org/whl/cu128
 torch>=2.7
-torchvision>=0.18      # transformers 5 의 Qwen2.5-VL 프로세서(video_processor)가 요구
 
 # ── LangChain (Python 3.10+)
 #   langchain-hwp-hwpx-loader 가 langchain-core>=1.0 을 요구 → core/openai/text-splitters 는 1.x
@@ -22,7 +21,7 @@ rank-bm25>=0.2.2
 kiwipiepy>=0.20         # 한국어 형태소 BM25 토크나이저
 hanja>=0.15             # 한자 → 한글 독음 (必 → 必(필))
 
-# ── HuggingFace (임베딩 / 파인튜닝 / VLM 캡션)
+# ── HuggingFace (임베딩 / 파인튜닝)
 transformers>=4.49
 sentence-transformers>=3.3
 datasets>=2.19
@@ -53,5 +52,3 @@ ruff>=0.12             # 함수 복잡도 검사 (pyproject.toml)
 pytest>=8
 python-dotenv>=1.0
 gradio>=5.0,<7
-
-# (선택) 그래프 캡션 VLM 가속: pip install flash-attn --no-build-isolation

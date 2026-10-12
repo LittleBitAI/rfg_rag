@@ -92,7 +92,7 @@ def _generator():
 
 
 # ============================================================== handlers
-def run_build(upload, input_path, skip, hanja, tables, caption, vlm, csize, cover, emb_model, bs, tok):
+def run_build(upload, input_path, skip, hanja, tables, csize, cover, emb_model, bs, tok):
     c = STATE["cfg"]
     if upload is not None:
         dst = os.path.join(c["paths"]["work_dir"], "upload", os.path.basename(upload))
@@ -102,8 +102,7 @@ def run_build(upload, input_path, skip, hanja, tables, caption, vlm, csize, cove
         c["paths"]["input"] = dst
     elif input_path:
         c["paths"]["input"] = input_path
-    c["parsing"].update(skip_first_pages=int(skip), hanja_mode=hanja, extract_tables=bool(tables),
-                        caption_images=bool(caption), vlm_model=vlm)
+    c["parsing"].update(skip_first_pages=int(skip), hanja_mode=hanja, extract_tables=bool(tables))
     c["chunking"].update(chunk_size=int(csize), overlap_ratio=float(cover), chunk_overlap=None)
     c["embedding"].update(model=emb_model, batch_size=int(bs))
     c["bm25"]["tokenizer"] = tok
@@ -220,8 +219,6 @@ def build_ui(cfg: dict | None = None) -> gr.Blocks:
                     hanja = gr.Dropdown(["append", "replace", "none"], value=c["parsing"]["hanja_mode"],
                                         label="한자 처리 (append: 必(필))")
                     tables = gr.Checkbox(c["parsing"]["extract_tables"], label="표 → Markdown 추출")
-                    caption = gr.Checkbox(c["parsing"]["caption_images"], label="그래프·도표 이미지 VLM 캡션 (GPU)")
-                    vlm = gr.Textbox(c["parsing"]["vlm_model"], label="VLM 모델(HF)")
                 with gr.Column(scale=1):
                     csize = gr.Slider(200, 2000, c["chunking"]["chunk_size"], step=50, label="chunk_size")
                     cover = gr.Slider(0, 0.5, c["chunking"].get("overlap_ratio", 0.2), step=0.05, label="overlap_ratio")
@@ -237,7 +234,7 @@ def build_ui(cfg: dict | None = None) -> gr.Blocks:
             log1 = gr.Textbox(label="로그", lines=14, max_lines=14, autoscroll=True)
             growth1 = gr.Dataframe(label="📈 단계별 데이터 증가", wrap=True)
             plot1 = gr.BarPlot(x="단계", y="문자 수", title="단계별 문자 수", height=280)
-            b_build.click(run_build, [up, in_path, skip, hanja, tables, caption, vlm, csize, cover, emb, bs, tok],
+            b_build.click(run_build, [up, in_path, skip, hanja, tables, csize, cover, emb, bs, tok],
                           [log1, growth1, plot1])
             b_stop1.click(_stop, None, log1)
 

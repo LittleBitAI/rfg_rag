@@ -13,7 +13,7 @@ parsing:
   # ── 로더 (모두 라이브러리) ──
   pdf_text_loader: PyPDFLoader  # PyPDFLoader | PyMuPDFLoader   (PDF 본문)
   pdf_table_loader: PyMuPDFLoader  # PyMuPDFLoader(extract_tables="markdown") | null(표 추출 안 함)
-  image_parser: null            # null | hf-vlm(Qwen2.5-VL, 로컬 GPU) | rapidocr | tesseract | llm  (LangChain images_parser)
+  image_parser: null            # null | rapidocr | tesseract | llm  (LangChain images_parser, 로컬 VLM 은 쓰지 않음)
   hwp_loader: HwpHwpxLoader     # HWP/HWPX: langchain-hwp-hwpx-loader (pip install langchain-hwp-hwpx-loader)
   hwp:                          # HwpHwpxLoader 옵션 (표는 본문 제자리에 Markdown 으로 들어옴)
     table_style: MARKDOWN       # MARKDOWN | CSV | INLINE
@@ -36,11 +36,6 @@ parsing:
   join_min_line_len: 20         # 이보다 짧은 줄(제목 등)은 잇지 않음
   fix_bullet_glyphs: true       # 폰트 깨진 글머리(Ÿ 등) → •
   hanja_mode: append            # none | append(必(필)) | replace(필)
-  caption_images: false         # (구버전 호환) true = image_parser: hf-vlm
-  vlm_model: Qwen/Qwen2.5-VL-3B-Instruct
-  vlm_max_new_tokens: 384
-  vlm_max_pixels: 802816        # 1024*28*28 — 이미지당 비전 토큰 상한(L4·RAM16GB 기준)
-  min_image_px: 180             # 가로/세로 모두 이보다 작은 이미지는 로고로 보고 무시
   max_repeat_image_pages: 3     # 3페이지 이상 반복 등장하는 이미지 = 로고/장식 → 무시
 
 chunking:
