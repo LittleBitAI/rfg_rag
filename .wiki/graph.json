@@ -1,0 +1,24 @@
+{
+ "ns": "repo",
+ "repo": "rfg_rag",
+ "nodes_from": ".wiki/corpus.json",
+ "edges": [
+  {
+   "a": "CLAUDE.md",
+   "b": "AGENTS.md",
+   "kind": "link"
+  }
+ ],
+ "orphans": [
+  "CLAUDE.md"
+ ],
+ "counts": {
+  "docs": 3,
+  "linked": 1,
+  "read": 0,
+  "orphans": 1,
+  "pages": 0,
+  "decisions": 1,
+  "injectable_decisions": 0
+ }
+}
