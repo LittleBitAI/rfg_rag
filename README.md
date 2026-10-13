@@ -31,6 +31,31 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 노트북은 VS Code · PyCharm · Jupyter 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.
 처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)을 내려받습니다.
 
+## v11 전처리 패키지 사용
+
+전처리 담당자에게 `RFP_Preprocessing_Final_v11_Team` 패키지를 받아 압축을 풉니다.
+`final_chunks.jsonl`, `final_elements.jsonl`, `final_records.jsonl`이 바로 들어 있는 폴더를
+`data/RFP_Preprocessing_Final_v11_Team/`에 둡니다. 압축에 같은 이름의 폴더가 두 겹 있으면 안쪽 폴더를 사용하세요.
+패키지와 실행 결과(`data/`, `artifacts/`)는 git에 포함되지 않으므로 팀원과 VM에 별도로 전달해야 합니다.
+
+`01_preprocessing.ipynb` 설정 셀에서 입력을 선택합니다.
+
+```python
+PREPROCESSED = None  # 기본값: data/rfp.zip을 현재 파서로 처리
+# v11을 쓰려면 위 값을 다음 경로로 변경
+# PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
+```
+
+01을 처음부터 실행하면 v11의 저장된 OCR 텍스트와 청크를 읽어
+`artifacts/docs.jsonl`, `artifacts/chunks.jsonl`로 저장합니다. 파싱·OCR·청크 재분할은 하지 않습니다.
+본문이 `[IMAGE]` 표시뿐인 청크는 제외하고, 패키지에 쪽 번호가 없는 HWP는 `page = None`을 유지합니다.
+이후 02부터 다시 실행해 새 입력의 색인을 만드세요. 임베딩의 `max_seq_length` 기본값은 2048입니다.
+
+현재 파서와 v11을 비교할 때는 `eval/golden_set.jsonl`과 `eval/eval_questions.yaml`만
+`load_eval_items` → `check_eval_items`로 읽어 통과한 질문을 하나의 `eval_set.jsonl`로 고정합니다.
+03의 청크 기반 질문 생성은 실행하지 않습니다. 두 입력에 같은 질문 파일과 02 설정을 사용하고,
+각각 02 → 04 → 05를 실행해 네 평가 CSV를 별도 보관합니다.
+
 ## 팀 VM `codeit` 에서 작업 (VS Code Remote-SSH, GPU NVIDIA L4)
 코드는 그대로이고, VS Code 가 VM 에 접속해 VM 의 GPU 로 실행합니다. 임베딩은 GPU 가 있으면 알아서 `cuda` 를 씁니다.
 

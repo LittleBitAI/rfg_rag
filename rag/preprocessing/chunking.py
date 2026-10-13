@@ -5,13 +5,14 @@ from __future__ import annotations
 import bisect
 import re
 import statistics
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
 import pandas as pd
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from ..config import write_jsonl
+from ..config import read_jsonl, write_jsonl
 
 # 앞에 올수록 우선 분할하는 구분자 (글머리 기호는 다음 청크의 시작에 남김), 마지막 "" 는 글자 단위 안전장치
 SEPARATORS = [
@@ -129,6 +130,35 @@ def chunk_documents(docs: list[dict], ccfg: dict) -> list[dict]:
                            "title": doc["title"], "doc_type": doc["doc_type"], "page": page, "kind": kind,
                            "section": section, "text": header + "\n" + text.strip(), "body": text.strip()})
     return chunks
+
+
+def load_v11_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
+    """v11의 저장된 청크·요소·레코드를 02 검색이 읽는 문서·청크 형식으로 옮긴다."""
+    package_dir = Path(package_dir)
+    elements = {e["element_id"]: e for e in read_jsonl(package_dir / "final_elements.jsonl")}
+    records_by_doc = {}
+    for record in read_jsonl(package_dir / "final_records.jsonl"):
+        records_by_doc.setdefault(record["doc_id"], []).append(record)
+    docs = []
+    for doc_id, records in records_by_doc.items():
+        source = unicodedata.normalize("NFC", Path(records[0]["source_paths"][0]).name)
+        docs.append({"doc_id": doc_id, "source": source, "title": Path(source).stem,
+                     "cover_text": records[0]["search_text"],
+                     "head_text": "\n".join(r["search_text"] for r in records[:3])})
+    docs_by_id = {d["doc_id"]: d for d in docs}
+    chunks = []
+    for chunk in read_jsonl(package_dir / "final_chunks.jsonl"):
+        if re.fullmatch(r"(?:\s*\[IMAGE\]\s*)+", chunk["body"]):
+            continue
+        linked = [elements[span["element_id"]]["location"] for span in chunk["spans"]]
+        doc = docs_by_id[linked[0]["supplier_metadata"]["doc_id"]]
+        pages = {element["page"] for element in linked}
+        chunks.append({"chunk_id": chunk["chunk_id"], "doc_id": doc["doc_id"],
+                       "source": doc["source"], "title": doc["title"],
+                       "page": next(iter(pages)) if len(pages) == 1 else None,
+                       "kind": chunk["chunk_type"], "section": " > ".join(chunk["section_path"]),
+                       "text": chunk["payload"], "body": chunk["body"]})
+    return docs, chunks
 
 
 def save_chunks(docs: list[dict], chunks: list[dict], out_dir: Path):
