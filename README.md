@@ -66,12 +66,26 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 | 파이프라인 | 노트북 | 파일 | 다음 파이프라인에 넘기는 것 |
 |---|---|---|---|
 | ① 전처리 | `01_preprocessing.ipynb` | `rag/preprocessing/parsing.py` (PDF · HWP/HWPX 파싱 · 정제 · OCR), `rag/preprocessing/chunking.py` (청크 분할) | `artifacts/chunks.jsonl`, `artifacts/docs.jsonl` |
-| ② 검색 | `02_retrieval.ipynb` | `rag/retrieval/indexing.py` (임베딩 · FAISS · BM25 색인), `rag/retrieval/rewrite.py` (질문 재작성 · API 사용량), `rag/retrieval/retrieval.py` (하이브리드 검색 · 발주기관 라우팅) | `artifacts/index/` |
+| ② 검색 | `02_retrieval.ipynb` | `rag/retrieval/indexing.py` (임베딩 · FAISS · BM25 색인), `rag/retrieval/rewrite.py` (질문 재작성 · API 사용량), `rag/retrieval/retrieval.py` (하이브리드 검색 · 발주기관 라우팅) | `artifacts/index/` · `artifacts/retrieval_settings.jsonl` |
 | ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (QA 생성 · 근거 키워드 정리 · 분할 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
 | ④ 생성 | `04_generation.ipynb` | `rag/generation/generation.py` (검색 → 답변 · 토큰 · 지연 시간) | `artifacts/answers.jsonl` |
 | ⑤ 평가 | `05_evaluation.ipynb` | `rag/evaluation/evaluation.py` (네 가지 평가) | `artifacts/retrieval.csv` · `generation.csv` · `grounding.csv` · `end_to_end.csv` |
 
 공통: `rag/config.py` (`config.yaml` · `.env` 읽기, jsonl 읽기/쓰기), `config.yaml` (모든 설정 — 파이프라인별 구역).
+
+01·02·04·05에는 직접 값을 조절하는 설정 셀이 있습니다. 변수의 초기값은 `config.yaml`에서 읽으므로, 바꾸려는 변수의 오른쪽을 원하는 값으로 바꾸세요.
+
+| 노트북 | 설정 셀에서 조절하는 값 |
+|---|---|
+| 01 전처리 | `OCR`, `OCR_MODEL`, `OCR_REASONING_EFFORT`, `OCR_MAX_TOKENS`, `CHUNK_SIZE` |
+| 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `DENSE_WEIGHT` (BM25는 `1 - DENSE_WEIGHT`) |
+| 04 생성 | `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_TOKENS` |
+| 05 평가 | `JUDGE_MODEL`, `JUDGE_REASONING_EFFORT`, `JUDGE_MAX_TOKENS` |
+
+예를 들어 02 설정 셀의 `DENSE_WEIGHT = cfg["retrieval"]["dense_weight"]`를 `DENSE_WEIGHT = 0.8`로 바꾸면 Dense 80%·BM25 20%로 검색합니다.
+설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
+기존 색인이 있어도 이번 변경 후에는 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 청킹 크기를 바꾸면 01부터, 검색 설정을 바꾸면 02부터 후속 노트북을 다시 실행해야 합니다.
+답변 모델을 바꾸면 05의 예상 비용 계산에 쓰는 `llm.usd_per_1m_tokens`도 해당 모델의 단가로 맞추세요.
 
 02 검색 예제와 04 답변 생성은 검색 전에 `rag/retrieval/rewrite.py`로 질문을 재작성합니다.
 `config.yaml`의 `rewrite.model`, `rewrite.max_tokens`, `rewrite.reasoning_effort`가 이 API 호출에 적용됩니다.
@@ -103,7 +117,8 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 > ⚠️ 연말정산 질문의 근거(국세청 연말정산 안내 등)가 ZIP 에 없으면 "제공된 문서에서 확인할 수 없습니다" 가 정상 답입니다.
 
 ## OCR (선택, 기본 꺼짐)
-`01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + OpenAI 비전 모델(`gpt-5-mini`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
+`01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
+OCR 모델·추론 강도·출력/추론 토큰 한도의 기본값은 `config.yaml`의 `ocr` 구역에서 읽으며 01의 설정 셀에서 바꿀 수 있습니다.
 여러 쪽에 반복되는 그림(로고 · 장식, `parsing.max_repeat_image_pages` 쪽 이상)은 청크에 넣지 않습니다 — HWP 는 아예 보내지 않고, PDF 는 설명을 받은 뒤 반복된 설명을 뺍니다.
 `False` 면 그림은 API 로 가지 않습니다.
 

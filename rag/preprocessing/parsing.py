@@ -20,7 +20,6 @@ import numpy as np
 import pandas as pd
 
 SUPPORTED = (".pdf", ".hwp", ".hwpx")
-OCR_MODEL = "gpt-5-mini"
 
 
 # ====================================================================================================
@@ -502,11 +501,12 @@ def repair_md_tables(text: str) -> str:
 # ====================================================================================================
 # OCR (OCR=True 일 때만): 그림 → 글자. LangChain LLMImageBlobParser + OpenAI 비전 모델 (OPENAI_API_KEY)
 # ====================================================================================================
-def _ocr_parser():
+def _ocr_parser(ocr_cfg: dict):
     from langchain_community.document_loaders.parsers.images import LLMImageBlobParser
     from langchain_openai import ChatOpenAI
 
-    return LLMImageBlobParser(model=ChatOpenAI(model=OCR_MODEL, max_tokens=2048, reasoning_effort="low"))
+    return LLMImageBlobParser(model=ChatOpenAI(model=ocr_cfg["model"], max_tokens=int(ocr_cfg["max_tokens"]),
+                                            reasoning_effort=ocr_cfg["reasoning_effort"]))
 
 
 def _ocr_image_file(path: str, image_parser) -> str:
@@ -561,10 +561,10 @@ def _patch_pymupdf_image_extraction():
 # ====================================================================================================
 # 문서 → 레코드
 # ====================================================================================================
-def parse_documents(files: list[str], pcfg: dict, ocr: bool) -> list[dict]:
+def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict) -> list[dict]:
     """문서마다 {doc_id, source, title, doc_type, cover_text, head_text, records}.
     ocr=False 면 그림을 API 로 보내지 않는다. True 면 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다."""
-    image_parser = _ocr_parser() if ocr else None
+    image_parser = _ocr_parser(ocr_cfg) if ocr else None
     docs = []
     for i, path in enumerate(files, 1):
         try:

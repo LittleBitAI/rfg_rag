@@ -14,6 +14,11 @@ parsing:
   hanja_mode: append            # none | append(必(필)) | replace(필)
   max_repeat_image_pages: 3     # (OCR) 이 횟수 이상 반복 등장하는 그림 = 로고/장식 → OCR 하지 않음
 
+ocr:
+  model: gpt-5-mini
+  max_tokens: 2048
+  reasoning_effort: low
+
 chunking:
   chunk_size: 700               # 글자 단위
   overlap_ratio: 0.2            # 겹침 = chunk_size × overlap_ratio
