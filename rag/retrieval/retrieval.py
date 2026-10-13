@@ -42,14 +42,15 @@ class HybridIndex:
         self.rcfg = cfg["retrieval"]
 
     @observe(name="retrieve-context", as_type="retriever")
-    def search(self, question: str) -> list[dict]:
-        """질문 → 상위 top_k 청크(score = 하이브리드 점수). 두 기관 이상을 비교하는 질문이면 기관별로 찾아 번갈아 섞는다"""
+    def search(self, question: str, *, query: str | None = None) -> list[dict]:
+        """원본 질문으로 기관을 고르고 query(없으면 원본)로 검색한다. 비교 질문은 기관별 결과를 번갈아 섞는다."""
         route = self.router.route(question)
+        query = query or question
         top_k = int(self.rcfg["top_k"])
         if len(route) < 2:
-            return self._search(question, top_k, next(iter(route.values()), None))
+            return self._search(query, top_k, next(iter(route.values()), None))
         k_each = max(2, math.ceil(top_k / len(route)))
-        lists = [self._search(question, k_each, doc_ids) for doc_ids in route.values()]
+        lists = [self._search(query, k_each, doc_ids) for doc_ids in route.values()]
         merged: dict[str, dict] = {}
         for hit in chain.from_iterable(zip_longest(*lists)):
             if hit is not None:
