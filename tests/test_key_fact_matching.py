@@ -105,3 +105,16 @@ def test_plain_text_normalization_and_ratio_are_preserved():
 def test_plain_text_matches_original_words_around_semantic_values():
     assert _key_fact_ratio(["년", "원", "초"], "2024년 6월 11일, 3초, 1억원") == 1
     assert _key_fact_ratio(["number", "date", "time"], "2024년 6월 11일 오후 5시, 3초") == 0
+
+
+def test_lowercase_expansion_keeps_positions_aligned():
+    assert _key_fact_ratio(["x"], "İx") == 1
+    assert _key_fact_ratio(["3초"], "İ 3초 제외") == 0
+
+
+@pytest.mark.parametrize("fact,text,expected", [
+    ("1,000만", "한도는 연 1,000만원입니다", 1),
+    ("800만", "그 밖의 대출은 1,800만원", 0),
+])
+def test_amount_fact_without_currency_matches_amount_with_currency(fact, text, expected):
+    assert _key_fact_ratio([fact], text) == expected

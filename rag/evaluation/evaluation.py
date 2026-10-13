@@ -44,8 +44,9 @@ def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddin
 
 
 _DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
+# '원'은 단위에 넣지 않고 숫자 뒤 일반 글자로 남긴다. 핵심 사실 '1,000만'이 답의 '1,000만원'과도 맞도록.
 _NUMBER = re.compile(rf"(?<![\d.,]){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*"
-                     r"(?:\s*(?:원|초|분|시간|개월|년|일|명|개|건|회|%))?")
+                     r"(?:\s*(?:초|분|시간|개월|년|일|명|개|건|회|%))?")
 _NUMBER_PART = re.compile(rf"({_DIGITS})?([억만천백])|({_DIGITS})")
 _MULTIPLIERS = {"억": 100_000_000, "만": 10_000, "천": 1_000, "백": 100}
 _TIME = r"(?:\d{1,2}:\d{2}|(?:오전|오후)\s*\d{1,2}시(?:\s*\d{1,2}분)?)"
@@ -102,8 +103,14 @@ def _semantic_spans(text: str) -> list[tuple[int, int, str]]:
 
 
 def _plain_text(text: str, start: int, end: int) -> tuple[str, list[tuple[int, int]]]:
-    positions = [(i, i + 1) for i in range(start, end) if not text[i].isspace() and text[i] != ","]
-    return "".join(text[i].lower() for i, _ in positions), positions
+    chars, positions = [], []
+    for i in range(start, end):
+        if text[i].isspace() or text[i] == ",":
+            continue
+        lowered = text[i].lower()  # 'İ' 처럼 소문자가 두 글자가 되기도 해서 글자마다 위치를 남긴다
+        chars.append(lowered)
+        positions.extend([(i, i + 1)] * len(lowered))
+    return "".join(chars), positions
 
 
 def _canonical_text(text: str) -> tuple[str, list[tuple[int, int]]]:
