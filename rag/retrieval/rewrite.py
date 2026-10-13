@@ -5,6 +5,8 @@ import time
 
 from langfuse.openai import openai
 
+from ..usage import record_usage
+
 REWRITE_PROMPT = (
     "공공기관 제안요청서(RFP)를 검색하기 좋은 질문으로 재작성하세요.\n"
     "- 명백한 오타와 한영 자판 오류를 고치고, 문서 검색에 맞는 표현으로 정리하세요.\n"
@@ -17,6 +19,7 @@ REWRITE_PROMPT = (
 
 def rewrite_question(question: str, rewrite_cfg: dict) -> dict:
     """검색용 질문·모델·토큰·지연 시간을 반환한다. 출력이 비면 원본 질문으로 검색한다."""
+    prices = rewrite_cfg["usd_per_1m_tokens"]
     t0 = time.perf_counter()
     with openai.OpenAI(max_retries=3) as client:
         resp = client.chat.completions.create(
@@ -24,9 +27,6 @@ def rewrite_question(question: str, rewrite_cfg: dict) -> dict:
             max_completion_tokens=int(rewrite_cfg["max_tokens"]),
             reasoning_effort=rewrite_cfg["reasoning_effort"],
             messages=[{"role": "system", "content": REWRITE_PROMPT}, {"role": "user", "content": question}])
-    usage = resp.usage
-    details = usage.completion_tokens_details
-    return {"question": (resp.choices[0].message.content or "").strip() or question, "model": resp.model,
-            "input_tokens": usage.prompt_tokens, "output_tokens": usage.completion_tokens,
-            "reasoning_tokens": (details.reasoning_tokens if details else 0) or 0,
+    usage = record_usage("rewrite", resp.model, resp.usage.model_dump(), prices, subject=question)
+    return {"question": (resp.choices[0].message.content or "").strip() or question, **usage,
             "latency_s": round(time.perf_counter() - t0, 2)}

@@ -23,15 +23,17 @@ from ragas.metrics import (FactualCorrectness, Faithfulness, LLMContextPrecision
 
 from ..config import read_jsonl
 from ..retrieval.indexing import Embedder
+from ..usage import UsageCallback
 
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")  # ragas 사용 통계 전송 끔
 
 
-def _ragas(rows: list[dict], metrics: list, cfg: dict, embeddings=None) -> list[dict]:
+def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddings=None) -> list[dict]:
     """RAGAS 채점 → 질문마다 {지표 이름: 점수}"""
     ecfg = cfg["evaluation"]
     judge = ChatOpenAI(model=ecfg["judge_model"], max_tokens=int(ecfg["judge_max_tokens"]),
-                       reasoning_effort=ecfg["judge_reasoning_effort"], timeout=180, max_retries=3)
+                       reasoning_effort=ecfg["judge_reasoning_effort"], timeout=180, max_retries=3,
+                       callbacks=[UsageCallback("judge", ecfg["judge_usd_per_1m_tokens"], evaluation)])
     # 추론 모델은 temperature·n 을 받지 않으므로 RAGAS 가 넣지 못하게 한다
     llm = LangchainLLMWrapper(judge, bypass_temperature=True, bypass_n=True)
     data = EvaluationDataset.from_list([{"user_input": r["question"], "retrieved_contexts": r["contexts"] or [""],
@@ -62,53 +64,60 @@ def _send_scores(rows: list[dict], scores: list[dict]):
     langfuse.flush()
 
 
-def _table(rows: list[dict], scores: list[dict]) -> pd.DataFrame:
-    """질문별 표 + 맨 아래 '평균' 행"""
+def _table(rows: list[dict], scores: list[dict], path: Path) -> pd.DataFrame:
+    """질문별 표 + 맨 아래 '평균' 행을 반환하고 CSV로 자동 저장한다."""
     df = pd.DataFrame([{"id": r["id"], "question": r["question"], **s} for r, s in zip(rows, scores)])
     mean = df.mean(numeric_only=True).to_frame().T.assign(id="평균", question="")
-    return pd.concat([df, mean], ignore_index=True).round(4)
+    table = pd.concat([df, mean], ignore_index=True).round(
+        {name: 8 if name.endswith("cost_usd") else 4 for name in scores[0]})
+    table.to_csv(path, index=False, encoding="utf-8")
+    return table
 
 
 def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Retrieval: 검색한 청크가 정답에 필요한 내용을 담았나"""
     rows = read_jsonl(answers_path)
-    ragas = _ragas(rows, [LLMContextPrecisionWithReference(), LLMContextRecall()], cfg)
+    ragas = _ragas(rows, [LLMContextPrecisionWithReference(), LLMContextRecall()], cfg, "retrieval")
     scores = [{"context_precision": s["llm_context_precision_with_reference"], "context_recall": s["context_recall"],
                "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))}
               for r, s in zip(rows, ragas)]
     _send_scores(rows, scores)
-    return _table(rows, scores)
+    return _table(rows, scores, answers_path.with_name("retrieval.csv"))
 
 
 def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Generation: 답이 질문에 맞게 핵심 사실을 담았나 (answer_relevancy 는 KURE 임베딩으로 계산)"""
     rows = read_jsonl(answers_path)
-    ragas = _ragas(rows, [ResponseRelevancy()], cfg, embeddings=Embedder(cfg["embedding"]))
+    ragas = _ragas(rows, [ResponseRelevancy()], cfg, "generation", embeddings=Embedder(cfg["embedding"]))
     scores = [{"answer_relevancy": s["answer_relevancy"], "key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])}
               for r, s in zip(rows, ragas)]
     _send_scores(rows, scores)
-    return _table(rows, scores)
+    return _table(rows, scores, answers_path.with_name("generation.csv"))
 
 
 def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Grounding: 답의 주장들이 검색한 청크로 뒷받침되나 (낮으면 환각)"""
     rows = read_jsonl(answers_path)
-    ragas = _ragas(rows, [Faithfulness()], cfg)
+    ragas = _ragas(rows, [Faithfulness()], cfg, "grounding")
     scores = [{"faithfulness": s["faithfulness"]} for s in ragas]
     _send_scores(rows, scores)
-    return _table(rows, scores)
+    return _table(rows, scores, answers_path.with_name("grounding.csv"))
 
 
 def evaluate_end_to_end(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """End-to-End: 최종 답이 정답과 사실이 맞는지 + 질문당 지연 시간·토큰·예상 비용(USD)"""
     rows = read_jsonl(answers_path)
-    ragas = _ragas(rows, [FactualCorrectness()], cfg)
+    ragas = _ragas(rows, [FactualCorrectness()], cfg, "end_to_end")
     # 지연 시간 · 토큰 · 비용은 추적에 이미 있으므로 점수로는 factual_correctness 만 보낸다
     _send_scores(rows, [{"factual_correctness": s["factual_correctness(mode=f1)"]} for s in ragas])
-    usd_in, usd_out = cfg["llm"]["usd_per_1m_tokens"]
     scores = [{"factual_correctness": s["factual_correctness(mode=f1)"], "latency_s": r["latency_s"],
                "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"],
-               "reasoning_tokens": r["reasoning_tokens"],
-               "cost_usd": (r["input_tokens"] * usd_in + r["output_tokens"] * usd_out) / 1e6}
+               "cached_input_tokens": r["cached_input_tokens"], "reasoning_tokens": r["reasoning_tokens"],
+               "rewrite_input_tokens": r["rewrite"]["input_tokens"],
+               "rewrite_output_tokens": r["rewrite"]["output_tokens"],
+               "rewrite_cached_input_tokens": r["rewrite"]["cached_input_tokens"],
+               "rewrite_reasoning_tokens": r["rewrite"]["reasoning_tokens"],
+               "answer_cost_usd": r["cost_usd"], "rewrite_cost_usd": r["rewrite"]["cost_usd"],
+               "cost_usd": r["cost_usd"] + r["rewrite"]["cost_usd"]}
               for r, s in zip(rows, ragas)]
-    return _table(rows, scores)
+    return _table(rows, scores, answers_path.with_name("end_to_end.csv"))
