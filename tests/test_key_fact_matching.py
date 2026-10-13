@@ -13,6 +13,7 @@ from rag.evaluation.evaluation import _key_fact_ratio
     ("3", "13", 0),
     ("3", "30", 0),
     ("3", "3초", 0),
+    ("3", "가격은 3원", 0),
 ])
 def test_numbers_require_whole_values_and_matching_units(fact, text, expected):
     assert _key_fact_ratio([fact], text) == expected
@@ -114,7 +115,9 @@ def test_lowercase_expansion_keeps_positions_aligned():
 
 @pytest.mark.parametrize("fact,text,expected", [
     ("1,000만", "한도는 연 1,000만원입니다", 1),
+    ("1,000만", "한도는 연 1,000만", 1),
     ("800만", "그 밖의 대출은 1,800만원", 0),
+    ("1,000만", "1,000만명", 0),
 ])
 def test_amount_fact_without_currency_matches_amount_with_currency(fact, text, expected):
     assert _key_fact_ratio([fact], text) == expected

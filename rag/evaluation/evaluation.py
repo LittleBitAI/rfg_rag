@@ -44,9 +44,8 @@ def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddin
 
 
 _DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
-# '원'은 단위에 넣지 않고 숫자 뒤 일반 글자로 남긴다. 핵심 사실 '1,000만'이 답의 '1,000만원'과도 맞도록.
 _NUMBER = re.compile(rf"(?<![\d.,]){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*"
-                     r"(?:\s*(?:초|분|시간|개월|년|일|명|개|건|회|%))?")
+                     r"(?:\s*(?:원|초|분|시간|개월|년|일|명|개|건|회|%))?")
 _NUMBER_PART = re.compile(rf"({_DIGITS})?([억만천백])|({_DIGITS})")
 _MULTIPLIERS = {"억": 100_000_000, "만": 10_000, "천": 1_000, "백": 100}
 _TIME = r"(?:\d{1,2}:\d{2}|(?:오전|오후)\s*\d{1,2}시(?:\s*\d{1,2}분)?)"
@@ -133,12 +132,26 @@ def _negated(text: str, start: int, end: int) -> bool:
             or re.search(r"않|제외|별도|없", text[end:end + 6]) is not None)
 
 
+def _fact_pattern(fact: str) -> str:
+    """사실을 검색 패턴으로. 억·만 등으로 줄인 단위 없는 금액('1,000만')만 본문 쪽 '원'을 허용한다"""
+    parts, cursor = [], 0
+    for start, end, token in _semantic_spans(fact):
+        parts.append(re.escape(_plain_text(fact, cursor, start)[0]))
+        if token.endswith(":⟧") and re.search("[억만천백]", fact[start:end]):
+            parts.append(re.escape(token[:-1]) + "(?:원)?⟧")
+        else:
+            parts.append(re.escape(token))
+        cursor = end
+    parts.append(re.escape(_plain_text(fact, cursor, len(fact))[0]))
+    return "".join(parts)
+
+
 def _fact_matches(fact: str, hay: str, positions: list[tuple[int, int]], text: str) -> bool:
-    needle, _ = _canonical_text(fact)
+    pattern = _fact_pattern(fact)
     if not re.search(r"\d", fact):
         hay, positions = _plain_text(text, 0, len(text))
-    for match in re.finditer(re.escape(needle), hay):
-        if not needle or not _negated(text, positions[match.start()][0], positions[match.end() - 1][1]):
+    for match in re.finditer(pattern, hay):
+        if not pattern or not _negated(text, positions[match.start()][0], positions[match.end() - 1][1]):
             return True
     return False
 
