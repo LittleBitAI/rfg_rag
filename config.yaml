@@ -35,6 +35,11 @@ retrieval:
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
 
+rewrite:
+  model: gpt-5-mini
+  max_tokens: 2048              # 질문 재작성의 출력·추론 토큰 한도
+  reasoning_effort: low
+
 # ── ③ 검증 (03_validation) ──
 validation:
   golden_sets: [eval/golden_set.jsonl, eval/eval_questions.yaml]   # 직접 만든 질문·정답·핵심 사실
