@@ -68,7 +68,7 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
     expected_calls = ([call("검색용 질문", 3, doc_ids) for doc_ids in route.values()] if len(route) > 1
                       else [call("검색용 질문", 5, next(iter(route.values()), None))])
     assert index._search.call_args_list == expected_calls
-    generate_fn.assert_called_once_with(item["question"], [hit], llm_cfg)
+    generate_fn.assert_called_once_with(item["question"], [hit], llm_cfg, history=[])
     assert row["question"] == item["question"]
     assert row["reference"] == item["reference"]
     assert row["key_facts"] == item["key_facts"]

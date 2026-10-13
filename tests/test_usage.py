@@ -81,13 +81,15 @@ def test_ocr_invocation_records_every_image_with_source_without_langfuse(monkeyp
     assert all(float(row["cost_usd"]) == pytest.approx(0.000076) for row in rows)
 
 
-def test_answer_saves_actual_model_and_usage(monkeypatch, tmp_path):
+@pytest.mark.parametrize("turns", [0, 3, 12])
+def test_answer_saves_actual_model_usage_and_recent_history(monkeypatch, tmp_path, turns):
     client = MagicMock()
     client.__enter__.return_value = client
     client.chat.completions.create.return_value = ChatCompletion(**_completion("답변"))
     monkeypatch.setattr(generation.openai, "OpenAI", MagicMock(return_value=client))
 
-    result = generation.generate("질문", [], load_config()["llm"])
+    history = [{"question": f"이전 질문 {i}", "answer": f"이전 답변 {i}"} for i in range(turns)]
+    result = generation.generate("질문", [], load_config()["llm"], history=history or None)
 
     assert result["model"] == "actual-model-snapshot"
     assert result["cached_input_tokens"] == 40
@@ -95,6 +97,32 @@ def test_answer_saves_actual_model_and_usage(monkeypatch, tmp_path):
     assert result["cost_usd"] == pytest.approx(0.000076)
     row, = _usage_rows(tmp_path)
     assert row["stage"] == "answer" and row["subject"] == "질문"
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    expected_history = [message for turn in history[-10:] for message in
+                        [{"role": "user", "content": turn["question"]},
+                         {"role": "assistant", "content": turn["answer"]}]]
+    assert messages[1:-1] == expected_history
+    assert messages[-1]["content"].startswith("[검색 컨텍스트]\n")
+
+
+def test_rewrite_and_recent_answer_history_are_preserved_together(monkeypatch):
+    rewrite = MagicMock(side_effect=lambda question, cfg: {"question": "검색 " + question})
+    generate = MagicMock(side_effect=lambda question, hits, cfg, history:
+                         {"answer": "답변 " + question, "input_tokens": 1, "output_tokens": 1})
+    monkeypatch.setattr(generation, "rewrite_question", rewrite)
+    monkeypatch.setattr(generation, "generate", generate)
+    monkeypatch.setattr(generation, "get_client", MagicMock())
+    index = MagicMock()
+    index.search.return_value = []
+    items = [{"id": f"q{i}", "question": f"질문 {i}"} for i in range(12)]
+
+    rows = generation.answer_questions(items, index, {}, {})
+
+    assert len(rows) == rewrite.call_count == generate.call_count == 12
+    for i, call in enumerate(generate.call_args_list):
+        assert call.kwargs["history"] == [{"question": r["question"], "answer": r["answer"]}
+                                           for r in rows[max(0, i - 10):i]]
+        assert index.search.call_args_list[i].kwargs["query"] == "검색 " + items[i]["question"]
 
 
 def _answer_row() -> dict:
