@@ -1,5 +1,14 @@
 ---
-colors: {}   # 색 후보를 고른 뒤 채운다
+colors:
+  bg: '#ffffff'
+  surface: '#f6f6f4'      # 출처 카드 · 청크 바탕
+  border: '#e3e3df'
+  text: '#1c1c1a'
+  muted: '#6b6b66'        # 흰 바탕 5.36:1, surface 위 4.95:1
+  accent: '#0f766e'       # 청록 — 흰 글자 5.47:1
+  accentSoft: '#e3f1ef'   # [n] 칩 바탕 — 본문 글자 14.7:1
+  onAccent: '#ffffff'
+  danger: '#b42318'
 typography:
   font: '-apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif'
   display:  { size: 32px, weight: 600, lineHeight: 1.3 }   # 첫 화면 제목 하나
@@ -52,7 +61,9 @@ rounded:
 
 다섯 단계(display · question · body · label · small)만 쓰고, 한 단계가 두 가지 뜻을 갖지 않는다.
 label 은 "구역 이름"과 "출처 번호"(칩) 둘 다지만 둘 다 '답변 바깥의 표지'라는 한 가지 뜻이다.
+답변 안의 굵은 글씨와 표 머리(`strong` · `th`)는 단계가 아니라 body 의 강조로 600 을 쓴다.
 
 ## 색
 
-(고른 뒤 채운다)
+글자와 바탕은 무채색이고, 강조색(청록)은 근거로 가는 길에만 쓴다 — 보내기 버튼, `[n]` 칩, 펼친 출처 카드의 테두리.
+그래서 눈이 본문에서 칩으로, 칩에서 카드로 따라간다. 청록 · 파랑 · 무채색 후보 중 청록을 골랐다 (파랑은 답변 속 링크와 겹치고, 무채색은 칩이 묻힌다).

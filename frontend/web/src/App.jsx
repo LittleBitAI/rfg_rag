@@ -138,17 +138,23 @@ function Sources({ id, sources, contexts, open, onToggle }) {
       {open !== null && (
         <blockquote className="chunk">
           <span className="label">[{open}] {sources[open - 1]}</span>
-          {contexts[open - 1]}
+          <Markdown remarkPlugins={[remarkGfm]}>{contexts[open - 1]}</Markdown>
         </blockquote>
       )}
     </div>
   )
 }
 
-// [1] · [1, 2] 를 #cite-n 링크로 바꿔 두고 a 를 칩으로 그린다
+const cite = (n) => `[${n.trim()}](#cite-${n.trim()})`
+
+// [1] · [1, 2] 를 #cite-n 링크로 바꿔 두고 a 를 칩으로 그린다.
+// 모델이 [PER-002 근거: 1] 처럼 쓰기도 해서, '근거' 가 든 괄호 안의 홀로 선 번호도 칩으로 만든다
 function linkCitations(text) {
-  return text.replace(/\[(\d+(?:\s*,\s*\d+)*)\](?!\()/g, (_, nums) =>
-    nums.split(',').map((n) => `[${n.trim()}](#cite-${n.trim()})`).join(''))
+  return text.replace(/\[([^[\]]+)\](?!\()/g, (whole, inner) => {
+    if (/^\s*\d+(\s*,\s*\d+)*\s*$/.test(inner)) return inner.split(',').map(cite).join('')
+    if (!inner.includes('근거')) return whole
+    return `[${inner.replace(/(?<![\w.\-가-힣])\d{1,2}(?![\w.%\-가-힣])/g, cite)}]`
+  })
 }
 
 function Answer({ text, count, onCite }) {

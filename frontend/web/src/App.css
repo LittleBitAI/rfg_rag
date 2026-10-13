@@ -5,8 +5,8 @@
   --border: #e3e3df;
   --text: #1c1c1a;
   --muted: #6b6b66;
-  --accent: #1c1c1a;
-  --accent-soft: #ececea;
+  --accent: #0f766e;
+  --accent-soft: #e3f1ef;
   --on-accent: #ffffff;
   --danger: #b42318;
 
@@ -24,9 +24,10 @@ body {
   color: var(--text);
   font: 400 16px/1.7 var(--font);
   word-break: keep-all;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
+strong, th { font-weight: 600; }
 button { font: inherit; color: inherit; cursor: pointer; }
 button:disabled { cursor: default; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -75,7 +76,6 @@ h1 { margin: 0; font-size: 32px; line-height: 1.3; font-weight: 600; }
   width: 40px; height: 40px;
   border: 0; border-radius: 8px;
   background: var(--accent); color: var(--on-accent);
-  font-weight: 600;
 }
 .send:disabled { background: var(--accent-soft); color: var(--muted); }
 
@@ -88,7 +88,6 @@ h1 { margin: 0; font-size: 32px; line-height: 1.3; font-weight: 600; }
   padding: 12px var(--gutter);
   background: var(--bg);
 }
-.brand { font-weight: 600; }
 .ghost {
   padding: 4px 12px;
   border: 1px solid var(--border); border-radius: 8px;
@@ -107,6 +106,8 @@ h1 { margin: 0; font-size: 32px; line-height: 1.3; font-weight: 600; }
   scroll-margin-top: 64px;
 }
 .turn + .turn { border-top: 1px solid var(--border); }
+/* 새 질문이 화면 맨 위로 올라갈 자리를 남긴다 */
+.turn:last-of-type { min-height: calc(100vh - 224px); }
 
 .waiting { margin: 0; color: var(--muted); animation: pulse 1.6s ease-in-out infinite; }
 .error { margin: 0; color: var(--danger); }
@@ -116,7 +117,7 @@ h1 { margin: 0; font-size: 32px; line-height: 1.3; font-weight: 600; }
 /* ── 출처 카드 ── */
 .sources { display: flex; flex-direction: column; gap: 8px; }
 .cards {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 40%), 1fr)); gap: 8px;
   margin: 0; padding: 0; list-style: none;
 }
 .card {
@@ -130,7 +131,7 @@ h1 { margin: 0; font-size: 32px; line-height: 1.3; font-weight: 600; }
 .card:hover { border-color: var(--border); }
 .card[aria-expanded="true"] { border-color: var(--accent); background: var(--bg); }
 .num { grid-row: span 2; font-weight: 600; }
-.file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .page { color: var(--muted); }
 
 .chunk {
@@ -139,15 +140,16 @@ h1 { margin: 0; font-size: 32px; line-height: 1.3; font-weight: 600; }
   padding: 12px 16px;
   background: var(--surface);
   border-radius: 8px;
-  white-space: pre-wrap;
 }
 .chunk .label { display: block; margin-bottom: 8px; }
 
 /* ── 답변 ── */
 .answer { display: flex; flex-direction: column; gap: 8px; }
-.answer p, .answer ul, .answer ol, .answer table { margin: 0 0 12px; }
-.answer table { border-collapse: collapse; display: block; overflow-x: auto; }
-.answer th, .answer td { padding: 4px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.answer p, .answer ul, .answer ol, .answer table, .chunk p, .chunk table { margin: 0 0 12px; }
+.answer table, .chunk table { border-collapse: collapse; display: block; overflow-x: auto; }
+.answer th, .answer td, .chunk th, .chunk td {
+  padding: 4px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top;
+}
 .answer th { background: var(--surface); }
 .chip {
   display: inline-flex; align-items: center; justify-content: center;
@@ -155,7 +157,7 @@ h1 { margin: 0; font-size: 32px; line-height: 1.3; font-weight: 600; }
   margin: 0 2px; padding: 0 4px;
   vertical-align: 2px;
   border: 0; border-radius: 6px;
-  background: var(--accent-soft);
+  background: var(--accent-soft); color: var(--accent);
   font-size: 13px; line-height: 1; font-weight: 600;
 }
 .chip:hover { background: var(--accent); color: var(--on-accent); }
