@@ -18,10 +18,11 @@ python -m pip install -r requirements.txt
 ```
 
 저장소 최상위에 `.env` 를 만듭니다.
+프로젝트 책임자는 선택 사항인 `LANGFUSE_*` 키로 검색·생성 추적과 평가 점수를
+Langfuse Cloud로 보낼 수 있습니다. 키가 없어도 보내지 않고 똑같이 동작합니다.
 
 ```dotenv
 OPENAI_API_KEY=sk-...
-# (선택 · 프로젝트 책임자만) 검색 · 생성 추적과 평가 점수를 Langfuse Cloud 로 보냄. 없으면 보내지 않고 똑같이 동작
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
@@ -32,8 +33,6 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)을 내려받습니다.
 
 ## v11 전처리 패키지 사용
-
-### 아이디어 출처와 실제 파이프라인 반영
 
 v11 전처리 패키지와 이 폴더의 연동 아이디어 출처는 Se hui Hwang
 ([@hwangsiiii](https://github.com/hwangsiiii))입니다. 전처리 담당자의
@@ -73,11 +72,16 @@ NVIDIA L4 VM에서 이 경로를 실제 실행해 문서 98개·청크 18,984개
 패키지와 실행 결과(`data/`, `artifacts/`)는 git에 포함되지 않으므로 팀원과 VM에 별도로 전달해야 합니다.
 
 `01_preprocessing.ipynb` 설정 셀에서 입력을 선택합니다.
+기본값은 `data/rfp.zip`을 현재 파서로 처리합니다.
 
 ```python
-PREPROCESSED = None  # 기본값: data/rfp.zip을 현재 파서로 처리
-# v11을 쓰려면 위 값을 다음 경로로 변경
-# PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
+PREPROCESSED = None
+```
+
+v11을 쓰려면 위 값을 다음 경로로 변경합니다.
+
+```python
+PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 ```
 
 01을 처음부터 실행하면 v11의 저장된 OCR 텍스트와 청크를 읽어
