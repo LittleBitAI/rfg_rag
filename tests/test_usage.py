@@ -15,6 +15,7 @@ from rag.config import load_config, write_jsonl
 from rag.evaluation import evaluation
 from rag.generation import generation
 from rag.preprocessing import parsing
+from rag.validation import validation
 
 TOKENS = {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130,
           "prompt_tokens_details": {"cached_tokens": 40}, "completion_tokens_details": {"reasoning_tokens": 20}}
@@ -125,7 +126,7 @@ def test_rewrite_and_recent_answer_history_are_preserved_together(monkeypatch):
         assert index.search.call_args_list[i].kwargs["query"] == "검색 " + items[i]["question"]
 
 
-def test_reset_context_clears_history_before_that_question(monkeypatch):
+def test_reset_context_from_eval_yaml_clears_history_before_that_question(monkeypatch, tmp_path):
     generate = MagicMock(side_effect=lambda question, hits, cfg, history:
                          {"answer": "답변 " + question, "input_tokens": 1, "output_tokens": 1})
     monkeypatch.setattr(generation, "rewrite_question", lambda question, cfg: {"question": question})
@@ -133,8 +134,11 @@ def test_reset_context_clears_history_before_that_question(monkeypatch):
     monkeypatch.setattr(generation, "get_client", MagicMock())
     index = MagicMock()
     index.search.return_value = []
-    items = [{"id": "q0", "question": "질문 0"}, {"id": "q1", "question": "질문 1", "reset_context": True},
-             {"id": "q2", "question": "질문 2"}]
+    questions = tmp_path / "eval_questions.yaml"
+    questions.write_text("- {id: q0, question: 질문 0, reference: 정답, must_include: [정답]}\n"
+                         "- {id: q1, question: 질문 1, reference: 정답, must_include: [정답], reset_context: true}\n"
+                         "- {id: q2, question: 질문 2, reference: 정답, must_include: [정답]}\n", encoding="utf-8")
+    items, _ = validation.check_eval_items(validation.load_eval_items([str(questions)]))
 
     generation.answer_questions(items, index, {}, {})
 
