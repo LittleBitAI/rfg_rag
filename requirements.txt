@@ -31,6 +31,10 @@ langchain-hwp-hwpx-loader>=0.1.1   # HwpHwpxLoader (HWP 5.x / HWPX 본문·표·
 hwp-hwpx-parser>=1.0,<2            # (위 로더의 내부 파서 — 무한 루프 버그 패치 때문에 직접 import)
 pillow>=10              # (OCR) 그림 크기 확인
 
+# ── 질문 화면 (frontend/server.py)
+fastapi>=0.115
+uvicorn>=0.30
+
 # ── 기타
 numpy>=1.26
 pandas>=2.0
