@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import os
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -42,14 +43,104 @@ def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddin
     return evaluate(data, metrics=metrics, llm=llm, embeddings=emb).scores
 
 
-def _norm(s: str) -> str:
-    return re.sub(r"[\s,]", "", s).lower()
+_DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
+_NUMBER = re.compile(rf"(?<![\d.,]){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*"
+                     r"(?:\s*(?:원|초|분|시간|개월|년|일|명|개|건|회|%))?")
+_NUMBER_PART = re.compile(rf"({_DIGITS})?([억만천백])|({_DIGITS})")
+_MULTIPLIERS = {"억": 100_000_000, "만": 10_000, "천": 1_000, "백": 100}
+_TIME = r"(?:\d{1,2}:\d{2}|(?:오전|오후)\s*\d{1,2}시(?:\s*\d{1,2}분)?)"
+_DATE = re.compile(r"(?<!\d)(?P<year>\d{4})[.\-년]\s*(?P<month>\d{1,2})[.\-월]\s*"
+                   r"(?P<day>\d{1,2})(?:일)?(?!\d)(?:\s*\([월화수목금토일](?:요일)?\))?"
+                   rf"(?:\s*(?P<time>{_TIME}))?")
+
+
+def _parse_number(value: str) -> str:
+    total = Decimal(0)
+    section = Decimal(0)
+    for match in _NUMBER_PART.finditer(value):
+        digits, scale, plain = match.groups()
+        number = Decimal((digits or plain or "1").replace(",", ""))
+        multiplier = _MULTIPLIERS.get(scale, 1)
+        if multiplier >= 10_000:
+            total += (section + (number if digits else 0)) * multiplier
+            section = Decimal(0)
+        else:
+            section += number * multiplier
+    unit = re.sub(rf"{_DIGITS}|[억만천백\s]", "", value)
+    return f"⟦number:{(total + section).normalize()}:{unit}⟧"
+
+
+def _parse_time(value: str) -> str:
+    hour, *minutes = map(int, re.findall(r"\d+", value))
+    if "오전" in value or "오후" in value:
+        hour = hour % 12 + (12 if "오후" in value else 0)
+    return f"⟦time:{hour:02}:{minutes[0] if minutes else 0:02}⟧"
+
+
+def _date_spans(match: re.Match) -> list[tuple[int, int, str]]:
+    year, month, day = (int(match[name]) for name in ("year", "month", "day"))
+    end = match.start("time") if match["time"] else match.end()
+    spans = [(match.start(), end, f"⟦date:{year:04}-{month:02}-{day:02}⟧")]
+    if match["time"]:
+        spans.append((match.start("time"), match.end(), _parse_time(match["time"])))
+    return spans
+
+
+def _number_spans(text: str, start: int, end: int) -> list[tuple[int, int, str]]:
+    return [(m.start(), m.end(), _parse_number(m[0])) for m in _NUMBER.finditer(text, start, end)]
+
+
+def _semantic_spans(text: str) -> list[tuple[int, int, str]]:
+    spans = []
+    start = 0
+    for match in _DATE.finditer(text):
+        spans.extend(_number_spans(text, start, match.start()))
+        spans.extend(_date_spans(match))
+        start = match.end()
+    spans.extend(_number_spans(text, start, len(text)))
+    return spans
+
+
+def _plain_text(text: str, start: int, end: int) -> tuple[str, list[tuple[int, int]]]:
+    positions = [(i, i + 1) for i in range(start, end) if not text[i].isspace() and text[i] != ","]
+    return "".join(text[i].lower() for i, _ in positions), positions
+
+
+def _canonical_text(text: str) -> tuple[str, list[tuple[int, int]]]:
+    parts, positions = [], []
+    cursor = 0
+    for start, end, token in _semantic_spans(text):
+        plain, offsets = _plain_text(text, cursor, start)
+        parts.extend((plain, token))
+        positions.extend(offsets)
+        positions.extend([(start, end)] * len(token))
+        cursor = end
+    plain, offsets = _plain_text(text, cursor, len(text))
+    parts.append(plain)
+    positions.extend(offsets)
+    return "".join(parts), positions
+
+
+def _negated(text: str, start: int, end: int) -> bool:
+    return (start > 0 and text[start - 1] in "미불비"
+            or re.search(r"않|제외|별도|없", text[end:end + 6]) is not None)
+
+
+def _fact_matches(fact: str, hay: str, positions: list[tuple[int, int]], text: str) -> bool:
+    needle, _ = _canonical_text(fact)
+    if not re.search(r"\d", fact):
+        hay, positions = _plain_text(text, 0, len(text))
+    for match in re.finditer(re.escape(needle), hay):
+        if not needle or not _negated(text, positions[match.start()][0], positions[match.end() - 1][1]):
+            return True
+    return False
 
 
 def _key_fact_ratio(facts: list[str], text: str) -> float:
     """핵심 사실 중 text 에 들어 있는 비율. 'A|B' 는 둘 중 하나만 있어도 맞음"""
-    hay = _norm(text)
-    return sum(any(_norm(alt) in hay for alt in str(f).split("|")) for f in facts) / len(facts)
+    hay, positions = _canonical_text(text)
+    return sum(any(_fact_matches(alt, hay, positions, text) for alt in str(f).split("|"))
+               for f in facts) / len(facts)
 
 
 def _send_scores(rows: list[dict], scores: list[dict]):
