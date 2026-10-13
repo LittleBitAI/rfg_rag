@@ -66,16 +66,61 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 | 파이프라인 | 노트북 | 파일 | 다음 파이프라인에 넘기는 것 |
 |---|---|---|---|
 | ① 전처리 | `01_preprocessing.ipynb` | `rag/preprocessing/parsing.py` (PDF · HWP/HWPX 파싱 · 정제 · OCR), `rag/preprocessing/chunking.py` (청크 분할) | `artifacts/chunks.jsonl`, `artifacts/docs.jsonl` |
-| ② 검색 | `02_retrieval.ipynb` | `rag/retrieval/indexing.py` (임베딩 · FAISS · BM25 색인), `rag/retrieval/retrieval.py` (하이브리드 검색 · 발주기관 라우팅) | `artifacts/index/` |
+| ② 검색 | `02_retrieval.ipynb` | `rag/retrieval/indexing.py` (임베딩 · FAISS · BM25 색인), `rag/retrieval/rewrite.py` (질문 재작성 · API 사용량), `rag/retrieval/retrieval.py` (하이브리드 검색 · 발주기관 라우팅) | `artifacts/index/` · `artifacts/retrieval_settings.jsonl` |
 | ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (QA 생성 · 근거 키워드 정리 · 분할 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
-| ④ 생성 | `04_generation.ipynb` | `rag/generation/generation.py` (검색 → 답변 · 토큰 · 지연 시간) | `artifacts/answers.jsonl` |
+| ④ 생성 | `04_generation.ipynb` | `rag/generation/generation.py` (검색 → 이전 대화를 참고해 답변 · 토큰 · 지연 시간) | `artifacts/answers.jsonl` |
 | ⑤ 평가 | `05_evaluation.ipynb` | `rag/evaluation/evaluation.py` (네 가지 평가) | `artifacts/retrieval.csv` · `generation.csv` · `grounding.csv` · `end_to_end.csv` |
 
 공통: `rag/config.py` (`config.yaml` · `.env` 읽기, jsonl 읽기/쓰기), `config.yaml` (모든 설정 — 파이프라인별 구역).
 
+01·02·04·05에는 직접 값을 조절하는 설정 셀이 있습니다. 변수의 초기값은 `config.yaml`에서 읽으므로, 바꾸려는 변수의 오른쪽을 원하는 값으로 바꾸세요.
+
+| 노트북 | 설정 셀에서 조절하는 값 |
+|---|---|
+| 01 전처리 | `OCR`, `OCR_MODEL`, `OCR_REASONING_EFFORT`, `OCR_MAX_TOKENS`, `OCR_PRICES`, `CHUNK_SIZE` |
+| 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `REWRITE_PRICES`, `DENSE_WEIGHT` (BM25는 `1 - DENSE_WEIGHT`) |
+| 04 생성 | `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_TOKENS`, `LLM_PRICES` |
+| 05 평가 | `JUDGE_MODEL`, `JUDGE_REASONING_EFFORT`, `JUDGE_MAX_TOKENS`, `JUDGE_PRICES` |
+
+예를 들어 02 설정 셀의 `DENSE_WEIGHT = cfg["retrieval"]["dense_weight"]`를 `DENSE_WEIGHT = 0.8`로 바꾸면 Dense 80%·BM25 20%로 검색합니다.
+설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
+기존 색인이 있어도 이번 변경 후에는 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 청킹 크기를 바꾸면 01부터, 검색 설정을 바꾸면 02부터 후속 노트북을 다시 실행해야 합니다.
+모델을 바꾸면 같은 설정 셀의 `*_PRICES`도 해당 모델의 입력 · 캐시 입력 · 출력 단가(USD / 100만 토큰)로 맞추세요.
+기본 단가는 [OpenAI 공식 gpt-5-mini 문서](https://developers.openai.com/api/docs/models/gpt-5-mini)의 Standard 요금입니다. 비용은 설정한 단가에 따른 추정값이며 실제 청구서와는 다를 수 있습니다.
+
+02 검색 예제와 04 답변 생성은 검색 전에 `rag/retrieval/rewrite.py`로 질문을 재작성합니다.
+`config.yaml`의 `rewrite.model`, `rewrite.max_tokens`, `rewrite.reasoning_effort`가 이 API 호출에 적용됩니다.
+검색에는 재작성한 질문을 쓰고, 기관 라우팅과 답변 생성·평가에는 원본 질문을 씁니다. 재작성 출력이 비면 원본 질문으로 검색합니다.
+04는 평가셋 순서대로 답하며 직전 질문·답변 최대 10개를 다음 생성 요청에 전달합니다. 이전 대화는 질문 이해에만 사용하고 사실의 근거는 현재 검색한 문서로 제한합니다.
+질문마다 재작성 API 호출 비용이 추가되며, 04의 `answers.jsonl`에는 검색용 질문·모델·토큰·비용·지연 시간을 `rewrite` 필드에 별도로 저장합니다.
+답변 생성도 실제 응답 모델·캐시 입력 토큰·비용을 저장합니다. 05는 저장된 비용을 사용하므로 평가 시 설정을 바꿔도 이전 생성 비용이 바뀌지 않습니다.
+`latency_s`는 재작성·검색·답변 생성 전체 시간입니다. `end_to_end.csv`의 `cost_usd`는 rewrite + 답변 생성 비용이며 `rewrite_cost_usd`, `answer_cost_usd`로 구분됩니다. OCR과 평가 비용은 별도로 집계합니다.
+이번 변경 전에 만든 `answers.jsonl`은 새 사용량 필드가 없으므로 02 설정 셀 → 04 → 05를 다시 실행하세요.
+
+## API 사용량 자동 기록
+
+Langfuse 키 없이도 OCR·질문 재작성·답변 생성·Judge/RAGAS의 호출마다 `artifacts/api_usage.csv`에 한 행이 자동 추가됩니다.
+01·02·04·05의 마지막 셀에서 단계·모델별 누적 호출 수, 입력·캐시 입력·출력·추론 토큰과 예상 비용을 확인합니다.
+
+| `stage` | 기록 대상 | `subject` / `evaluation` |
+|---|---|---|
+| `ocr` | 이미지 분석 LLM 호출 | 원본 문서 파일명 |
+| `rewrite` | 02 검색 예제와 04의 질문 재작성 | 원본 질문 |
+| `answer` | 04 답변 생성 | 원본 질문 |
+| `judge` | RAGAS 내부 심판 호출 | 평가 종류: retrieval / generation / grounding / end_to_end |
+
+Judge는 RAGAS가 사용하는 모델이므로 같은 요청을 두 비용으로 더하지 않습니다. RAGAS의 내부 재시도도 응답에 사용량이 있으면 기록합니다.
+Judge 호출은 평가 종류 단위로 집계하며 개별 질문 ID와 연결하지 않습니다. 03의 평가 데이터셋 생성 API와 로컬 KURE 임베딩은 이 CSV의 대상이 아닙니다.
+캐시 입력 토큰은 입력 토큰에, 추론 토큰은 출력 토큰에 이미 포함되어 있습니다. 비용 계산은 캐시 입력 단가를 따로 적용하고 추론 토큰을 이중 과금하지 않습니다.
+
+`api_usage.csv`는 재실행할 때도 누적되며 평가 점수 CSV는 최신 결과로 덮어씁니다. 새 실험의 사용량만 보고 싶으면 실행 전에 기존 `api_usage.csv`를 다른 위치에 보관하세요.
+API 응답을 받지 못한 요청은 소비 토큰을 확인할 수 없어 기록하지 않습니다. OCR을 끄면 새 OCR 호출이 없지만 이전 사용량은 표에 남습니다.
+CSV는 UTF-8 without BOM입니다.
+
 ## 평가 — 하나의 답변 파일을 네 가지로
 
 05 의 네 평가는 모두 04 가 만든 같은 `artifacts/answers.jsonl` 을 채점합니다. 표마다 질문별 점수와 맨 아래 `평균` 행이 나옵니다.
+각 평가 함수가 답변 파일과 같은 폴더에 점수 CSV를 자동 저장하므로 노트북 밖에서 호출해도 저장됩니다.
 
 | 평가 | 판단하는 것 | 지표 |
 |---|---|---|
@@ -97,7 +142,8 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 > ⚠️ 연말정산 질문의 근거(국세청 연말정산 안내 등)가 ZIP 에 없으면 "제공된 문서에서 확인할 수 없습니다" 가 정상 답입니다.
 
 ## OCR (선택, 기본 꺼짐)
-`01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + OpenAI 비전 모델(`gpt-5-mini`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
+`01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
+OCR 모델·추론 강도·출력/추론 토큰 한도의 기본값은 `config.yaml`의 `ocr` 구역에서 읽으며 01의 설정 셀에서 바꿀 수 있습니다.
 여러 쪽에 반복되는 그림(로고 · 장식, `parsing.max_repeat_image_pages` 쪽 이상)은 청크에 넣지 않습니다 — HWP 는 아예 보내지 않고, PDF 는 설명을 받은 뒤 반복된 설명을 뺍니다.
 `False` 면 그림은 API 로 가지 않습니다.
 

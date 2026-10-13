@@ -1,13 +1,16 @@
 """④ 생성 — 검색한 청크와 이전 대화를 컨텍스트로 GPT가 답한다.
 담당: 생성. 03 검증의 eval_set.jsonl 질문마다 02 검색 → 답변을 만들어
 answers.jsonl로 05 평가에 넘긴다.
-.env에 Langfuse 키가 있으면 질문마다 추적 하나가 남는다."""
+.env에 Langfuse 키가 있으면 질문마다 재작성·검색·생성 추적이 남는다."""
 from __future__ import annotations
 
 import time
 
 from langfuse import get_client, observe
 from langfuse.openai import openai
+
+from ..retrieval.rewrite import rewrite_question
+from ..usage import record_usage
 
 SYSTEM_PROMPT = (
     "당신은 공공기관 제안요청서(RFP) 문서 기반 질의응답 도우미입니다.\n"
@@ -46,18 +49,19 @@ def format_history(history: list[dict]) -> str:
 
 def generate(question: str, hits: list[dict], llm_cfg: dict, history: list[dict] | None = None) -> dict:
     """검색 청크와 이전 대화를 사용해 답변 및 토큰 사용량을 생성."""
+    prices = llm_cfg["usd_per_1m_tokens"]
     history = history or []
-    
-    messages = [{"role": "system", "content":SYSTEM_PROMPT}]
-    
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
     # 최대 10개 대화 (이전 질문 10개, 답변 10개, 총 20개 메세지)
-    for turn in history[-10]:
+    for turn in history[-10:]:
         messages.append({"role": "user", "content": turn["question"]})
         messages.append({"role": "assistant", "content": turn["answer"]})
-    
+
     messages.append({
-        "role" : "user",
-        "content": f"[컨덱스트]\n{format_context(hits)}\n\n[질문]\n{question}"
+        "role": "user",
+        "content": f"[검색 컨텍스트]\n{format_context(hits)}\n\n[질문]\n{question}"
     })
 
     with openai.OpenAI(max_retries=3) as client:
@@ -65,38 +69,28 @@ def generate(question: str, hits: list[dict], llm_cfg: dict, history: list[dict]
             name="generate-answer", model=llm_cfg["model"], max_completion_tokens=int(llm_cfg["max_tokens"]),
             reasoning_effort=llm_cfg["reasoning_effort"],
             messages=messages)
-
-    usage = resp.usage
-    details = usage.completion_tokens_details
-    return {"answer": resp.choices[0].message.content or "", "input_tokens": usage.prompt_tokens,
-        "output_tokens": usage.completion_tokens, "reasoning_tokens": ((details.reasoning_tokens if details else 0) or 0),}
+    usage = record_usage("answer", resp.model, resp.usage.model_dump(), prices, subject=question)
+    return {"answer": resp.choices[0].message.content or "", **usage}
 
 
 # 입력·출력에서 검색 색인 객체를 캡처하지 않는다.
 @observe(name="answer-question", capture_input=False, capture_output=False)
-def answer_question(item: dict, index, llm_cfg: dict, history: list[dict] | None = None) -> dict:
-    """질문 하나를 검색하고, 직전 대화 기록을 참고해 답변한다."""
+def answer_question(item: dict, index, llm_cfg: dict, rewrite_cfg: dict, history: list[dict] | None = None) -> dict:
+    """질문 하나: 재작성 → 검색 → 이전 대화를 참고해 원본 질문으로 생성."""
     t0 = time.perf_counter()
-    hits = index.search(item["question"])
+    rewrite = rewrite_question(item["question"], rewrite_cfg)
+    hits = index.search(item["question"], query=rewrite["question"])
     out = generate(item["question"], hits, llm_cfg, history=history)
-
     langfuse = get_client()
     langfuse.update_current_span(input=item["question"], output=out["answer"],
-        metadata={
-            "eval_id": item["id"],
-            "history_turns": len(history or []),
-        },
-    )
-
-    return {**item, **out, "contexts": [h["body"] for h in hits],
-        "sources": [
-            f"{h['source']} p.{h['page']}" if h["page"] else h["source"] for h in hits],
-        "latency_s": round(time.perf_counter() - t0, 2),
-        "trace_id": langfuse.get_current_trace_id(),
-    }
+                                 metadata={"eval_id": item["id"], "history_turns": len(history or [])})
+    return {**item, **out, "rewrite": rewrite, "contexts": [h["body"] for h in hits],
+            "sources": [f"{h['source']} p.{h['page']}" if h["page"] else h["source"] for h in hits],
+            "latency_s": round(time.perf_counter() - t0, 2), "trace_id": langfuse.get_current_trace_id()}
 
 
-def answer_questions(eval_set: list[dict], index, llm_cfg: dict, history_window: int = 10) -> list[dict]:
+def answer_questions(eval_set: list[dict], index, llm_cfg: dict, rewrite_cfg: dict,
+                     history_window: int = 10) -> list[dict]:
     """질문을 순서대로 처리하며 직전 history_window개의 Q&A를 전달한다.
 
     테스트용 대화 기록은 이 함수 실행 중에만 유지된다.
@@ -106,7 +100,7 @@ def answer_questions(eval_set: list[dict], index, llm_cfg: dict, history_window:
     history = []
 
     for i, item in enumerate(eval_set, 1):
-        row = answer_question(item, index, llm_cfg, history=history[-history_window])
+        row = answer_question(item, index, llm_cfg, rewrite_cfg, history=history[-history_window:])
         rows.append(row)
 
         # 다음 질문에서 이전 대화로 사용할 수 있도록 Q&A를 추가한다.
