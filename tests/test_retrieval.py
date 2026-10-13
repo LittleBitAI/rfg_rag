@@ -89,9 +89,10 @@ def test_comparison_interleaves_and_skips_long_chunk_without_stopping():
     assert [hit["chunk_id"] for hit in index.search("기관 가와 기관 나 비교")] == ["c0", "c2", "c3"]
 
 
-def test_csv_routes_normalized_and_truncated_filenames_alongside_cover(tmp_path):
+@pytest.mark.parametrize("bom", ["", "\ufeff"])
+def test_csv_routes_normalized_and_truncated_filenames_alongside_cover(tmp_path, bom):
     path = tmp_path / "orgs.csv"
-    path.write_text("파일명,발주 기관\n조달 사업 (최종).PDF,(재) 미래정보재단\n", encoding="utf-8")
+    path.write_text(bom + "파일명,발주 기관\n조달 사업 (최종).PDF,(재) 미래정보재단\n", encoding="utf-8")
     docs = [{"doc_id": "a", "source": "조달_사업.pdf", "title": "조달 사업",
              "cover_text": "발주기관: 한국철도공사", "head_text": ""}]
     router = DocRouter(docs, read_csv_orgs(path))

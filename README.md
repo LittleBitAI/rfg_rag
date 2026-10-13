@@ -29,7 +29,7 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 
 RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴더도 가능).
 검색에 필요한 `data/data_list.csv`도 담당자에게 받아 둡니다 (`paths.org_csv`).
-UTF-8 without BOM CSV에 `파일명`, `발주 기관` 열이 있어야 합니다. 목록은 자동 생성하지 않으며,
+UTF-8 CSV에 `파일명`, `발주 기관` 열이 있어야 합니다. Excel이 붙인 BOM도 읽습니다. 목록은 자동 생성하지 않으며,
 파일이 없으면 02 색인·검색과 질문 화면을 실행하기 전에 담당자에게 요청하세요.
 검색은 요구사항 코드 일치 청크를 먼저 담고, 거의 같은 본문을 제외하며,
 `retrieval.token_budget`(기본 2500)으로 본문 토큰 합을 제한합니다. 첫 청크는 예산을 넘어도 유지합니다.
