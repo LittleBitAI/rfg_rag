@@ -6,15 +6,25 @@ RFP 문서(PDF · HWP · HWPX)를 파싱해 청크로 나누고, BM25 + 임베�
 작업은 다섯 파이프라인으로 나뉘고, 파이프라인마다 담당자 한 명 · 노트북 하나 · `rag/` 아래 폴더 하나가 있습니다.
 노트북은 설정 · 함수 호출 · 결과 표시만 하고, 로직은 모두 `rag/` 모듈에 있습니다.
 
-## 설치 — Python 3.10 (Windows, NVIDIA GPU)
-PyTorch 를 **먼저** CUDA 빌드로 설치한 뒤 `requirements.txt` 를 설치합니다.
-RTX 50 계열(Blackwell sm_120)은 CUDA 12.8 이상 빌드가 필요합니다 (cu124 이하는 `no kernel image` 오류).
+## 설치 — GCP VM (SSH · Ubuntu · NVIDIA L4)
+VM 사양: `g2-standard-4`(vCPU 4 · 메모리 16GB) + L4 1개, 디스크 200GB 이하, CUDA 드라이버가 든 이미지(예: `ubuntu-accelerator-2204-amd64-with-nvidia-550`).
+리전은 `us-central1`, chunk4 배정이면 `us-east1` 입니다.
+
+VS Code Remote-SSH 로 VM 에 접속해 저장소를 받고 `setup_vm.sh` 를 실행합니다.
+`.venv` 를 만들고, 드라이버 550 에서 도는 PyTorch CUDA 12.6 빌드 → `requirements.txt` 순서로 설치한 뒤 GPU 가 잡히는지 확인합니다.
 
 ```bash
-python3.10 -m venv .venv
-.venv\Scripts\activate                       # Linux/WSL: source .venv/bin/activate
-python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
-python -m pip install -r requirements.txt
+git clone -b feature/Retrieval https://github.com/LittleBitAI/rfg_rag.git
+cd rfg_rag
+bash setup_vm.sh            # 마지막 줄에 'torch … · NVIDIA L4' 가 나오면 성공
+```
+
+> PyPI 기본 `torch` 는 CUDA 13 빌드라 드라이버 580 이상이 필요합니다. `pip install -r requirements.txt` 만 먼저 하면 GPU 를 못 쓰니 꼭 `setup_vm.sh`(또는 cu126 torch 먼저)로 설치하세요.
+
+RFP ZIP 은 로컬 PC 에서 VM 으로 올립니다 (VS Code 탐색기의 `data/` 폴더에 끌어다 놓아도 됩니다).
+
+```bash
+gcloud compute scp rfp.zip <VM이름>:~/rfg_rag/data/rfp.zip --zone <존>
 ```
 
 저장소 최상위에 `.env` 를 만듭니다.
@@ -28,7 +38,9 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
 RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴더도 가능).
-노트북은 VS Code · PyCharm · Jupyter 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.
+발주 기관 목록 `data/data_list.csv`(`paths.org_csv`)는 없으면 02 검색이 문서 표지 · 파일명으로 자동으로 만듭니다.
+이미 있는 파일은 덮어쓰지 않으니, 빈 칸이나 틀린 기관명은 직접 고쳐 저장하고 02 를 다시 실행하면 됩니다 (다시 만들려면 파일을 지우세요).
+노트북은 VS Code Remote-SSH 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.
 처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)을 내려받습니다.
 
 ## 파이프라인 · 담당
@@ -84,7 +96,7 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 
 ```bash
 ruff check .                              # 함수 복잡도 (C901 ≤ 8, PLR0915 ≤ 50)
-.venv\Scripts\python -m pytest -q tests   # rag/ 모든 모듈 import 확인
+.venv/bin/python -m pytest -q tests       # rag/ 모든 모듈 import 확인
 ```
 
 - `.env` · `data/` · `artifacts/` 는 커밋하지 않습니다.
@@ -97,6 +109,7 @@ ruff check .                              # 함수 복잡도 (C901 ≤ 8, PLR091
 ```
 01_preprocessing.ipynb … 05_evaluation.ipynb   파이프라인별 노트북 (설정 · 호출 · 표만)
 config.yaml                설정 (① 전처리 ~ ⑤ 평가 구역)
+setup_vm.sh                GCP VM 설치 (.venv · torch cu126 · requirements.txt · GPU 확인)
 eval/
   golden_set.jsonl         골든 셋 (질문 · 정답 · 핵심 사실)
   eval_questions.yaml      평가 질문 세트 (질문 · 정답 · must_include)

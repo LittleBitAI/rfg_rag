@@ -4,7 +4,7 @@
 # ============================================================
 paths:
   input: data/rfp.zip           # ZIP 파일 또는 폴더 (PDF / HWP / HWPX)
-  org_csv: data/data_list.csv   # 발주 기관 목록 ('파일명' · '발주 기관' 열) — 02 검색의 기관 라우팅
+  org_csv: data/data_list.csv   # 발주 기관 목록 ('파일명' · '발주 기관' 열) — 02 검색의 기관 라우팅. 없으면 02 가 문서 표지로 자동 생성
 # ── ① 전처리 (01_preprocessing) ──
 parsing:
   skip_first_pages: 2           # PDF 앞 N쪽(표지·목차)은 청크에서 제외. 0 이면 HWP 표지·목차 자동 감지도 끔
@@ -13,6 +13,12 @@ parsing:
   join_min_line_len: 20         # PDF 줄바꿈으로 끊긴 문장 잇기 — 이보다 짧은 줄(제목 등)은 잇지 않음
   hanja_mode: append            # none | append(必(필)) | replace(필)
   max_repeat_image_pages: 3     # (OCR) 이 횟수 이상 반복 등장하는 그림 = 로고/장식 → OCR 하지 않음
+
+ocr:
+  model: gpt-5-mini
+  max_tokens: 2048
+  reasoning_effort: low
+  usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
 
 chunking:
   chunk_size: 700               # 글자 단위
@@ -36,6 +42,12 @@ retrieval:
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
 
+rewrite:
+  model: gpt-5-mini
+  max_tokens: 2048              # 질문 재작성의 출력·추론 토큰 한도
+  reasoning_effort: low
+  usd_per_1m_tokens: [0.25, 0.025, 2.00]
+
 # ── ③ 검증 (03_validation) ──
 validation:
   golden_sets: [eval/golden_set.jsonl, eval/eval_questions.yaml]   # 직접 만든 질문·정답·핵심 사실
@@ -55,10 +67,11 @@ llm:
   model: gpt-5-mini
   max_tokens: 2048              # max_completion_tokens (reasoning 토큰 포함!)
   reasoning_effort: low         # minimal | low | medium | high
-  usd_per_1m_tokens: [0.25, 2.00]   # (입력, 출력) 달러 / 100만 토큰 — End-to-End 예상 비용 계산용
+  usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
 
 # ── ⑤ 평가 (05_evaluation) ──
 evaluation:
   judge_model: gpt-5-mini       # RAGAS 심판 LLM
   judge_reasoning_effort: low
   judge_max_tokens: 4096
+  judge_usd_per_1m_tokens: [0.25, 0.025, 2.00]
