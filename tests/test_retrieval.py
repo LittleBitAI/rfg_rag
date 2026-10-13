@@ -51,7 +51,8 @@ def test_kiwi_batch_and_query_keep_alias_user_words_negation_and_codes():
 
 
 @pytest.mark.parametrize("question,query", [("원본 기관 sfr001", "재작성 질문"),
-                                           ("원본 기관 질문", "재작성 sfr001")])
+                                           ("원본 기관 질문", "재작성 sfr001"),
+                                           ("원본 기관 sfr001", None)])
 def test_exact_code_survives_rewrite_and_candidate_cutoff_with_routing(question, query):
     index = make_index(["SFR-001 원래 근거", "일반 후보", "SFR-001 다른 기관"], [3, 3, 3],
                        doc_ids=["doc-a", "doc-a", "doc-b"])
@@ -64,9 +65,10 @@ def test_exact_code_survives_rewrite_and_candidate_cutoff_with_routing(question,
     assert [hit["chunk_id"] for hit in hits] == ["c0", "c1"]
     assert hits[0]["score"] == 0.0
     index.router.route.assert_called_once_with(question)
-    assert index._dense.call_args.args[0] == query
+    expected_query = question if query is None else query
+    assert index._dense.call_args.args[0] == expected_query
     assert index._dense.call_args.args[1].tolist() == [True, True, False]
-    assert index._sparse.call_args.args[0] == query
+    assert index._sparse.call_args.args[0] == expected_query
 
 
 def test_pack_keeps_first_chunk_over_budget():

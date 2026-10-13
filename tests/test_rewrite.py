@@ -80,14 +80,3 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
     assert row["contexts"] == ["근거"]
     assert row["sources"] == ["문서.pdf p.3"]
     assert row["trace_id"] is None
-
-
-def test_search_uses_original_query_when_rewrite_is_not_supplied():
-    index = HybridIndex.__new__(HybridIndex)
-    index.rcfg = {"token_budget": 2500}
-    index.router = MagicMock()
-    index.router.route.return_value = {}
-    index._rank = MagicMock(return_value=[])
-
-    assert index.search("원본 질문") == []
-    index._rank.assert_called_once_with("원본 질문", set(), None)
