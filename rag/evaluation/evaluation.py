@@ -44,8 +44,8 @@ def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddin
 
 
 _DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
-_NUMBER = re.compile(rf"(?<![\d.,]){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*"
-                     r"(?:\s*(?:원|초|분|시간|개월|년|일|명|개|건|회|%))?")
+_UNITS = "원|초|분|시간|개월|년|월|일|명|개|건|회|%|조|항|호|차|점|장|단계"
+_NUMBER = re.compile(rf"(?<![\d.,]){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*(?:\s*(?:{_UNITS}))?")
 _NUMBER_PART = re.compile(rf"({_DIGITS})?([억만천백])|({_DIGITS})")
 _MULTIPLIERS = {"억": 100_000_000, "만": 10_000, "천": 1_000, "백": 100}
 _TIME = r"(?:\d{1,2}:\d{2}|(?:오전|오후)\s*\d{1,2}시(?:\s*\d{1,2}분)?)"
@@ -66,8 +66,11 @@ def _parse_number(value: str) -> str:
             section = Decimal(0)
         else:
             section += number * multiplier
-    unit = re.sub(rf"{_DIGITS}|[억만천백\s]", "", value)
-    return f"⟦number:{(total + section).normalize()}:{unit}⟧"
+    return _number_token(total + section, re.sub(rf"{_DIGITS}|[억만천백\s]", "", value))
+
+
+def _number_token(value: Decimal, unit: str) -> str:
+    return f"⟦number:{value.normalize()}:{unit}⟧"
 
 
 def _parse_time(value: str) -> str:
@@ -78,9 +81,11 @@ def _parse_time(value: str) -> str:
 
 
 def _date_spans(match: re.Match) -> list[tuple[int, int, str]]:
-    year, month, day = (int(match[name]) for name in ("year", "month", "day"))
+    # 날짜를 년·월·일 숫자로 풀어 '3월 10일' 같은 부분 날짜 사실도 맞게 한다
+    token = "".join(_number_token(Decimal(match[name]), unit)
+                    for name, unit in (("year", "년"), ("month", "월"), ("day", "일")))
     end = match.start("time") if match["time"] else match.end()
-    spans = [(match.start(), end, f"⟦date:{year:04}-{month:02}-{day:02}⟧")]
+    spans = [(match.start(), end, token)]
     if match["time"]:
         spans.append((match.start("time"), match.end(), _parse_time(match["time"])))
     return spans

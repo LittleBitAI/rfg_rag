@@ -14,6 +14,10 @@ from rag.evaluation.evaluation import _key_fact_ratio
     ("3", "30", 0),
     ("3", "3초", 0),
     ("3", "가격은 3원", 0),
+    ("2", "다음 해 2월", 0),
+    ("3", "제3조", 0),
+    ("90", "90점", 0),
+    ("2월", "다음 해 2월분", 1),
 ])
 def test_numbers_require_whole_values_and_matching_units(fact, text, expected):
     assert _key_fact_ratio([fact], text) == expected
@@ -64,6 +68,14 @@ def test_different_or_missing_date_time_components_do_not_match(text):
 
 def test_date_only_fact_matches_a_date_with_time():
     assert _key_fact_ratio(["2024년 6월 11일"], "마감 2024.6.11(화) 17:00") == 1
+
+
+@pytest.mark.parametrize("fact,expected", [
+    ("2월", 1), ("2월 10일", 1), ("10일", 1), ("2025년", 1),
+    ("3월", 0), ("2월 1일", 0), ("1일", 0), ("2", 0),
+])
+def test_partial_date_fact_matches_the_same_part_of_a_full_date(fact, expected):
+    assert _key_fact_ratio([fact], "마감 2025.2.10") == expected
 
 
 @pytest.mark.parametrize("text", [
