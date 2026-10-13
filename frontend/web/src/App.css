@@ -16,7 +16,7 @@
   --gutter: 32px;
   --bar: 60px;
   --radius: 10px;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font: "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -35,11 +35,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 button:disabled { cursor: default; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* ── 타입 단계: display · question · body · label · meta ── */
+/* ── 타입 단계: display · body · label · meta ── */
 h1 { margin: 0; font-size: 36px; line-height: 1.3; font-weight: 600; }
-.question { margin: 0; font-size: 26px; line-height: 1.35; font-weight: 600; }
-.label { margin: 0; font-size: 15px; line-height: 1.5; font-weight: 600; }
-.lead, .card, .chunk, .waiting, .error, .meta, .pane-question { font-size: 15px; line-height: 1.6; font-weight: 400; }
+.label, .who { margin: 0; font-size: 15px; line-height: 1.5; font-weight: 600; }
+.lead, .card, .chunk, .waiting, .error, .meta, .pane-question, .hint { font-size: 15px; line-height: 1.6; font-weight: 400; }
 
 /* ── 첫 화면 ── */
 .landing {
@@ -52,29 +51,33 @@ h1 { margin: 0; font-size: 36px; line-height: 1.3; font-weight: 600; }
 .lead { margin: 0 0 8px; color: var(--muted); }
 
 /* ── 질문 상자 ── */
+/* 글 칸 위, 안내 · 보내기 버튼 아래 — 채팅 입력창의 익숙한 틀 */
 .ask {
-  display: flex; align-items: flex-end; gap: 8px;
-  padding: 8px 8px 8px 16px;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px 12px 10px 18px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  border-radius: 16px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.06);
 }
 .ask:focus-within { border-color: var(--muted); }
 .ask textarea {
-  flex: 1;
-  min-height: 44px; max-height: 220px;
-  padding: 8px 0;
+  min-height: 30px; max-height: 220px;
+  padding: 2px 6px 2px 0;
   border: 0; outline: 0; resize: none;
   background: none;
   font: inherit; color: inherit;
   field-sizing: content;
 }
+.ask-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hint { color: var(--muted); }
 .send {
   flex: none;
-  width: 44px; height: 44px;
-  border: 0; border-radius: 8px;
+  margin-left: auto;
+  width: 38px; height: 38px;
+  border: 0; border-radius: 10px;
   background: var(--accent); color: var(--on-accent);
+  font-size: 19px; font-weight: 600;
 }
 .send:disabled { background: var(--accent-soft); color: var(--muted); }
 
@@ -91,6 +94,7 @@ h1 { margin: 0; font-size: 36px; line-height: 1.3; font-weight: 600; }
   margin: 0 auto;
   padding: 0 var(--gutter);
   display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600;
 }
 .ghost {
   padding: 6px 14px;
@@ -107,13 +111,31 @@ h1 { margin: 0; font-size: 36px; line-height: 1.3; font-weight: 600; }
 }
 .thread { min-width: 0; }
 .turn {
-  display: flex; flex-direction: column; gap: 20px;
-  padding: 36px 0;
+  display: flex; flex-direction: column; gap: 24px;
+  padding: 32px 0 8px;
   scroll-margin-top: var(--bar);
 }
-.turn + .turn { border-top: 1px solid var(--border); }
-/* 새 질문이 화면 맨 위로 올라갈 자리를 남긴다 */
-.turn:last-of-type { min-height: calc(100vh - var(--bar) - 112px); }
+/* 새 질문이 화면 맨 위로 올라갈 자리를 남긴다 (화면 높이 - 상단 바 - 붙는 입력 상자 140px) */
+.turn:last-of-type { min-height: calc(100vh - var(--bar) - 140px); }
+
+/* 내 질문은 오른쪽 말풍선, 답변은 왼쪽에 '문서 도우미' 이름 아래 */
+.bubble {
+  align-self: flex-end;
+  max-width: min(80%, 640px);
+  margin: 0;
+  padding: 12px 18px;
+  background: var(--accent-soft);
+  border-radius: 18px 18px 4px 18px;
+  white-space: pre-wrap;
+}
+.reply { display: flex; flex-direction: column; gap: 12px; padding-left: 40px; }
+.who { display: flex; align-items: center; gap: 12px; margin-left: -40px; }
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  background: var(--accent); color: var(--on-accent);
+}
 
 .pane {
   position: sticky; top: var(--bar); align-self: start;
@@ -126,10 +148,14 @@ h1 { margin: 0; font-size: 36px; line-height: 1.3; font-weight: 600; }
 .pane-question { margin: 0 0 4px; color: var(--muted); }
 .meta { margin: 0; color: var(--muted); }
 
-.waiting { margin: 0; color: var(--muted); animation: pulse 1.6s ease-in-out infinite; }
+.waiting { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); }
+.dots { display: inline-flex; gap: 4px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1.2s ease-in-out infinite; }
+.dots i:nth-child(2) { animation-delay: 0.2s; }
+.dots i:nth-child(3) { animation-delay: 0.4s; }
 .error { margin: 0; color: var(--danger); }
-@keyframes pulse { 50% { opacity: 0.4; } }
-@media (prefers-reduced-motion: reduce) { .waiting { animation: none; } }
+@keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dots i { animation: none; } }
 
 /* ── 출처 — 한 줄 카드 목록, 그 아래 펼친 청크 ── */
 .inline-sources { display: flex; flex-direction: column; gap: 8px; }
@@ -198,5 +224,8 @@ h1 { margin: 0; font-size: 36px; line-height: 1.3; font-weight: 600; }
 @media (max-width: 480px) {
   :root { --gutter: 16px; }
   h1 { font-size: 28px; }
-  .question { font-size: 22px; }
+  .bubble { max-width: 90%; }
+  .reply { padding-left: 0; }
+  .who { margin-left: 0; }
+  .hint { display: none; }
 }

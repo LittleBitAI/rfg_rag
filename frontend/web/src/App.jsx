@@ -9,6 +9,7 @@ export default function App() {
   // 출처 칸이 보여 주는 턴과 펼친 출처 번호. turn 이 null 이면 마지막 턴
   const [open, setOpen] = useState({ turn: null, n: null })
   const thread = useRef(0)
+  const box = useRef(null)
   const last = turns.at(-1)
   const pending = last !== undefined && last.answer === undefined && last.error === undefined
   const shown = open.turn ?? turns.length - 1
@@ -29,6 +30,8 @@ export default function App() {
     // 새 스레드를 시작한 뒤 도착한 응답은 버린다
     if (gen !== thread.current) return
     setTurns((ts) => ts.map((t, i) => (i === ts.length - 1 ? { ...t, ...result } : t)))
+    // 출처 칩을 누르느라 포커스가 옮겨 갔어도 바로 이어서 물을 수 있게
+    box.current?.focus({ preventScroll: true })
   }
 
   function newThread() {
@@ -79,7 +82,7 @@ export default function App() {
               onCite={(n) => showSource(i, n)} onToggle={(n) => toggleSource(i, n)} />
           ))}
           <div className="dock">
-            <AskBox value={input} onChange={setInput} onSubmit={ask} disabled={pending}
+            <AskBox ref={box} value={input} onChange={setInput} onSubmit={ask} disabled={pending} autoFocus
               placeholder={pending ? '답변을 기다리는 중…' : '이어서 질문하기'} />
           </div>
         </main>
@@ -109,7 +112,7 @@ async function postQuestion(question, history) {
   return res.json()
 }
 
-function AskBox({ value, onChange, onSubmit, disabled, placeholder, autoFocus }) {
+function AskBox({ ref, value, onChange, onSubmit, disabled, placeholder, autoFocus }) {
   function onKeyDown(e) {
     // 한글 조합 중의 Enter 는 글자 확정이지 전송이 아니다
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -119,9 +122,12 @@ function AskBox({ value, onChange, onSubmit, disabled, placeholder, autoFocus })
   }
   return (
     <form className="ask" onSubmit={(e) => { e.preventDefault(); onSubmit() }}>
-      <textarea rows={1} value={value} placeholder={placeholder} autoFocus={autoFocus} aria-label="질문"
+      <textarea ref={ref} rows={1} value={value} placeholder={placeholder} autoFocus={autoFocus} aria-label="질문"
         onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} />
-      <button type="submit" className="send" disabled={disabled || !value.trim()} aria-label="질문 보내기">↑</button>
+      <div className="ask-foot">
+        <span className="hint">Enter 보내기 · Shift+Enter 줄바꿈</span>
+        <button type="submit" className="send" disabled={disabled || !value.trim()} aria-label="질문 보내기">↑</button>
+      </div>
     </form>
   )
 }
@@ -129,20 +135,33 @@ function AskBox({ value, onChange, onSubmit, disabled, placeholder, autoFocus })
 function Turn({ index, turn, openN, onCite, onToggle }) {
   return (
     <section className="turn">
-      <h2 className="question">{turn.question}</h2>
-      {turn.error !== undefined && <p className="error">답변을 받지 못했습니다. {turn.error}</p>}
-      {turn.answer === undefined && turn.error === undefined && <p className="waiting">문서를 찾아 답변을 만드는 중…</p>}
-      {/* 좁은 화면 전용 — 넓은 화면에서는 옆 출처 칸이 같은 카드를 보여 준다 */}
-      {turn.sources?.length > 0 && (
-        <div className="inline-sources">
-          <h3 className="label">출처</h3>
-          <Sources index={index} turn={turn} openN={openN} onToggle={onToggle} />
-        </div>
-      )}
-      {turn.answer !== undefined && <Answer text={turn.answer} count={turn.sources.length} onCite={onCite} />}
+      <p className="bubble">{turn.question}</p>
+      <div className="reply">
+        <p className="who"><DocIcon />문서 도우미</p>
+        {turn.error !== undefined && <p className="error">답변을 받지 못했습니다. {turn.error}</p>}
+        {turn.answer === undefined && turn.error === undefined && (
+          <p className="waiting"><span className="dots" aria-hidden="true"><i /><i /><i /></span>문서를 찾는 중…</p>
+        )}
+        {/* 좁은 화면 전용 — 넓은 화면에서는 옆 출처 칸이 같은 카드를 보여 준다 */}
+        {turn.sources?.length > 0 && (
+          <div className="inline-sources">
+            <h3 className="label">출처</h3>
+            <Sources index={index} turn={turn} openN={openN} onToggle={onToggle} />
+          </div>
+        )}
+        {turn.answer !== undefined && <Answer text={turn.answer} count={turn.sources.length} onCite={onCite} />}
+      </div>
     </section>
   )
 }
+
+const DocIcon = () => (
+  <span className="avatar" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <path d="M4 1.75h5.5L12.25 4.5v9.75H4z M6 7.5h4 M6 10.5h4" />
+    </svg>
+  </span>
+)
 
 function SourcePane({ index, turn, openN, onToggle }) {
   return (

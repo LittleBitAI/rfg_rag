@@ -6,5 +6,6 @@ title rfg_rag question screen - close this window to stop
 cd /d "%~dp0.."
 start /b "" .venv\Scripts\python -m uvicorn frontend.server:app --port 8765
 cd frontend\web
-if not exist node_modules call npm install
+rem Every run, not only when node_modules is missing: a pulled package.json may add a package (about 1 s when up to date)
+call npm install --no-audit --no-fund
 call npm run dev -- --open

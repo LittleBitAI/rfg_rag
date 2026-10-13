@@ -7,5 +7,6 @@ API_PID=$!
 # 창을 닫거나 Ctrl+C 로 끝내면 API 서버도 끈다
 trap 'kill $API_PID' EXIT
 cd frontend/web || exit 1
-[ -d node_modules ] || npm install
+# node_modules 가 있어도 매번 — pull 로 package.json 에 패키지가 늘었을 수 있다 (최신이면 1초 남짓)
+npm install --no-audit --no-fund
 npm run dev -- --open
