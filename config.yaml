@@ -31,7 +31,7 @@ chunking:
 embedding:
   model: nlpai-lab/KURE-v1      # 한국어 검색 특화(bge-m3 기반)
   batch_size: 32
-  max_seq_length: 512
+  max_seq_length: 2048
 
 bm25:
   k1: 1.5
