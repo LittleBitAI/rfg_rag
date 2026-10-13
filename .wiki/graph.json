@@ -1,6 +1,6 @@
 {
  "ns": "repo",
- "repo": "feature-generation",
+ "repo": "rfg_rag",
  "nodes_from": ".wiki/corpus.json",
  "edges": [
   {
