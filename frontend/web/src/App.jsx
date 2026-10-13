@@ -109,13 +109,16 @@ async function postQuestion(question, history) {
   // Vite 프록시는 API 서버에 닿지 못하면 502 를 돌려준다
   if (res.status === 502) return { error: 'API 서버가 아직 준비되지 않았습니다. 색인을 읽는 동안 잠시 기다린 뒤 다시 물어보세요.' }
   if (!res.ok) return { error: `API 서버 오류 (${res.status}). 실행 창의 로그를 확인하세요.` }
-  return res.json()
+  // 헤더가 온 뒤 연결이 끊기면 본문 읽기가 실패한다 — 턴이 기다림에 멈추지 않게 오류로 끝낸다
+  return res.json().catch(() => ({ error: '답변을 받는 중 연결이 끊겼습니다. 다시 물어보세요.' }))
 }
 
 function AskBox({ ref, value, onChange, onSubmit, disabled, placeholder, autoFocus }) {
   function onKeyDown(e) {
-    // 한글 조합 중의 Enter 는 글자 확정이지 전송이 아니다
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // 한글 조합 중의 Enter 는 글자 확정이지 전송이 아니다.
+    // Safari 는 compositionend 를 먼저 보내 isComposing 이 false 인 채로 keyCode 229 의 Enter 가 온다
+    const composing = e.nativeEvent.isComposing || e.keyCode === 229
+    if (e.key === 'Enter' && !e.shiftKey && !composing) {
       e.preventDefault()
       onSubmit()
     }
