@@ -4,7 +4,7 @@
 # ============================================================
 paths:
   input: data/rfp.zip           # ZIP 파일 또는 폴더 (PDF / HWP / HWPX)
-
+  org_csv: data/data_list.csv   # 발주 기관 목록 ('파일명' · '발주 기관' 열) — 02 검색의 기관 라우팅
 # ── ① 전처리 (01_preprocessing) ──
 parsing:
   skip_first_pages: 2           # PDF 앞 N쪽(표지·목차)은 청크에서 제외. 0 이면 HWP 표지·목차 자동 감지도 끔
@@ -24,14 +24,15 @@ chunking:
 embedding:
   model: nlpai-lab/KURE-v1      # 한국어 검색 특화(bge-m3 기반)
   batch_size: 32
-  max_seq_length: 512
+  max_seq_length: 2048
 
 bm25:
   k1: 1.5
   b: 0.75
 
 retrieval:
-  top_k: 5
+  token_budget: 2500            # 검색 결과 본문 토큰 합 상한 (임베딩 토크나이저 기준) — 개수 대신 이 예산까지 담음 
+  #top_k: 5
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
 
