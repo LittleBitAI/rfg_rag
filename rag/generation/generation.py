@@ -106,7 +106,11 @@ def answer_questions(eval_set: list[dict], index, llm_cfg: dict, history_window:
     history = []
 
     for i, item in enumerate(eval_set, 1):
-        row = answer_question(item, index, llm_cfg, history=history[-history_window])
+        # 사용자가 reset_context: true를 지정한 질문 직전 초기화
+        if item.get("reset_context", False):
+            history.clear()        
+        
+        row = answer_question(item, index, llm_cfg, history=history[-history_window:])
         rows.append(row)
 
         # 다음 질문에서 이전 대화로 사용할 수 있도록 Q&A를 추가한다.
