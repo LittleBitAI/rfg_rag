@@ -177,10 +177,16 @@ def test_each_evaluation_function_saves_scores_without_notebook(monkeypatch, tmp
     monkeypatch.setattr(evaluation, "Embedder", MagicMock())
     monkeypatch.setattr(evaluation, "_send_scores", MagicMock())
     answers = tmp_path / "answers.jsonl"
-    write_jsonl([_answer_row()], answers)
+    row = {**_answer_row(), "key_facts": ["3초", "포함"],
+           "contexts": ["3 초, 부가세 포함"], "answer": "13초, 부가세 불포함"}
+    write_jsonl([row], answers)
 
     table = getattr(evaluation, f"evaluate_{name}")(answers, load_config())
 
     assert calculate.call_args.args[3] == name
     assert table["id"].tolist() == ["q1", "평균"]
+    if name in ("retrieval", "generation"):
+        column, expected = {"retrieval": ("key_facts_in_context", 1),
+                            "generation": ("key_facts_in_answer", 0)}[name]
+        assert table[column].tolist() == [expected, expected]
     pd.testing.assert_frame_equal(pd.read_csv(tmp_path / f"{name}.csv", keep_default_na=False), table)
