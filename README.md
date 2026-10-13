@@ -33,6 +33,40 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 
 ## v11 전처리 패키지 사용
 
+### 아이디어 출처와 실제 파이프라인 반영
+
+v11 전처리 패키지와 이 폴더의 연동 아이디어 출처는 Se hui Hwang
+([@hwangsiiii](https://github.com/hwangsiiii))입니다. 전처리 담당자의
+[PR #12](https://github.com/LittleBitAI/rfg_rag/pull/12)와 별도로 전달받은
+`RFP_Preprocessing_Final_v11_Team`, `RFP_v11_Retriever_Compatibility`,
+`v11_retriever_연동테스트.ipynb`를 이번 통합의 출처로 명시합니다.
+이 저장소의 로더·노트북 입력 전환 구현과 ⑤ 비교 실험은
+[PR #18](https://github.com/LittleBitAI/rfg_rag/pull/18)에서 수행한 통합 작업입니다.
+
+담당자가 만든 저장 청크와 이미 검증된 OCR 텍스트를 재파싱·재청킹 없이 검색에 사용하는
+아이디어를 실제 파이프라인에 가져왔습니다. 01의 `load_v11_package` → `save_chunks`가
+`docs.jsonl`과 `chunks.jsonl`을 만들고, 이를 02 색인·검색 → 04 답변 생성 → 05 네 평가가 읽습니다.
+NVIDIA L4 VM에서 이 경로를 실제 실행해 문서 98개·청크 18,984개로 고정 질문 16개를 평가했습니다.
+현재 파서와의 네 CSV 전체 지표·비용·지연 시간 비교는 PR #18에 있습니다.
+
+전달 폴더 전체의 기능을 가져온 것은 아닙니다. 반영 범위는 다음과 같습니다.
+
+| 전달 자료·아이디어 | 이 저장소에 반영한 범위 |
+| --- | --- |
+| v11의 `final_chunks.jsonl` | 기존 청크 ID, `payload` → 검색용 `text`, `body` → 답변 근거, 청크 종류·섹션을 유지합니다. `[IMAGE]` 표시뿐인 8개 청크는 제외합니다. |
+| `final_elements.jsonl`, `final_records.jsonl` | 문서 소속·NFC 파일명·제목·있는 쪽 번호·첫 레코드와 앞 세 레코드의 텍스트를 연결합니다. |
+| 호환 패키지의 `adapt_v11.py` | `payload/body` 분리와 문서 메타데이터 연결 아이디어를 저장소의 작은 표준 라이브러리 로더로 구현했습니다. 어댑터 코드·전체 출력 파일은 복사하지 않았습니다. |
+| 저장된 검증 OCR | 최종 청크에 들어 있는 검색 본문을 사용합니다. OCR 엔진과 미검증 OCR sidecar는 실행하거나 추가하지 않습니다. 패키지의 전체 정확성을 인증한 것은 아닙니다. |
+| 구조·상세 출처 메타데이터 | `table_refs`, 표 셀 구조, `spans`, `linked`, `requirement_key`, `image_source`, 이미지 SHA·검증 영역 등은 현재 출력과 생성 문맥에 전달하지 않습니다. 원래 패키지에 남아 있습니다. |
+| Elements 인덱싱 대안 | 도입하지 않았습니다. Chunks만 색인하며 두 입력을 섞지 않습니다. |
+| 호환 패키지의 검색 코드·E5 샘플 색인·연동 테스트 노트북 | 참고 자료입니다. 기관 CSV 라우팅 등 별도 검색 로직은 가져오지 않았고, 이 저장소의 KURE 검색 코드로 새 색인을 만들었습니다. |
+| 패키지 사용·OCR 검증 노트북과 검증 영수증 | 출처 자료로 보관합니다. 이 저장소의 노트북에 복제하거나 패키지의 보존·OCR 검증을 다시 실행하지 않았습니다. |
+
+따라서 이번 작업은 담당자의 전처리 결과와 청크 연결 아이디어를 실행 가능한 기존 파이프라인으로
+통합한 것이며, 전달 폴더 전체 기능이나 상세 이미지·표 출처 전달까지 완료했다는 뜻은 아닙니다.
+
+### 입력 전환 방법
+
 전처리 담당자에게 `RFP_Preprocessing_Final_v11_Team` 패키지를 받아 압축을 풉니다.
 `final_chunks.jsonl`, `final_elements.jsonl`, `final_records.jsonl`이 바로 들어 있는 폴더를
 `data/RFP_Preprocessing_Final_v11_Team/`에 둡니다. 압축에 같은 이름의 폴더가 두 겹 있으면 안쪽 폴더를 사용하세요.
