@@ -18,6 +18,7 @@ ocr:
   model: gpt-5-mini
   max_tokens: 2048
   reasoning_effort: low
+  usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
 
 chunking:
   chunk_size: 700               # 글자 단위
@@ -44,6 +45,7 @@ rewrite:
   model: gpt-5-mini
   max_tokens: 2048              # 질문 재작성의 출력·추론 토큰 한도
   reasoning_effort: low
+  usd_per_1m_tokens: [0.25, 0.025, 2.00]
 
 # ── ③ 검증 (03_validation) ──
 validation:
@@ -64,10 +66,11 @@ llm:
   model: gpt-5-mini
   max_tokens: 2048              # max_completion_tokens (reasoning 토큰 포함!)
   reasoning_effort: low         # minimal | low | medium | high
-  usd_per_1m_tokens: [0.25, 2.00]   # (입력, 출력) 달러 / 100만 토큰 — End-to-End 예상 비용 계산용
+  usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
 
 # ── ⑤ 평가 (05_evaluation) ──
 evaluation:
   judge_model: gpt-5-mini       # RAGAS 심판 LLM
   judge_reasoning_effort: low
   judge_max_tokens: 4096
+  judge_usd_per_1m_tokens: [0.25, 0.025, 2.00]

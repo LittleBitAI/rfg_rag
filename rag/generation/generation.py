@@ -9,6 +9,7 @@ from langfuse import get_client, observe
 from langfuse.openai import openai  # OpenAI SDK 그대로 + Langfuse 가 모델 · 토큰 · 비용을 generation 으로 기록
 
 from ..retrieval.rewrite import rewrite_question
+from ..usage import record_usage
 
 SYSTEM_PROMPT = (
     "당신은 공공기관 제안요청서(RFP) 문서 기반 질의응답 도우미입니다.\n"
@@ -35,16 +36,15 @@ def format_context(hits: list[dict]) -> str:
 
 def generate(question: str, hits: list[dict], llm_cfg: dict) -> dict:
     """질문 + 검색 청크 → 답변과 토큰 사용량 (reasoning 토큰은 출력 토큰에 포함되어 과금)"""
+    prices = llm_cfg["usd_per_1m_tokens"]
     with openai.OpenAI(max_retries=3) as client:
         resp = client.chat.completions.create(
             name="generate-answer", model=llm_cfg["model"], max_completion_tokens=int(llm_cfg["max_tokens"]),
             reasoning_effort=llm_cfg["reasoning_effort"],
             messages=[{"role": "system", "content": SYSTEM_PROMPT},
                       {"role": "user", "content": f"[컨텍스트]\n{format_context(hits)}\n\n[질문]\n{question}"}])
-    usage = resp.usage
-    details = usage.completion_tokens_details
-    return {"answer": resp.choices[0].message.content or "", "input_tokens": usage.prompt_tokens,
-            "output_tokens": usage.completion_tokens, "reasoning_tokens": (details.reasoning_tokens if details else 0) or 0}
+    usage = record_usage("answer", resp.model, resp.usage.model_dump(), prices, subject=question)
+    return {"answer": resp.choices[0].message.content or "", **usage}
 
 
 # 입력 · 출력은 질문과 답만 남긴다 (인자를 그대로 남기면 검색 색인 객체까지 직렬화된다)

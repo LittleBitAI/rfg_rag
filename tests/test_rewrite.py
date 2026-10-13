@@ -26,7 +26,8 @@ def test_rewrite_settings_usage_and_empty_output(monkeypatch, content, details, 
     factory = MagicMock(return_value=client)
     monkeypatch.setattr(rewrite.openai, "OpenAI", factory)
     monkeypatch.setattr(rewrite.time, "perf_counter", MagicMock(side_effect=[10, 10.25]))
-    cfg = {"model": "rewrite-model", "max_tokens": 1234, "reasoning_effort": "medium"}
+    cfg = {"model": "rewrite-model", "max_tokens": 1234, "reasoning_effort": "medium",
+           "usd_per_1m_tokens": [0.25, 0.025, 2.0]}
 
     result = rewrite.rewrite_question("원본 질문", cfg)
 
@@ -35,7 +36,8 @@ def test_rewrite_settings_usage_and_empty_output(monkeypatch, content, details, 
         name="rewrite-question", model="rewrite-model", max_completion_tokens=1234, reasoning_effort="medium",
         messages=[{"role": "system", "content": rewrite.REWRITE_PROMPT}, {"role": "user", "content": "원본 질문"}])
     assert result == {"question": expected_question, "model": "rewrite-model-snapshot", "input_tokens": 100,
-                      "output_tokens": 30, "reasoning_tokens": reasoning_tokens, "latency_s": 0.25}
+                      "cached_input_tokens": 0, "output_tokens": 30, "reasoning_tokens": reasoning_tokens,
+                      "cost_usd": 0.000085, "latency_s": 0.25}
 
 
 @pytest.mark.parametrize("route", [{}, {"A": {"doc-a"}}, {"A": {"doc-a"}, "B": {"doc-b"}}])
