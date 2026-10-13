@@ -1,0 +1,174 @@
+/* 값의 근거는 frontend/DESIGN.md */
+:root {
+  --bg: #ffffff;
+  --surface: #f6f6f4;
+  --border: #e3e3df;
+  --text: #1c1c1a;
+  --muted: #6b6b66;
+  --accent: #1c1c1a;
+  --accent-soft: #ececea;
+  --on-accent: #ffffff;
+  --danger: #b42318;
+
+  --column: 720px;
+  --gutter: 24px;
+  --radius: 12px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 16px/1.7 var(--font);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 타입 단계: display · question · body · label · small ── */
+h1 { margin: 0; font-size: 32px; line-height: 1.3; font-weight: 600; }
+.question { margin: 0; font-size: 22px; line-height: 1.4; font-weight: 600; }
+.label {
+  margin: 0;
+  font-size: 13px; line-height: 1.5; font-weight: 600;
+  color: var(--muted);
+}
+.lead, .card, .chunk, .waiting, .error { font-size: 13px; line-height: 1.6; font-weight: 400; }
+
+/* ── 첫 화면 ── */
+.landing {
+  min-height: 100vh;
+  max-width: var(--column);
+  margin: 0 auto;
+  padding: 0 var(--gutter) 15vh;
+  display: flex; flex-direction: column; justify-content: center; gap: 16px;
+}
+.lead { margin: 0 0 8px; color: var(--muted); }
+
+/* ── 질문 상자 ── */
+.ask {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 8px 8px 8px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+}
+.ask:focus-within { border-color: var(--muted); }
+.ask textarea {
+  flex: 1;
+  min-height: 40px; max-height: 200px;
+  padding: 8px 0;
+  border: 0; outline: 0; resize: none;
+  background: none;
+  font: inherit; color: inherit;
+  field-sizing: content;
+}
+.send {
+  flex: none;
+  width: 40px; height: 40px;
+  border: 0; border-radius: 8px;
+  background: var(--accent); color: var(--on-accent);
+  font-weight: 600;
+}
+.send:disabled { background: var(--accent-soft); color: var(--muted); }
+
+/* ── 스레드 ── */
+.bar {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between;
+  max-width: var(--column);
+  margin: 0 auto;
+  padding: 12px var(--gutter);
+  background: var(--bg);
+}
+.brand { font-weight: 600; }
+.ghost {
+  padding: 4px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg);
+}
+.ghost:hover { background: var(--surface); }
+
+.thread {
+  max-width: var(--column);
+  margin: 0 auto;
+  padding: 0 var(--gutter) 160px;
+}
+.turn {
+  display: flex; flex-direction: column; gap: 24px;
+  padding: 32px 0;
+  scroll-margin-top: 64px;
+}
+.turn + .turn { border-top: 1px solid var(--border); }
+
+.waiting { margin: 0; color: var(--muted); animation: pulse 1.6s ease-in-out infinite; }
+.error { margin: 0; color: var(--danger); }
+@keyframes pulse { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) { .waiting { animation: none; } }
+
+/* ── 출처 카드 ── */
+.sources { display: flex; flex-direction: column; gap: 8px; }
+.cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px;
+  margin: 0; padding: 0; list-style: none;
+}
+.card {
+  width: 100%; height: 100%;
+  display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline;
+  padding: 8px 12px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid transparent; border-radius: 8px;
+}
+.card:hover { border-color: var(--border); }
+.card[aria-expanded="true"] { border-color: var(--accent); background: var(--bg); }
+.num { grid-row: span 2; font-weight: 600; }
+.file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page { color: var(--muted); }
+
+.chunk {
+  margin: 0;
+  max-height: 320px; overflow-y: auto;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-radius: 8px;
+  white-space: pre-wrap;
+}
+.chunk .label { display: block; margin-bottom: 8px; }
+
+/* ── 답변 ── */
+.answer { display: flex; flex-direction: column; gap: 8px; }
+.answer p, .answer ul, .answer ol, .answer table { margin: 0 0 12px; }
+.answer table { border-collapse: collapse; display: block; overflow-x: auto; }
+.answer th, .answer td { padding: 4px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.answer th { background: var(--surface); }
+.chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px;
+  margin: 0 2px; padding: 0 4px;
+  vertical-align: 2px;
+  border: 0; border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 13px; line-height: 1; font-weight: 600;
+}
+.chip:hover { background: var(--accent); color: var(--on-accent); }
+
+/* ── 아래에 붙는 후속 질문 상자 ── */
+.dock {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  padding: 16px var(--gutter) 24px;
+  background: linear-gradient(transparent, var(--bg) 24px);
+}
+.dock .ask { max-width: calc(var(--column) - 2 * var(--gutter)); margin: 0 auto; }
+
+@media (max-width: 480px) {
+  :root { --gutter: 16px; }
+  h1 { font-size: 26px; }
+}

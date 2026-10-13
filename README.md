@@ -70,6 +70,7 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 | ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (QA 생성 · 근거 키워드 정리 · 분할 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
 | ④ 생성 | `04_generation.ipynb` | `rag/generation/generation.py` (검색 → 이전 대화를 참고해 답변 · 토큰 · 지연 시간) | `artifacts/answers.jsonl` |
 | ⑤ 평가 | `05_evaluation.ipynb` | `rag/evaluation/evaluation.py` (네 가지 평가) | `artifacts/retrieval.csv` · `generation.csv` · `grounding.csv` · `end_to_end.csv` |
+| ⑥ 질문 화면 | — | `frontend/server.py` (`answer_question` 을 감싸는 `POST /api/ask`), `frontend/web/` (React + Vite 화면), `frontend/start.cmd` · `frontend/start.command` (실행기) | 브라우저 화면의 답변 · 출처 |
 
 공통: `rag/config.py` (`config.yaml` · `.env` 읽기, jsonl 읽기/쓰기), `config.yaml` (모든 설정 — 파이프라인별 구역).
 
@@ -96,6 +97,37 @@ RFP ZIP 은 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴�
 답변 생성도 실제 응답 모델·캐시 입력 토큰·비용을 저장합니다. 05는 저장된 비용을 사용하므로 평가 시 설정을 바꿔도 이전 생성 비용이 바뀌지 않습니다.
 `latency_s`는 재작성·검색·답변 생성 전체 시간입니다. `end_to_end.csv`의 `cost_usd`는 rewrite + 답변 생성 비용이며 `rewrite_cost_usd`, `answer_cost_usd`로 구분됩니다. OCR과 평가 비용은 별도로 집계합니다.
 이번 변경 전에 만든 `answers.jsonl`은 새 사용량 필드가 없으므로 02 설정 셀 → 04 → 05를 다시 실행하세요.
+
+## 질문 화면 — 브라우저에서 묻고 답 받기
+질문하면 04 와 같은 방식(재작성 → 하이브리드 검색 → 답변)으로 답하고, 답변 위에 출처 카드(파일 · 쪽)를, 답변 안에 `[n]` 번호를 보여 줍니다.
+번호나 카드를 누르면 그 청크 본문이 열립니다. 이어서 질문하면 이 탭의 직전 질문 · 답변 최대 10개를 함께 보냅니다.
+대화는 열린 탭에만 있고, `새 스레드` 를 누르거나 탭을 닫으면 사라집니다. 서버는 대화를 저장하지 않습니다.
+
+준비물
+- 위 설치대로 만든 `.venv` (`requirements.txt` 에 `fastapi` · `uvicorn` 포함)와 `.env` 의 `OPENAI_API_KEY`
+- 01 · 02 를 실행해 만든 `artifacts/chunks.jsonl` · `docs.jsonl` · `index/` · `retrieval_settings.jsonl` — 04 와 같은 설정(`config.yaml` + 02 설정 셀)으로 답합니다
+- [Node.js](https://nodejs.org/) LTS
+- macOS: `.venv` 를 만들 때 cu128 빌드 대신 일반 torch 를 설치합니다.
+  ```bash
+  python3.10 -m venv .venv
+  .venv/bin/python -m pip install torch
+  .venv/bin/python -m pip install -r requirements.txt
+  ```
+
+실행
+- Windows: 탐색기에서 `frontend\start.cmd` 를 더블클릭합니다. API 서버 창(포트 8765)이 따로 뜨고, 처음 한 번 `npm install` 을 한 뒤 Vite 개발 서버(5173)가 기본 브라우저로 화면을 엽니다. 끌 때는 두 창을 모두 닫습니다.
+- macOS: Finder 에서 `frontend/start.command` 를 더블클릭합니다. 터미널 창 하나에서 둘 다 돌고, 창을 닫으면 API 서버도 꺼집니다.
+- 직접 실행 — 저장소 최상위에서 터미널 두 개:
+  ```bash
+  .venv\Scripts\python -m uvicorn frontend.server:app --port 8765   # macOS: .venv/bin/python
+  cd frontend/web && npm install && npm run dev                      # http://localhost:5173
+  ```
+
+API 서버는 켤 때 색인과 KURE-v1 을 읽느라 수십 초 걸립니다. API 창에 `Application startup complete` 가 뜬 뒤에 물어보세요.
+포트를 바꾸려면 `frontend/start.cmd` · `frontend/start.command` 의 8765 와 `frontend/web/vite.config.js` 의 프록시 주소를 함께 바꿉니다.
+
+화면에서 묻는 질문도 OpenAI API 를 부르므로 `artifacts/api_usage.csv` 에 `rewrite` · `answer` 행이 추가됩니다.
+04 노트북의 행과 구분하는 열이 없어 `timestamp` 로만 가릴 수 있고, 노트북의 누적 사용량 표에 함께 잡힙니다. 평가 점수 CSV 에는 영향이 없습니다.
 
 ## API 사용량 자동 기록
 
@@ -183,6 +215,10 @@ rag/
   validation/              ③ validation.py
   generation/              ④ generation.py
   evaluation/              ⑤ evaluation.py
+frontend/                  ⑥ 질문 화면
+  server.py                POST /api/ask — answer_question 을 감싸는 FastAPI
+  web/                     React + Vite 화면 (/api 는 server.py 로 프록시)
+  start.cmd · start.command  Windows · macOS 실행기
 tests/test_smoke.py        게이트: rag/ 모든 모듈 import
 artifacts/                 (커밋 안 함) 노트북 사이에 주고받는 파일
 ```
