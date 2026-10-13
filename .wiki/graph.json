@@ -40,8 +40,8 @@
   "linked": 3,
   "read": 0,
   "orphans": 0,
-  "pages": 0,
-  "decisions": 1,
-  "injectable_decisions": 0
+  "pages": 1,
+  "decisions": 10,
+  "injectable_decisions": 4
  }
 }
