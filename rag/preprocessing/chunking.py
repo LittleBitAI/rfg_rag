@@ -156,7 +156,8 @@ def load_v11_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
         chunks.append({"chunk_id": chunk["chunk_id"], "doc_id": doc["doc_id"],
                        "source": doc["source"], "title": doc["title"],
                        "page": next(iter(pages)) if len(pages) == 1 else None,
-                       "kind": chunk["chunk_type"], "section": " > ".join(chunk["section_path"]),
+                       "kind": "text" if chunk["chunk_type"] == "prose" else chunk["chunk_type"],
+                       "section": " > ".join(chunk["section_path"]),
                        "text": chunk["payload"], "body": chunk["body"]})
     return docs, chunks
 
