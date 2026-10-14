@@ -5,6 +5,7 @@ API 를 부르는 명령(run · audit · resume)은 모델 · 추론 강도 · �
 """
 import argparse
 import json
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -18,6 +19,8 @@ from golden_pipeline.schema import TOPICS
 
 def main(argv=None):
     args = _parser().parse_args(argv)
+    # 출력을 파일로 돌리면 Windows 는 cp949 로 써서, 근거의 '∙' 같은 글자에서 끝난 loop 가 오류로 끝난다.
+    sys.stdout.reconfigure(encoding="utf-8")
     print(args.handler(args))
 
 
