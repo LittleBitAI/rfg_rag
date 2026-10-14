@@ -170,6 +170,15 @@ def test_a_report_refuses_runs_made_from_different_plans(planned, api):
         golden("report", "--topic", "numeric", "--id", "mixed", "--b", "b1", "b2")
 
 
+def test_a_report_refuses_a_requested_loop_with_no_generated_round(planned, api):
+    # 고른 A 를 말없이 빼고 쓰면 요청한 A · B 비교가 B 만의 보고서로 바뀐다.
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", *GENERATOR, *LIMITS)
+
+    with pytest.raises(SystemExit, match="nonexistent"):
+        golden("report", "--topic", "numeric", "--id", "cmp", "--a", "nonexistent", "--b", "b1")
+    assert not (storage.OUTPUTS / "goldens/numeric/reports").exists()
+
+
 PAID = {
     "run A": ["run", "--topic", "numeric", "--method", "A", "--plan", "p3", "--id", "l1", *GENERATOR, *LIMITS, *A_ONLY],
     "run B": ["run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", *GENERATOR, *LIMITS],
@@ -212,7 +221,8 @@ def test_a_resumed_audit_judges_only_the_pending_candidates_and_releases(planned
     import_c(tmp_path, [(planned["bond"], BOND), (planned["bond"], reworded), (planned["budget"], BUDGET)])
     golden("audit", "--topic", "numeric", "--method", "C", "--id", "c1", *VALIDATOR, "--max-calls", "1", "--budget", "1")
     run_dir = storage.run_path("numeric", "C", "c1")
-    first = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))
+    first_text = (run_dir / "validation.json").read_text(encoding="utf-8")
+    first = json.loads(first_text)
     assert first["status"] == "call_cap" and len(first["pending"]) == 2
 
     golden("resume", "--topic", "numeric", "--method", "C", "--id", "c1", "--max-calls", "10", "--budget", "1")
@@ -228,6 +238,13 @@ def test_a_resumed_audit_judges_only_the_pending_candidates_and_releases(planned
     [duplicate] = [row for row in judged if row["state"] == "rejected"]
     assert duplicate["question"] == reworded["question"]
     assert duplicate["state_history"][-1]["reason"].startswith("중복")
+    # 앞 기록이 바뀌면 이어 쓴 기록의 continues 와 맞지 않아, 바뀐 비용이 보고서 · 출시본에 들어가지 못한다.
+    (run_dir / "validation.json").write_text(json.dumps({**first, "cost_usd": 9.0}), encoding="utf-8")
+    for command in (("report", "--topic", "numeric", "--id", "cmp", "--c", "c1"),
+                    ("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1")):
+        with pytest.raises(storage.CatalogError, match="validation-2.json"):
+            golden(*command)
+    (run_dir / "validation.json").write_text(first_text, encoding="utf-8")
     golden("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1")
     manifest = json.loads((storage.OUTPUTS / "goldens/numeric/releases/v1/manifest.json").read_text(encoding="utf-8"))
     assert manifest["count"] == 2 and "validation-2.json" in manifest["sources"]["C/c1"]

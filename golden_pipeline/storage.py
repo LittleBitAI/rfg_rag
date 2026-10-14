@@ -124,9 +124,17 @@ def continue_validation(topic, method, run_id, items, info):
 
 
 def validation_records(run_dir):
-    """run 의 검증 기록을 쓴 차례로: validation.json, 이어서 검증한 validation-2.json, validation-3.json ..."""
+    """run 의 검증 기록을 쓴 차례로: validation.json, 이어서 검증한 validation-2.json, validation-3.json ...
+
+    이어 쓴 기록마다 continues 가 바로 앞 기록의 SHA-256 과 같은지 본다. 마지막 기록만 상태 파일과 대조하므로,
+    이 사슬이 없으면 앞 기록(비용 · 판정 수)이 바뀌어도 보고서 · 출시본이 그대로 읽는다.
+    """
     records, path = [], Path(run_dir) / "validation.json"
     while path.exists():
+        if records:
+            link = {"file": records[-1].name, "sha256": _sha256(records[-1])}
+            if json.loads(path.read_text(encoding="utf-8")).get("continues") != link:
+                raise CatalogError(f"{path.name} 이 이은 {records[-1].name} 가 바뀌었습니다: {Path(run_dir).name}")
         records.append(path)
         path = Path(run_dir) / f"validation-{len(records) + 1}.json"
     return records

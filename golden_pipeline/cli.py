@@ -100,7 +100,13 @@ def _release(args):
 
 
 def _report(args):
-    rounds = [run_dir.name for loop_id in args.a or [] for run_dir in improvement._rounds(args.topic, loop_id)]
+    rounds = []
+    for loop_id in args.a or []:
+        # 생성한 round 가 없는 loop 를 빼고 쓰면 요청한 비교가 말없이 다른 비교가 된다.
+        found = [run_dir.name for run_dir in improvement._rounds(args.topic, loop_id)]
+        if not found:
+            raise SystemExit(f"loop {loop_id} 에 생성한 round 가 없습니다")
+        rounds += found
     path, compared = report.write_report(args.topic, args.id, {"A": rounds, "B": args.b, "C": args.c})
     return f"{report.render(compared)}\n\n{path}"
 
