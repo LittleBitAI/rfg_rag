@@ -77,10 +77,9 @@ def write_release(topic, version, items):
     ids = [item["candidate_id"] for item in items]
     if len(set(ids)) != len(ids):
         raise ValueError("같은 항목이 출시본에 두 번 들어 있습니다")
-    owned = {entry["candidate_id"] for entry in read_catalog() if entry["topic"] == topic}
-    unknown = [candidate_id for candidate_id in ids if candidate_id not in owned]
-    if unknown:
-        raise CatalogError(f"카탈로그에 {topic} 항목으로 등록되지 않았습니다: {unknown}")
+    originals = _registered_records(topic, ids)
+    for item in items:
+        _require_same_record(originals[item["candidate_id"]], item)
     release_dir = _child(_topic_dir(topic) / "releases", version)
     release_dir.mkdir(parents=True, exist_ok=False)
 
@@ -100,10 +99,7 @@ def write_release(topic, version, items):
 
 def read_catalog():
     path = guard(OUTPUTS / "catalog.jsonl")
-    if not path.exists():
-        return []
-    with path.open(encoding="utf-8") as f:
-        return [json.loads(line) for line in f]
+    return _read_jsonl(path) if path.exists() else []
 
 
 def evidence_group(item):
@@ -138,6 +134,38 @@ def _check_catalog(entries):
         seen.add(entry["candidate_id"])
 
 
+def _registered_records(topic, ids):
+    """카탈로그가 가리키는 run 의 candidates.jsonl 에서 각 항목의 원래 기록을 읽는다."""
+    entries = {entry["candidate_id"]: entry for entry in read_catalog() if entry["topic"] == topic}
+    unknown = [candidate_id for candidate_id in ids if candidate_id not in entries]
+    if unknown:
+        raise CatalogError(f"카탈로그에 {topic} 항목으로 등록되지 않았습니다: {unknown}")
+    runs = {(entries[candidate_id]["method"], entries[candidate_id]["run_id"]) for candidate_id in ids}
+    records = {}
+    for method, run_id in runs:
+        path = guard(_topic_dir(topic) / "runs" / method / run_id / "candidates.jsonl")
+        records.update((record["candidate_id"], record) for record in _read_jsonl(path))
+    return records
+
+
+def _require_same_record(original, item):
+    """출시 항목은 run 에 등록된 기록에서 상태만 더 나아간 것이어야 한다.
+
+    질문·답·근거·방법·run 을 바꿔 끼우면 카탈로그의 근거 묶음 소유와 출시 매니페스트의 원본 run 이 거짓이 된다.
+    """
+    progress = ("state", "state_history", "validator_version")
+    changed = [name for name in original if name not in progress and item[name] != original[name]]
+    history = original["state_history"]
+    if item["state_history"][:len(history)] != history:
+        changed.append("state_history")
+    if original["validator_version"] not in (None, item["validator_version"]):
+        changed.append("validator_version")
+    if changed:
+        raise CatalogError(
+            f"{item['candidate_id']} 가 run {original['method']}/{original['run_id']} 에 등록된 기록과 다릅니다: {changed}"
+        )
+
+
 def _catalog_entry(item):
     return {
         "candidate_id": item["candidate_id"],
@@ -149,7 +177,6 @@ def _catalog_entry(item):
 
 
 def _failure(item):
-    last = item["state_history"][-1] if item["state_history"] else {}
     return {
         "candidate_id": item["candidate_id"],
         "parent_candidate_id": item["parent_candidate_id"],
@@ -157,7 +184,7 @@ def _failure(item):
         "method": item["method"],
         "question": item["question"],
         "answer": item["answer"],
-        "reason": last.get("reason"),
+        "reason": item["state_history"][-1]["reason"],
     }
 
 
@@ -193,6 +220,11 @@ def _sha256(path):
 def _count_lines(path):
     with path.open(encoding="utf-8") as f:
         return sum(1 for _ in f)
+
+
+def _read_jsonl(path):
+    with path.open(encoding="utf-8") as f:
+        return [json.loads(line) for line in f]
 
 
 def _write_json(path, data):

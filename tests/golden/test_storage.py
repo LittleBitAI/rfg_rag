@@ -11,11 +11,15 @@ def read_jsonl(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def validated(make_item, candidate_id, question, to, reason):
+    return transition(make_item(candidate_id=candidate_id, question=question, validator_version="val-0.1"), to, reason)
+
+
 def run_items(make_item):
     candidate = make_item(candidate_id="n-1")
-    accepted = transition(make_item(candidate_id="n-2", question="계약 기간은?"), "auto_validated", "통과")
-    held = transition(make_item(candidate_id="n-3", question="하자 보수 기간은?"), "held", "격자 미확인")
-    rejected = transition(make_item(candidate_id="n-4", question="입찰 마감은?"), "rejected", "근거와 답 불일치")
+    accepted = validated(make_item, "n-2", "계약 기간은?", "auto_validated", "통과")
+    held = validated(make_item, "n-3", "하자 보수 기간은?", "held", "격자 미확인")
+    rejected = validated(make_item, "n-4", "입찰 마감은?", "rejected", "근거와 답 불일치")
     return [candidate, accepted, held, rejected]
 
 
@@ -78,11 +82,31 @@ def test_release_writes_golden_and_refuses_existing_version(outputs, make_item):
 
 
 def test_release_refuses_items_not_released_or_not_in_catalog(outputs, make_item):
-    storage.write_run("numeric", "A", "r1", [make_item(candidate_id="n-1")])
+    items = run_items(make_item)
+    storage.write_run("numeric", "A", "r1", items)
     with pytest.raises(ValueError, match="출시 상태"):
-        storage.write_release("numeric", "v1", [make_item(candidate_id="n-1")])
-    with pytest.raises(storage.CatalogError):
-        storage.write_release("numeric", "v1", [make_item(candidate_id="n-x", state="released")])
+        storage.write_release("numeric", "v1", [items[1]])
+    unregistered = transition({**items[1], "candidate_id": "n-x"}, "released", "출시")
+    with pytest.raises(storage.CatalogError, match="등록되지 않았습니다"):
+        storage.write_release("numeric", "v1", [unregistered])
+
+
+@pytest.mark.parametrize("field", [
+    "question", "answer", "method", "run_id", "evidence", "validator_version", "state_history",
+])
+def test_release_refuses_content_that_differs_from_its_registered_run(outputs, make_item, field):
+    # candidate_id 만 카탈로그와 맞추고 내용·출처를 바꿔 끼운 항목이
+    # 출시본과 매니페스트(원본 run)에 그대로 들어가던 결함을 막는다.
+    items = run_items(make_item)
+    storage.write_run("numeric", "A", "r1", items)
+    other = make_item(question="바꿔 끼운 질문", answer="바꿔 끼운 답", method="B", run_id="r9", validator_version="val-9")
+    other["evidence"][0]["chunk_id"] = "c-99"
+    other = transition(other, "auto_validated", "다른 검증 기록")
+    substituted = transition({**items[1], field: other[field]}, "released", "출시")
+
+    with pytest.raises(storage.CatalogError, match="등록된 기록과 다릅니다"):
+        storage.write_release("numeric", "v1", [substituted])
+    assert not (outputs / "outputs/goldens/numeric/releases").exists()
 
 
 def test_same_item_under_second_topic_is_refused(outputs, make_item):

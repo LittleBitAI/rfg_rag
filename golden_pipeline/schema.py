@@ -1,6 +1,8 @@
 """골든 항목 스키마. 새 패키지를 requirements.txt 에 넣지 않으려고 표준 라이브러리로만 검증한다."""
 import re
 
+from golden_pipeline.state import TRANSITIONS
+
 TOPICS = ("numeric", "table", "condition", "comparison", "multi_hop")
 METHODS = ("A", "B", "C")
 STATES = ("candidate", "auto_validated", "held", "rejected", "released")
@@ -36,12 +38,30 @@ def validate_item(item):
     _require_choice(item["method"], METHODS, "method")
     _require_choice(item["state"], STATES, "state")
     _validate_topics(item["primary_topic"], item["secondary_tags"])
-    if not isinstance(item["state_history"], list):
-        raise SchemaError("state_history 는 리스트여야 합니다")
+    _validate_history(item["state"], item["state_history"])
+    if item["state"] != "candidate" and item["validator_version"] is None:
+        raise SchemaError("candidate 를 지난 항목은 validator_version 이 있어야 합니다")
     if not isinstance(item["evidence"], list) or not item["evidence"]:
         raise SchemaError("evidence 는 비어 있지 않은 리스트여야 합니다")
     for ref in item["evidence"]:
         _validate_evidence(ref)
+
+
+def _validate_history(state, history):
+    """state 만 고쳐 검증·사람 검토를 건너뛰지 못하게,
+    state_history 가 candidate 에서 허용된 전이만 거쳐 지금 state 에 닿는지 본다.
+    """
+    if not isinstance(history, list):
+        raise SchemaError("state_history 는 리스트여야 합니다")
+    current = "candidate"
+    for step in history:
+        _require_fields(step, ("from", "to", "reason", "at"), "state_history")
+        if step["from"] != current or step["to"] not in TRANSITIONS[current]:
+            raise SchemaError(f"state_history 에 허용되지 않는 전이가 있습니다: {step['from']} -> {step['to']}")
+        _require_text(step["reason"], "state_history.reason")
+        current = step["to"]
+    if current != state:
+        raise SchemaError(f"state_history 는 {current} 에서 끝나는데 state 는 {state} 입니다")
 
 
 def _validate_topics(primary, secondary):

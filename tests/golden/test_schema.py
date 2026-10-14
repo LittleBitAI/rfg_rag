@@ -77,3 +77,30 @@ def test_image_needs_sha_and_known_ocr_scope_together(make_item, image_sha, ocr_
     item["evidence"][1].update(image_sha=image_sha, ocr_scope=ocr_scope)
     with pytest.raises(SchemaError):
         validate_item(item)
+
+
+def step(start, to, reason="이유"):
+    return {"from": start, "to": to, "reason": reason, "at": "2026-10-14T00:00:00+00:00"}
+
+
+@pytest.mark.parametrize("state, history", [
+    ("released", []),
+    ("released", [step("candidate", "released")]),
+    ("auto_validated", [step("candidate", "held")]),
+    ("released", [step("candidate", "rejected"), step("rejected", "released")]),
+    ("released", [step("auto_validated", "released")]),
+    ("rejected", [step("candidate", "rejected", reason="")]),
+    ("held", [{"from": "candidate", "to": "held"}]),
+])
+def test_state_must_be_reached_by_permitted_transitions_with_reasons(make_item, state, history):
+    # state 만 released 로 고치고 state_history 를 비워 두면 검증·사람 검토 없이 출시되던 결함,
+    # 거절 이유 없는 거절 항목이 failure_memory 에 들어가던 결함을 막는다.
+    with pytest.raises(SchemaError, match="state_history"):
+        validate_item(make_item(state=state, state_history=history, validator_version="val-0.1"))
+
+
+def test_item_past_candidate_needs_validator_version(make_item):
+    history = [step("candidate", "auto_validated"), step("auto_validated", "released")]
+    validate_item(make_item(state="released", state_history=history, validator_version="val-0.1"))
+    with pytest.raises(SchemaError, match="validator_version"):
+        validate_item(make_item(state="released", state_history=history, validator_version=None))

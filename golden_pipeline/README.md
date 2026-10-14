@@ -1,6 +1,8 @@
 # golden_pipeline — 골든 데이터 파이프라인 기반
 
-평가용 골든 질문·답변을 주제별로 만들고 검증해 출시하기 위한 독립 패키지입니다.
+평가용 골든 질문·답변을 주제별로 만들고 검증해 출시하기 위한 패키지입니다.
+③ 검증 파이프라인에 속하고 담당자도 같지만, `rag/validation/validation.py` 와는 일부러 분리했습니다
+(`CLAUDE.md` · `AGENTS.md` 4절).
 이 단계(기반)는 **항목 스키마, 주제별 저장 규약, run·버전·상태 모델, 출력 경로 보호**만 담습니다.
 v11 읽기, 생성, 검증, 자기 개선, 실행기는 이후 단계에서 붙습니다.
 
@@ -16,7 +18,6 @@ v11 읽기, 생성, 검증, 자기 개선, 실행기는 이후 단계에서 붙�
 | `storage.py` | run · release 저장, 공유 카탈로그, 출력 경로 보호 (`write_run`, `write_release`, `guard`) |
 | `configs/` | run 설정 파일. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
 | `prompts/` | 생성·검증 프롬프트 파일. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
-| `tests/` | 오프라인 테스트 |
 | `outputs/` | 모든 출력 (git 에서 제외, `.gitignore`) |
 
 ## 항목 스키마
@@ -31,7 +32,7 @@ v11 읽기, 생성, 검증, 자기 개선, 실행기는 이후 단계에서 붙�
 | `question` · `answer` | 비어 있지 않은 문자열 |
 | `evidence` | 근거 참조 1개 이상 (아래 표) |
 | `generator_version` · `prompt_version` | 문자열 |
-| `validator_version` | 검증 전이면 `null` |
+| `validator_version` | `candidate` 일 때만 `null` 일 수 있음 |
 | `state` · `state_history` | 상태와 전이 기록 (아래 상태 모델) |
 
 근거 참조(`evidence[]`)의 필드는 모두 있어야 합니다. 해당 없으면 `null` 이나 빈 리스트로 둡니다.
@@ -58,6 +59,8 @@ v11 읽기, 생성, 검증, 자기 개선, 실행기는 이후 단계에서 붙�
 
 `rejected` 와 `released` 는 끝 상태입니다. 허용되지 않은 전이는 `StateError` 로 막고,
 허용된 전이는 `{from, to, reason, at}` 을 `state_history` 에 덧붙인 새 항목을 돌려줍니다.
+`validate_item` 은 `state_history` 가 `candidate` 에서 시작해 허용된 전이만 거쳐 지금 `state` 에 닿는지,
+전이마다 이유가 있는지 확인합니다. 그래서 `state` 만 고쳐 검증이나 사람 검토를 건너뛸 수 없습니다.
 
 ## 저장 규약
 
@@ -82,19 +85,18 @@ golden_pipeline/outputs/
   같은 `candidate_id` 는 다시 등록할 수 없고, 같은 근거 묶음은 다른 주제가 가질 수 없습니다.
   근거 묶음 키는 근거 참조들의 SHA-256 이라 순서와 무관합니다.
 - 출시본에는 같은 주제로 카탈로그에 등록된 `released` 항목만 들어갑니다.
+  출시 항목은 카탈로그가 가리키는 run 의 `candidates.jsonl` 기록과 같아야 하고, 상태만 더 나아갈 수 있습니다
+  (`state_history` 는 그 기록에 이어 붙인 것, `validator_version` 은 비어 있던 경우에만 새로 채움).
+  질문·답·근거·방법·run 을 바꿔 끼우면 `CatalogError` 로 거절합니다.
 - `golden_pipeline/outputs` 밖(`data/`, `artifacts/`, `eval/` 포함)으로 가는 경로는 `OutputPathError` 로 거절합니다.
 
 ## 테스트
 
+테스트는 `tests/golden/` 에 있어 저장소 게이트(`.venv\Scripts\python -m pytest -q tests`)가 함께 돌립니다.
+이 패키지만 돌리려면:
+
 ```
-python -m pytest -q golden_pipeline/tests
+python -m pytest -q tests/golden
 ```
 
-`.env` 키와 네트워크 없이 돌아갑니다. 출력은 임시 폴더에 쓰고, 마지막 테스트는
-`git diff --name-only origin/dev...HEAD` 가 `golden_pipeline/` 와 위키 문서(`.wiki/`) 경로만 내놓는지 확인합니다.
-
-## 저장소 규칙과의 관계
-
-`CLAUDE.md` 4절은 모든 로직이 `rag/` 아래에 있고 파이프라인이 다섯 개라고 적고 있습니다.
-이 패키지는 그 밖에 있는 여섯 번째 흐름입니다. 팀 파이프라인을 바꾸지 않으려고 일부러 분리했으며,
-`CLAUDE.md` · `AGENTS.md` 는 고치지 않았습니다.
+`.env` 키와 네트워크 없이 돌아가고, 출력은 임시 폴더에 씁니다.
