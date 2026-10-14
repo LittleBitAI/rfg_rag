@@ -12,7 +12,7 @@ from golden_pipeline.validation import (
 )
 
 CONFIG = {
-    "model": "validator-test", "max_calls": 20, "budget_usd": 1.0,
+    "model": "validator-test", "reasoning_effort": "high", "max_calls": 20, "budget_usd": 1.0,
     "usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0,
 }
 NUMERIC = {
@@ -36,7 +36,7 @@ class Generator:
     def __init__(self, *rows):
         self.rows = list(rows)
 
-    def __call__(self, model, messages):
+    def __call__(self, model, reasoning_effort, messages):
         text = json.dumps(self.rows.pop(0), ensure_ascii=False)
         return {"model": "generator-test", "text": text, "input_tokens": 10, "output_tokens": 10}
 
@@ -48,7 +48,7 @@ class Validator:
         self.verdicts = verdicts
         self.requests = []
 
-    def __call__(self, model, messages):
+    def __call__(self, model, reasoning_effort, messages):
         self.requests.append(messages)
         reply = self.verdicts.get(self.labels(messages), self.verdicts.get("*"))
         return {"model": "validator-test", "text": json.dumps(reply, ensure_ascii=False),
@@ -145,21 +145,6 @@ def test_same_answer_compares_after_value_and_unit_normalization(candidate, inde
     assert same_answer(candidate, independent) is same
 
 
-@pytest.mark.parametrize("independent, state", [
-    ("1억 3천만원", "auto_validated"),
-    ("13,000,000원", "rejected"),
-])
-def test_independent_answer_mismatch_rejects_the_candidate(config, independent, state):
-    generate("A", "numeric", "p1", "a1", config, Generator(NUMERIC))
-
-    run_dir = validate("numeric", "A", "a1", config, Validator({"*": verdict(independent, ["부가세 포함"])}))
-
-    [item] = validated(run_dir).values()
-    assert item["state"] == state
-    if state == "rejected":
-        assert item["state_history"][-1]["reason"].startswith("독립 답과 다릅니다")
-
-
 def test_a_plan_changed_after_generation_stops_validation_before_any_call(config):
     # 생성 뒤 계획의 근거 본문이 바뀌면 검증기는 후보가 보지 않은 근거로 답한다.
     generate("A", "numeric", "p1", "a1", config, Generator({**NUMERIC, "answer": "130,000,000원(부가세 별도)"}))
@@ -179,8 +164,10 @@ TABLE = {"question": "A안의 예산은?", "answer": "1억원", "evidence": ["E1
 
 
 @pytest.mark.parametrize("topic, row, verdicts, state, reason", [
-    pytest.param("numeric", NUMERIC, {"*": verdict("130,000,000원", ["부가세 포함"])}, "auto_validated", "자동 검증 통과",
+    pytest.param("numeric", NUMERIC, {"*": verdict("1억 3천만원", ["부가세 포함"])}, "auto_validated", "자동 검증 통과",
                  id="numeric-passes"),
+    pytest.param("numeric", NUMERIC, {"*": verdict("13,000,000원", ["부가세 포함"])}, "rejected", "독립 답과 다릅니다",
+                 id="numeric-value-differs"),
     pytest.param("condition", CONDITION, {"*": verdict("11월 3일까지", ["우편 접수는 받지 않는다"])}, "auto_validated",
                  "자동 검증 통과", id="condition-passes"),
     pytest.param("table", TABLE, {"*": verdict("1억원")}, "auto_validated", "자동 검증 통과", id="table-passes"),
@@ -346,7 +333,8 @@ def test_release_collects_accepted_and_person_confirmed_items_and_refuses_an_exi
         ("numeric-C-c1-0002", "사람 확인: 원문 대조: 두 근거는 다른 사실"),
     ]
     manifest = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["runs"] == ["C/c1"]
+    assert (manifest["runs"], manifest["count"]) == (["C/c1"], 2)
+    assert manifest["golden_sha256"] == storage._sha256(release_dir / "golden.jsonl")
     for name in ("candidates.jsonl", "accepted.jsonl", "review.jsonl", "manifest.json", "validation.json"):
         assert manifest["sources"]["C/c1"][name] == storage._sha256(run_dir / name)
     assert manifest["release"]["confirmations"] == {"file": "confirmed.jsonl", "sha256": storage._sha256(confirmations)}

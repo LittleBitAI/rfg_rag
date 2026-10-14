@@ -7,7 +7,6 @@ B · C 는 실패 기록을 읽지 않는다. 이 모듈은 A run 만 다룬다.
 """
 import hashlib
 import json
-from pathlib import Path
 
 from golden_pipeline import generation, plan, storage, validation
 
@@ -43,15 +42,9 @@ PREVENTION_RULES = {
     "copied": "질문에 답의 값을 넣지 않는다.",
     "not_multi_hop": "근거 하나만으로는 답이 나오지 않고 둘 이상을 이어야 답이 나오는 질문을 만든다.",
 }
-ENTRY_FIELDS = ("entry_id", "failure_code", "evidence", "prevention_rule", "rule_version")
-EVIDENCE_FIELDS = ("run", "line", "candidate_id", "bundle_id")
 LOOP_CONFIG = ("max_rounds", "max_calls", "budget_usd", "generator", "validator")
-# 생성기 · 검증기마다 모델과 단가. 호출 수 한도와 예산은 loop 전체의 값에서 남은 만큼을 round 마다 넘긴다.
-PRICED = ("model", "usd_per_million_input_tokens", "usd_per_million_output_tokens")
-
-
-class FailureMemoryError(ValueError):
-    pass
+# 생성기 · 검증기마다 모델 · 추론 강도 · 단가. 호출 수 한도와 예산은 loop 전체의 값에서 남은 만큼을 round 마다 넘긴다.
+PRICED = ("model", "reasoning_effort", "usd_per_million_input_tokens", "usd_per_million_output_tokens")
 
 
 def improve(topic, plan_id, loop_id, config_path, generator, validator):
@@ -80,7 +73,9 @@ def improve(topic, plan_id, loop_id, config_path, generator, validator):
 def record_failures(topic, run_id):
     """검증한 A run 의 rejected.jsonl 한 줄마다 실패 코드와 예방 규칙을 붙여 failure_memory/A_{run_id}.jsonl 로 남긴다.
 
-    rejected.jsonl 은 그대로 둔다. 기록 항목은 그 줄을 가리킬 뿐 질문 · 답을 옮기지 않는다.
+    실패 기록에 쓰는 곳은 여기 하나이고, 항목은 rejected.jsonl 의 줄에서만 만든다. 항목의 글은 코드마다 정해 둔
+    예방 규칙뿐이고 나머지는 그 줄을 가리키는 참조뿐이라, 질문 · 답 · 고친 답 · 출시본 글이 들어올 자리가 없다.
+    rejected.jsonl 은 그대로 둔다.
     """
     run_dir = storage.run_path(topic, "A", run_id)
     if not (run_dir / "validation.json").exists():
@@ -96,7 +91,10 @@ def record_failures(topic, run_id):
             "prevention_rule": PREVENTION_RULES[code],
             "rule_version": PREVENTION_VERSION,
         })
-    return write_memory(topic, run_id, entries)
+    path = _memory_path(topic, run_id)
+    path.parent.mkdir(exist_ok=True)
+    storage._write_jsonl(path, entries)
+    return path
 
 
 def failure_code(reason):
@@ -109,23 +107,6 @@ def failure_code(reason):
 def _reason(row):
     # 항목이 된 거절은 마지막 전이에, 항목이 되지 못한 생성 출력은 행에 이유가 있다.
     return row["state_history"][-1]["reason"] if "candidate_id" in row else row["reason"]
-
-
-def write_memory(topic, run_id, entries):
-    """실패 기록의 유일한 출구. 항목의 글은 코드마다 정해 둔 예방 규칙뿐이고, 나머지는 이 run 의 rejected.jsonl 한 줄을 가리키는 참조뿐이다.
-
-    그래서 출시본의 질문 · 답 · 항목별 피드백(전이 이유)이 들어올 자리가 없다. 평가 정답이 생성 쪽으로 새지 않는다.
-    출시본 글을 부분 문자열로 찾지 않는다. JSON 같은 짧은 출시본 답이 정해 둔 규칙 글에 들어 있어도 그 규칙은 막으면 안 되기 때문이다.
-    """
-    rows = storage._read_jsonl(storage.run_path(topic, "A", run_id) / "rejected.jsonl")
-    for entry in entries:
-        _check_shape(entry)
-        _check_rule(entry)
-        _check_reference(entry, run_id, rows)
-    path = _memory_path(topic, run_id)
-    path.parent.mkdir(exist_ok=True)
-    storage._write_jsonl(path, entries)
-    return path
 
 
 def related_failures(topic):
@@ -170,14 +151,14 @@ def _round(topic, plan_id, loop_id, n, config, clients):
         if stop:
             return stop
     if not (run_dir / "validation.json").exists():
-        stop = _exhausted(topic, loop_id, config)
+        stop = generation.limit_reached(config, *_spent(topic, loop_id))
         if stop:
             return stop
         validation.validate(topic, "A", run_id, _limits(topic, loop_id, n, config, "validator"), clients[1])
     if not _memory_path(topic, run_id).exists():
         record_failures(topic, run_id)
-    statuses = (_read_json(run_dir / "manifest.json")["generation"]["status"],
-                _read_json(run_dir / "validation.json")["status"])
+    statuses = (storage._read_json(run_dir / "manifest.json")["generation"]["status"],
+                storage._read_json(run_dir / "validation.json")["status"])
     return next((status for status in statuses if status != "complete"), None)
 
 
@@ -185,7 +166,7 @@ def _generate(topic, plan_id, loop_id, n, config, client):
     parents = open_bundles(topic, plan_id, loop_id)
     if not parents:
         return "no_open_bundles"
-    stop = _exhausted(topic, loop_id, config)
+    stop = generation.limit_reached(config, *_spent(topic, loop_id))
     if stop:
         return stop
     path = _limits(topic, loop_id, n, config, "generator")
@@ -209,13 +190,6 @@ def _revision(topic, loop_id, n, parents):
     return {"parents": parents, "prevention": prevention, "policy": policy}
 
 
-def _exhausted(topic, loop_id, config):
-    calls, cost = _spent(topic, loop_id)
-    if calls >= config["max_calls"]:
-        return "call_cap"
-    return "budget" if cost >= config["budget_usd"] else None
-
-
 def _limits(topic, loop_id, n, config, role):
     """loop 전체 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정 파일. 생성 · 검증은 이 파일로 돈다."""
     calls, cost = _spent(topic, loop_id)
@@ -228,8 +202,8 @@ def _limits(topic, loop_id, n, config, role):
 
 def _counted(client, loop_dir, priced):
     """돌아온 호출마다 그 자리에서 calls.jsonl 에 남기는 client. 생성 · 검증이 도중에 끊겨도 쓴 호출 · 비용이 남는다."""
-    def call(model, messages):
-        response = client(model=model, messages=messages)
+    def call(model, reasoning_effort, messages):
+        response = client(model=model, reasoning_effort=reasoning_effort, messages=messages)
         usage = {"model": response["model"], "input_tokens": response["input_tokens"],
                  "output_tokens": response["output_tokens"]}
         storage._append_jsonl(loop_dir / "calls.jsonl", [{**usage, "cost_usd": generation._cost(priced, [usage])}])
@@ -248,8 +222,8 @@ def _report(topic, plan_id, loop_id, stop):
     """멈춘 이유, round 별 상태 · policy, 쓴 호출 · 비용, 목표 개수 대비 통과 묶음과 모자란 수."""
     rounds, accepted, held = [], set(), set()
     for run_dir in _rounds(topic, loop_id):
-        generated = _read_json(run_dir / "manifest.json")["generation"]
-        record = _read_json(run_dir / "validation.json") if (run_dir / "validation.json").exists() else None
+        generated = storage._read_json(run_dir / "manifest.json")["generation"]
+        record = storage._read_json(run_dir / "validation.json") if (run_dir / "validation.json").exists() else None
         rounds.append({
             "run_id": run_dir.name,
             "generation_status": generated["status"],
@@ -286,10 +260,10 @@ def _generated(topic, loop_id, n):
     run_dir = storage.run_path(topic, "A", f"{loop_id}-r{n}")
     if not (run_dir / "manifest.json").exists():
         return False
-    generated = _read_json(run_dir / "manifest.json")["generation"]
+    generated = storage._read_json(run_dir / "manifest.json")["generation"]
     policy = generated["policy"] or {}
     start = _loop_path(topic, loop_id) / "start.json"
-    pinned = _read_json(start)
+    pinned = storage._read_json(start)
     owner = {"loop_id": loop_id, "round": n, "start_sha256": storage._sha256(start),
              "plan_id": pinned["plan_id"], "plan_sha256": pinned["plan_sha256"]}
     found = {"loop_id": policy.get("loop_id"), "round": policy.get("round"), "start_sha256": policy.get("start_sha256"),
@@ -301,8 +275,8 @@ def _generated(topic, loop_id, n):
 
 
 def _loop_config(path):
-    """max_rounds · max_calls · budget_usd 와 생성기 · 검증기의 모델 · 단가. 기본값 없이 모두 적어야 한다."""
-    config = json.loads(Path(path).read_text(encoding="utf-8"))
+    """max_rounds · max_calls · budget_usd 와 생성기 · 검증기의 모델 · 추론 강도 · 단가. 기본값 없이 모두 적어야 한다."""
+    config = storage._read_json(path)
     if not isinstance(config, dict) or set(config) != set(LOOP_CONFIG):
         raise ValueError(f"loop 설정은 정확히 {LOOP_CONFIG} 를 가져야 합니다: {path}")
     if not all(isinstance(config[role], dict) and set(config[role]) == set(PRICED) for role in ("generator", "validator")):
@@ -335,7 +309,7 @@ def _pin(loop_dir, plan_id, config):
     if not path.exists():
         storage._write_json(path, current)
         return
-    pinned = _read_json(path)
+    pinned = storage._read_json(path)
     changed = sorted(key for key in current if current[key] != pinned[key])
     if changed:
         raise ValueError(f"loop {loop_dir.name} 를 시작할 때와 다릅니다: {changed}")
@@ -349,40 +323,3 @@ def _memory_path(topic, run_id):
     return storage._child(storage._topic_dir(topic) / "failure_memory", f"A_{run_id}.jsonl")
 
 
-def _check_shape(entry):
-    valid = (isinstance(entry, dict) and set(entry) == set(ENTRY_FIELDS)
-             and isinstance(entry["evidence"], dict) and set(entry["evidence"]) == set(EVIDENCE_FIELDS))
-    if not valid:
-        raise FailureMemoryError(
-            f"실패 기록 항목은 정확히 {ENTRY_FIELDS}, evidence 는 {EVIDENCE_FIELDS} 입니다. 고친 답 같은 필드는 넣을 수 없습니다"
-        )
-
-
-def _check_rule(entry):
-    """예방 규칙은 실패 코드마다 정해 둔 글과 버전이어야 한다. 검증하지 않은 고친 답을 사실로 적어 넣지 못하게 한다.
-
-    정해 두지 않은 코드는 규칙이 없다. 막지 않으면 다음 loop 가 그 코드의 규칙을 찾다 멈춘다.
-    """
-    code = entry["failure_code"]
-    known = code in PREVENTION_RULES and PREVENTION_RULES[code] == entry["prevention_rule"]
-    if not known or entry["rule_version"] != PREVENTION_VERSION:
-        raise FailureMemoryError(f"{entry['entry_id']} 의 예방 규칙이 {PREVENTION_VERSION} 의 {code!r} 규칙과 다릅니다")
-
-
-def _check_reference(entry, run_id, rows):
-    """entry_id · evidence · failure_code 는 이 run 의 rejected.jsonl 한 줄에서 나온 값과 꼭 같아야 한다.
-
-    참조 칸에 다른 글을 실어 보내지 못하고, 정해 둔 코드라도 그 줄의 거절 이유와 다른 규칙을 가르치지 못하게 한다.
-    """
-    line = entry["evidence"]["line"]
-    if type(line) is not int or not 1 <= line <= len(rows):
-        raise FailureMemoryError(f"{entry['entry_id']} 의 evidence.line 이 A/{run_id} 의 rejected.jsonl 한 줄이 아닙니다")
-    row = rows[line - 1]
-    expected = {"run": f"A/{run_id}", "line": line, "candidate_id": row.get("candidate_id"), "bundle_id": row["bundle_id"]}
-    derived = entry["entry_id"] == f"{run_id}:{line}" and entry["failure_code"] == failure_code(_reason(row))
-    if not derived or entry["evidence"] != expected:
-        raise FailureMemoryError(f"{entry['entry_id']} 의 참조가 A/{run_id} 의 rejected.jsonl {line} 번째 줄과 다릅니다")
-
-
-def _read_json(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))

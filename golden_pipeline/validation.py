@@ -34,7 +34,7 @@ SUBJECT_TAGS = CONTENT_TAGS + ("NNB",)
 def validate(topic, method, run_id, config_path, client):
     """run 의 후보마다 독립 검증기를 불러 auto_validated · held · rejected 로 나눠 쓴다. run 마다 한 번만 한다.
 
-    client 는 생성과 같은 계약이다: client(model=..., messages=[...]) -> {"model", "text", "input_tokens", "output_tokens"}.
+    client 는 생성과 같은 계약이다: client(model=..., reasoning_effort=..., messages=[...]) -> {"model", "text", "input_tokens", "output_tokens"}.
     """
     run_dir = storage.unvalidated_run(topic, method, run_id)
     candidates = storage._read_jsonl(run_dir / "candidates.jsonl")
@@ -54,7 +54,7 @@ def resume_validation(topic, method, run_id, config_path, client):
         raise ValueError("A 의 검증은 자기 개선 loop 가 이어 돕니다")
     accepted, held = storage.read_validated(topic, method, run_id)
     run_dir = storage.run_path(topic, method, run_id)
-    last = json.loads(storage.validation_records(run_dir)[-1].read_text(encoding="utf-8"))
+    last = storage._read_json(storage.validation_records(run_dir)[-1])
     if not last["pending"]:
         raise ValueError(f"이어서 검증할 pending 후보가 없습니다: {topic}/{method}/{run_id}")
     current = {"validator_version": VALIDATOR_VERSION, "difficulty_rule": DIFFICULTY_RULE,
@@ -94,7 +94,8 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     for item in candidates:
         units = evidence_units(item, bundles[item["bundle_id"]])
         if status == "complete":
-            status = _limit(config, calls, _calls_needed(item, units))
+            needed = _calls_needed(item, units)
+            status = generation.limit_reached(config, len(calls), generation._cost(config, calls), needed) or "complete"
         if status != "complete":
             pending.append(item["candidate_id"])
             continue
@@ -124,7 +125,7 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
 
 def _pinned_plan(run_dir, topic):
     """생성 run 이 쓴 계획. 생성 뒤에 계획 파일이 바뀌었으면 검증기에 줄 근거가 후보의 근거와 다르므로 멈춘다."""
-    generated = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["generation"]
+    generated = storage._read_json(run_dir / "manifest.json")["generation"]
     planned, plan_sha, spec = generation._plan_for(generated["plan_id"], topic)
     if plan_sha != generated["plan_sha256"]:
         raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_dir.name} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
@@ -184,20 +185,16 @@ def quantities(text):
     1억 3천만원 처럼 수 단위로 끝난 수 뒤에 이어 쓴 수는 하나로 더한다. 그래서 1억 3천만원 = 130,000,000원 이다.
     수와 단위를 읽는 법(부호, 단위 끝)은 생성의 numeric 검사와 같다.
     """
-    return {pair for pair, _ in facts(text)}
+    return {pair for pair, _, _ in facts(text)}
 
 
 def facts(text):
-    """text 의 (값, 단위) 쌍마다 그 대상을 함께 돌려준다: [((값, 단위), 대상 낱말 집합)].
+    """text 의 (값, 단위) 쌍마다 그 대상과 글자 범위를 함께 돌려준다: [((값, 단위), 대상 낱말 집합, (시작, 끝))].
 
     대상은 단위가 같은 앞 값 뒤부터 이 값 앞까지의 내용 형태소다. A안은 2억원, B안은 1억원 에서 2억원 의 대상은 {A, 안},
     1억원 의 대상은 {B, 안} 이다. 단위가 다른 값끼리는 바뀔 수 없어 경계로 삼지 않는다 (1차년도 1억원 의 대상은 {1, 차, 년도}).
+    글자 범위는 NFC 로 바꾼 text 에서 그 수 표현(부호부터 단위 끝까지)의 자리다.
     """
-    return [(pair, subject) for pair, subject, _ in _spans(text)]
-
-
-def _spans(text):
-    """facts 와 같고, 쌍마다 NFC 로 바꾼 text 에서 그 수 표현(부호부터 단위 끝까지)의 글자 범위 (시작, 끝) 를 더한다."""
     text = unicodedata.normalize("NFC", text)
     tokens = generation._kiwi().tokenize(text)
     found, carry, after = [], {}, {}
@@ -229,7 +226,7 @@ def same_answer(text, independent):
     """
     expected = facts(independent)
     if not expected:
-        return _contains(_norm(text), _norm(independent))
+        return _contains(text, independent)
     found = facts(text)
     return _combined([_attributed(fact, expected, found) for fact in expected])
 
@@ -282,7 +279,7 @@ def _layout(text):
     """
     text = unicodedata.normalize("NFC", text)
     pairs, frame, last = [], [], 0
-    for pair, _, (start, end) in _spans(text):
+    for pair, _, (start, end) in facts(text):
         pairs.append(pair)
         frame.append(text[last:start])
         last = end
@@ -304,15 +301,15 @@ def _attributed(fact, expected, found):
     text 의 대상에 모두 있어야 하고, 다른 값의 대상에 있는 낱말(foreign)이 있으면 다른 대상의 값이다.
     ponytail: 대상은 값 앞에서만 읽는다. 2억원(A안) 처럼 대상을 값 뒤에 쓴 답은 확인하지 못하거나 바뀐 답으로 읽힌다.
     """
-    pair, subject = fact
-    subjects = [other_subject for other, other_subject in found if other == pair]
+    pair, subject, _ = fact
+    subjects = [other_subject for other, other_subject, _ in found if other == pair]
     if not subjects:
         return False
     rivals = [other for other in expected if other is not fact and other[0][1] == pair[1]]
     if not rivals:
         return True
-    own = subject - set().union(*(other_subject for _, other_subject in rivals))
-    foreign = set().union(*(other_subject for other, other_subject in rivals if other != pair)) - subject
+    own = subject - set().union(*(other_subject for _, other_subject, _ in rivals))
+    foreign = set().union(*(other_subject for other, other_subject, _ in rivals if other != pair)) - subject
     if own and any(own <= other_subject and not other_subject & foreign for other_subject in subjects):
         return True
     return False if all(other_subject & foreign for other_subject in subjects) else None
@@ -353,7 +350,8 @@ def _static_reason(item, spec, units, survivors):
     mismatch = generation.check_structure(item["primary_topic"], spec, item, cited)
     if mismatch:
         return f"유형 불일치: {mismatch}"
-    relation = _table_relation(item, units) if item["primary_topic"] == "table" else _condition_relation(item)
+    check = RELATIONS.get(item["primary_topic"])
+    relation = check(item, units) if check else None
     if relation:
         return relation
     duplicate = next((survivors[key] for key in _keys(item) if key in survivors), None)
@@ -418,14 +416,10 @@ def _not_copied(item, full):
     # 질문에 값이 모두 있으면 대상을 확인하지 못했어도(None) 답을 내준 것이다.
     if same_answer(item["question"], full["answer"]) is False:
         return None
-    if _norm(full["answer"]) in {_norm(entity) for entity in _entities(item) or []}:
+    entities = item["structure"]["entities"] if item["primary_topic"] == "comparison" else []
+    if _norm(full["answer"]) in {_norm(entity) for entity in entities}:
         return None
     return f"복사형: 질문에 답 {full['answer']!r} 이 들어 있습니다"
-
-
-def _entities(item):
-    """비교 항목이 견주는 대상 이름 (구조의 entities). 다른 주제는 None 이다."""
-    return item["structure"]["entities"] if item["primary_topic"] == "comparison" else None
 
 
 ANSWER_CHECKS = (_answerable, _numeric_answer, _same_as_independent, _conditions_stated, _not_copied)
@@ -440,12 +434,13 @@ def _table_relation(item, units):
     return None if _states(item["answer"], cell) else f"표 관계: {row} · {column} 칸은 {cell!r} 인데 답에 없습니다"
 
 
-def _condition_relation(item):
+def _condition_relation(item, units):
     """조건 주제의 답은 그 조건 · 예외 문구를 함께 밝혀야 한다 (주제 명세 requires)."""
-    condition = item["structure"]["condition"] if item["primary_topic"] == "condition" else None
-    if condition is None or _states(item["answer"], condition):
-        return None
-    return f"조건 · 예외 누락: 답에 조건 {condition!r} 이 없습니다"
+    condition = item["structure"]["condition"]
+    return None if _states(item["answer"], condition) else f"조건 · 예외 누락: 답에 조건 {condition!r} 이 없습니다"
+
+
+RELATIONS = {"table": _table_relation, "condition": _condition_relation}
 
 
 def _cell(units, row, column):
@@ -465,7 +460,7 @@ def _cell(units, row, column):
 
 
 def _states(answer, phrase):
-    return _contains(_norm(answer), _norm(phrase))
+    return _contains(answer, phrase)
 
 
 def _scale(tokens, i):
@@ -530,7 +525,7 @@ def _asker(client, config, instructions, calls):
     def ask(question, units):
         content = json.dumps(validator_input(question, units), ensure_ascii=False)
         messages = [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
-        response = client(model=config["model"], messages=messages)
+        response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
         calls.append({
             "question": question,
             "labels": [unit["label"] for unit in units],
@@ -572,19 +567,12 @@ def _valid_comparison(comparison):
 
 
 def _calls_needed(item, units):
-    """후보 하나에 쓸 수 있는 최대 호출 수: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 한 번 더."""
+    """후보 하나에 쓸 수 있는 최대 호출 수: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 한 번 더.
+
+    한 후보의 검증을 도중에 끊지 않도록 후보를 시작하기 전에 이만큼을 한도와 견준다.
+    """
     singles = sum(plan._table_row(unit) != 0 for unit in units) if item["primary_topic"] == "multi_hop" else 0
     return 1 + singles
-
-
-def _limit(config, calls, needed):
-    """한 후보의 검증을 도중에 끊지 않도록 후보를 시작하기 전에 호출 수 한도와 예산을 본다."""
-    if len(calls) + needed > config["max_calls"]:
-        return "call_cap"
-    # ponytail: 예산은 후보 사이에만 본다. 마지막 후보의 호출만큼 넘을 수 있다.
-    if generation._cost(config, calls) >= config["budget_usd"]:
-        return "budget"
-    return "complete"
 
 
 def _confirmations(path):

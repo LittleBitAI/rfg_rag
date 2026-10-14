@@ -1,6 +1,6 @@
 """골든 파이프라인 실행기. golden.cmd (Windows) 와 golden.command (macOS) 가 모두 이 모듈 하나를 부른다.
 
-API 를 부르는 명령(run · audit · resume)은 모델 · 단가 · 최대 호출 수 · 예산을 모두 받아야 시작한다.
+API 를 부르는 명령(run · audit · resume)은 모델 · 추론 강도 · 단가 · 최대 호출 수 · 예산을 모두 받아야 시작한다.
 기본값을 두지 않아, 값을 정하지 않은 채 유료 호출이 나가지 않는다.
 """
 import argparse
@@ -30,8 +30,8 @@ def api_client():
     """
     load_dotenv(storage.PACKAGE.parent / ".env")
     with openai.OpenAI(max_retries=3) as client:
-        def call(model, messages):
-            response = client.chat.completions.create(model=model, messages=messages)
+        def call(model, reasoning_effort, messages):
+            response = client.chat.completions.create(model=model, reasoning_effort=reasoning_effort, messages=messages)
             return {"model": response.model, "text": response.choices[0].message.content or "",
                     "input_tokens": response.usage.prompt_tokens, "output_tokens": response.usage.completion_tokens}
         yield call
@@ -48,17 +48,17 @@ def _plan(args):
 
 def _run(args):
     """A 는 자기 개선 loop (생성 → 검증 → 실패 기록을 round 마다), B 는 고정 프롬프트 생성만 한다 (검증은 audit)."""
-    generator = _priced(args.model, args.price)
+    generator = _priced(args.model, args.reasoning_effort, args.price)
     limits = {"max_calls": args.max_calls, "budget_usd": args.budget}
     if args.method == "B":
-        if args.max_rounds or args.validator_model or args.validator_price:
-            raise SystemExit("--max-rounds · --validator-model · --validator-price 는 A 만 받습니다")
+        if args.max_rounds or args.validator_model or args.validator_reasoning_effort or args.validator_price:
+            raise SystemExit("--max-rounds · --validator-model · --validator-reasoning-effort · --validator-price 는 A 만 받습니다")
         with _config_file({**generator, **limits}) as path, api_client() as call:
             return generation.generate("B", args.topic, args.plan, args.id, path, call)
-    if not (args.max_rounds and args.validator_model and args.validator_price):
-        raise SystemExit("A 는 --max-rounds · --validator-model · --validator-price 도 받아야 시작합니다")
-    config = {"max_rounds": args.max_rounds, **limits, "generator": generator,
-              "validator": _priced(args.validator_model, args.validator_price)}
+    if not (args.max_rounds and args.validator_model and args.validator_reasoning_effort and args.validator_price):
+        raise SystemExit("A 는 --max-rounds · --validator-model · --validator-reasoning-effort · --validator-price 도 받아야 시작합니다")
+    validator = _priced(args.validator_model, args.validator_reasoning_effort, args.validator_price)
+    config = {"max_rounds": args.max_rounds, **limits, "generator": generator, "validator": validator}
     with _config_file(config) as path, api_client() as call:
         return _json(improvement.improve(args.topic, args.plan, args.id, path, call, call))
 
@@ -71,14 +71,14 @@ def _resume(args):
     if args.method == "A":
         if args.max_calls or args.budget:
             raise SystemExit("A 의 한도는 loop 를 시작할 때 고정됩니다. --max-calls · --budget 없이 이으세요")
-        start = json.loads((improvement._loop_path(args.topic, args.id) / "start.json").read_text(encoding="utf-8"))
+        start = storage._read_json(improvement._loop_path(args.topic, args.id) / "start.json")
         with _config_file(start["config"]) as path, api_client() as call:
             return _json(improvement.improve(args.topic, start["plan_id"], args.id, path, call, call))
     if not (args.max_calls and args.budget):
         raise SystemExit("B · C 의 검증을 이으려면 --max-calls · --budget 을 받아야 합니다")
     storage.read_validated(args.topic, args.method, args.id)
     run_dir = storage.run_path(args.topic, args.method, args.id)
-    last = json.loads(storage.validation_records(run_dir)[-1].read_text(encoding="utf-8"))
+    last = storage._read_json(storage.validation_records(run_dir)[-1])
     config = {**last["run_config"], "max_calls": args.max_calls, "budget_usd": args.budget}
     with _config_file(config) as path, api_client() as call:
         return validation.resume_validation(args.topic, args.method, args.id, path, call)
@@ -89,7 +89,7 @@ def _import(args):
 
 
 def _audit(args):
-    config = {**_priced(args.model, args.price), "max_calls": args.max_calls, "budget_usd": args.budget}
+    config = {**_priced(args.model, args.reasoning_effort, args.price), "max_calls": args.max_calls, "budget_usd": args.budget}
     with _config_file(config) as path, api_client() as call:
         return validation.validate(args.topic, args.method, args.id, path, call)
 
@@ -111,8 +111,8 @@ def _report(args):
     return f"{report.render(compared)}\n\n{path}"
 
 
-def _priced(model, price):
-    return {"model": model, "usd_per_million_input_tokens": price[0], "usd_per_million_output_tokens": price[1]}
+def _priced(model, reasoning_effort, price):
+    return {"model": model, "reasoning_effort": reasoning_effort, "usd_per_million_input_tokens": price[0], "usd_per_million_output_tokens": price[1]}
 
 
 @contextmanager
@@ -161,6 +161,7 @@ def _paid_commands(commands):
     _limits(command)
     command.add_argument("--max-rounds", type=int, help="A 만: 최대 round 수")
     command.add_argument("--validator-model", help="A 만: 검증기 모델")
+    command.add_argument("--validator-reasoning-effort", help="A 만: 검증기 추론 강도 (예: low · medium · high)")
     command.add_argument("--validator-price", nargs=2, type=float, metavar=("IN", "OUT"),
                          help="A 만: 검증기 단가 (USD / 100만 토큰)")
     command.set_defaults(handler=_run)
@@ -210,6 +211,7 @@ def _target(command, methods):
 
 def _limits(command):
     command.add_argument("--model", required=True)
+    command.add_argument("--reasoning-effort", required=True, help="추론 강도 (예: low · medium · high)")
     command.add_argument("--price", nargs=2, type=float, required=True, metavar=("IN", "OUT"),
                          help="단가 (USD / 100만 토큰)")
     command.add_argument("--max-calls", type=int, required=True)
