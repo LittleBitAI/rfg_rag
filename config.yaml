@@ -15,6 +15,12 @@ parsing:
   hanja_mode: append            # none | append(必(필)) | replace(필)
   max_repeat_image_pages: 3     # (OCR) 이 횟수 이상 반복 등장하는 그림 = 로고/장식 → OCR 하지 않음
 
+  craft:
+    enabled: false             # 기존 Vision 경로 유지; 켜면 후보만 Vision으로 전달
+    model_dir: models/easyocr   # 로컬 craft_mlt_25k.pth; 다운로드 금지
+    cache_dir: artifacts/ocr_detector
+    review_queue: artifacts/ocr_review.jsonl
+
 ocr:
   model: gpt-5-mini
   max_tokens: 2048
