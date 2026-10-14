@@ -94,6 +94,7 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
     # 부호는 값의 일부다. 근거의 130,000,000원 은 양수다.
     ("-130,000,000원", {"value": "130,000,000", "unit": "원"}),
     ("△130,000,000원", {"value": "130,000,000", "unit": "원"}),
+    ("- 130,000,000원", {"value": "130,000,000", "unit": "원"}),
 ])
 def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch(planned, answer, structure):
     # 값 없이 설명만 하는 답이 numeric 후보로 남던 경우를 막는다. 근거에 없는 값도 같은 이유로 거절한다.
@@ -127,6 +128,12 @@ def unit(text, kind="char"):
     ("3", "개", "3개년 계획", False),
     ("12", "개월", "기간은 10~12개월", False),
     ("123", "개월", "1, 2, 3개월 차에 점검", False),
+    # 단위 끝이 막히면 더 짧은 단위로 물러나 읽지 않는다 (12개월간 은 12개 가 아니다).
+    ("12", "개", "기간은 12개월간", False),
+    ("5", "MB", "속도는 5MB/s", False),
+    ("2025", "년", "2024년-2025년", False),
+    ("3", "회", "제3회 회의", False),
+    ("5", "만원", "5만원 이상", True),
 ])
 def test_numeric_pair_must_be_the_whole_expression_in_evidence(value, unit_name, evidence, ok):
     # 근거에서 수의 앞(부호 · 범위)과 단위의 뒤(목록 밖의 더 긴 단위)를 버리고 맞추면 뜻이 다른 값이 근거가 된다.

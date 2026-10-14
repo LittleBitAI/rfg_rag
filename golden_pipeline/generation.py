@@ -7,8 +7,11 @@ API 응답이 알려 준 모델을 남겨 무엇을 넣어 무엇이 나왔는�
 import json
 import re
 import unicodedata
+from functools import lru_cache
 from pathlib import Path
 from string import Template
+
+from kiwipiepy import Kiwi
 
 from golden_pipeline import plan as plans
 from golden_pipeline import storage
@@ -20,11 +23,11 @@ RUN_CONFIG = ("model", "max_calls", "budget_usd", "usd_per_million_input_tokens"
 ROW_FIELDS = ("question", "answer", "evidence", "structure", "secondary_tags")
 SIDECAR = ("model_label", "run_date", "provided_files", "tool_use", "input_limits")
 UNOBSERVED = "unobserved"
-SIGNS = r"+\-−±△▲"
-# 수 앞: 부호는 값에 넣고, 다른 수 · 범위 표시 · 부호 바로 뒤에서는 쌍을 시작하지 않는다 (10~12개월, 10-12개월).
-NUMBER_START = rf"(?<![\d.,~∼〜{SIGNS}])[{SIGNS}]?"
-# 단위 뒤: 목록 밖의 더 긴 단위로 이어지면 쌍이 아니다 (5%p, 5%포인트, MB/s, 3개년, 12개월간). 조사는 막지 않는다.
-UNIT_END = r"(?![A-Za-z/]|포인트|년|간)"
+# 부호는 글자로 가린다. Kiwi 는 - 를 SO, △ 를 SW, ± 를 SL 로 달리 단다.
+SIGNS = ("+", "-", "−", "±", "△", "▲")
+RANGES = ("~", "∼", "〜")
+# 수 바로 뒤에 붙어 단위를 이루는 형태소: 천 · 만 · 억(NR), 원 · 개월 · 개년(NNB), %(SW), MB · p(SL), 포인트(NNG), 간(XSN).
+UNIT_TAGS = ("NR", "NNB", "NNG", "SW", "SL", "XSN")
 
 
 def generate(method, topic, plan_id, run_id, config_path, client):
@@ -110,52 +113,95 @@ def check_structure(topic, spec, row, cited):
     if set(structure) != set(spec["structure"]):
         return f"structure 필드는 {sorted(spec['structure'])} 여야 합니다"
     texts = [_norm(unit["text"]) for unit in cited]
-    return CHECKS[topic](spec, structure, row["answer"], cited, texts)
+    return CHECKS[topic](structure, row["answer"], cited, texts)
 
 
-def _numeric(spec, structure, answer, cited, texts):
+def _numeric(structure, answer, cited, texts):
     value, unit = structure["value"], structure["unit"]
     if not (_is_text(value) and _is_text(unit) and re.search(r"\d", value)):
         return "숫자가 든 값과 단위가 있어야 합니다"
     pair = (_norm(value), _norm(unit))
-    if pair not in _pairs(spec, answer):
+    if pair not in _pairs(answer):
         return f"답에 값과 단위({value}{unit})가 없습니다"
-    if not any(pair in _pairs(spec, source["text"]) for source in cited):
+    if not any(pair in _pairs(source["text"]) for source in cited):
         return f"값과 단위({value}{unit})가 근거에 없습니다"
     return None
 
 
-def _pairs(spec, text):
-    """text 에 적힌 (부호 포함 수, 단위) 쌍들. 단위는 numeric 명세 pattern 의 단위 목록으로 끊는다.
+def _pairs(text):
+    """text 에 적힌 (부호 포함 수, 단위) 쌍들. 형태소 분석으로 수(SN)와 그 앞뒤를 읽는다.
 
     한국어는 단위가 수에, 조사가 단위에 붙어 써서 (12개월이다) 글자 종류로는 단위 끝을 가를 수 없다.
-    그래서 12개 는 12개월 의 일부로 맞지 않고, 12개월이다 는 (12, 개월) 로 읽힌다.
-    공백 · 쉼표가 수를 가르므로 (1, 2, 3개월) 원문에서 읽고, 읽은 값에만 _norm 을 쓴다.
-    ponytail: 단위 뒤에 붙는 한글 단위는 목록이다. 년차 · 개소처럼 목록 밖의 것이 문제 되면 형태소 분석으로 바꾼다.
+    형태소 품사로 가르면 조사 · 어미 · 문장부호에서 단위가 끝나고, 붙어 이어지는 단위 형태소는 끝까지 한 단위가 된다.
     """
-    token = NUMBER_START + "(?:" + spec["pattern"] + ")" + UNIT_END
-    text = unicodedata.normalize("NFC", text)
-    return {(_norm(match[0][:match.start(1) - match.start()]), match[1]) for match in re.finditer(token, text)}
+    tokens = _kiwi().tokenize(unicodedata.normalize("NFC", text))
+    pairs = set()
+    for i, token in enumerate(tokens):
+        if token.tag != "SN":
+            continue
+        sign, unit = _sign(tokens, i), _unit(tokens, i)
+        if sign is not None and unit:
+            pairs.add((_norm(sign + token.form), unit))
+    return pairs
 
 
-def _table(spec, structure, answer, cited, texts):
+def _sign(tokens, i):
+    """수 앞의 부호. 띄어 쓴 부호도 값에 든다 (- 130,000,000원).
+
+    앞말에 붙은 - 는 범위 표시(2024년-2025년)이고, 범위 표시 · 수 · 쉼표 · 접두사(제3회) 바로 뒤의 수는
+    더 큰 표현의 일부라 쌍이 아니다. 그때는 None 을 돌려준다.
+    """
+    if i == 0:
+        return ""
+    before = tokens[i - 1]
+    if before.form in SIGNS:
+        is_range = i >= 2 and tokens[i - 2].end == before.start
+        return None if is_range else before.form
+    attached = before.end == tokens[i].start
+    if before.form in RANGES or (attached and before.tag in ("SN", "SP", "XPN")):
+        return None
+    return ""
+
+
+def _unit(tokens, i):
+    """수 뒤의 단위. 붙어 이어지는 단위 형태소를 끝까지 잇는다 (가장 긴 일치, 더 짧은 단위로 물러나지 않음).
+
+    그래서 12개월간 은 개월간, 5%p 는 %p, 5MB/s 는 MB/s 로 읽혀 개 · % · MB 와 같지 않다.
+    단위의 첫 형태소만 수와 띄어 쓸 수 있다 (6 개월).
+    """
+    unit, end = "", tokens[i].end
+    for token in tokens[i + 1:]:
+        joins = token.tag in UNIT_TAGS or (bool(unit) and token.form == "/")
+        if not joins or (unit and token.start != end):
+            break
+        unit, end = unit + token.form, token.end
+    return unit
+
+
+@lru_cache(maxsize=1)
+def _kiwi():
+    # 모델을 읽는 데 시간이 들어 한 번만 만든다.
+    return Kiwi()
+
+
+def _table(structure, answer, cited, texts):
     if not any(unit["ref"]["location"]["kind"] == "table" for unit in cited):
         return "표 행 근거가 없습니다"
     return _quoted([structure["row"], structure["column"]], texts, "행·열 이름")
 
 
-def _condition(spec, structure, answer, cited, texts):
+def _condition(structure, answer, cited, texts):
     return _quoted([structure["condition"]], texts, "조건·예외 문구")
 
 
-def _comparison(spec, structure, answer, cited, texts):
+def _comparison(structure, answer, cited, texts):
     entities = structure["entities"]
     if not isinstance(entities, list) or len(set(map(str, entities))) < 2:
         return "견주는 대상이 둘 이상이어야 합니다"
     return _quoted(entities, texts, "비교 대상")
 
 
-def _multi_hop(spec, structure, answer, cited, texts):
+def _multi_hop(structure, answer, cited, texts):
     return None if len(cited) >= 2 else "근거 단위가 둘 이상이어야 합니다"
 
 
