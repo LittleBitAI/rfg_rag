@@ -208,15 +208,19 @@ def _same_value(value, independent):
     필드는 답 글이 아니라 값 하나라서, 담기(부분 문자열)가 아니라 같음을 본다. 미지원 은 지원 을 담지만 반대 뜻이다.
     글이 같으면(공백 · 쉼표 차이만) True, 수 · 단위 값이 다르면 False, 수 표기만 다르면(1억원 = 100,000,000원) True,
     그 밖(글이 다른 값)은 같은지 글자로 알 수 없어 None (held) 이다.
+    수가 여럿이면 수를 쓴 차례로 견준다. 집합으로 견주면 구축 1억원, 운영 2억원 과 구축 2억원, 운영 1억원 이 같아진다.
+    수 밖의 글이 같은데 차례대로 놓인 수가 다르면 다른 값이다.
     """
     if _norm(value) == _norm(independent):
         return True
-    mine, theirs = quantities(value), quantities(independent)
+    mine, theirs = [pair for pair, _ in facts(value)], [pair for pair, _ in facts(independent)]
     if not (mine and theirs):
         return None
-    if mine != theirs:
+    if set(mine) != set(theirs):
         return False
-    return True if _without_numbers(value) == _without_numbers(independent) else None
+    if _without_numbers(value) != _without_numbers(independent):
+        return None
+    return mine == theirs
 
 
 def _without_numbers(text):
