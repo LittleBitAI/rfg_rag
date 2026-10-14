@@ -91,7 +91,7 @@ python -m pytest -q golden_pipeline/tests
 ```
 
 `.env` 키와 네트워크 없이 돌아갑니다. 출력은 임시 폴더에 쓰고, 마지막 테스트는
-`git diff --name-only origin/dev...HEAD` 가 `golden_pipeline/` 경로만 내놓는지 확인합니다.
+`git diff --name-only origin/dev...HEAD` 가 `golden_pipeline/` 와 위키 문서(`.wiki/`) 경로만 내놓는지 확인합니다.
 
 ## 저장소 규칙과의 관계
 

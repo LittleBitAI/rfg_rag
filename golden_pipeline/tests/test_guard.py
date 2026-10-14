@@ -32,9 +32,10 @@ def test_run_id_cannot_escape_its_run_directory(outputs, make_item, run_id):
         storage.write_run("numeric", "A", run_id, [make_item(run_id=run_id)])
 
 
-def test_branch_changes_only_golden_pipeline():
+def test_branch_changes_only_golden_pipeline_and_wiki_notes():
     changed = subprocess.run(
         ["git", "diff", "--name-only", "origin/dev...HEAD"],
         cwd=REPO, capture_output=True, text=True, check=True,
     ).stdout.split()
-    assert [path for path in changed if not path.startswith("golden_pipeline/")] == []
+    # .wiki/ 는 위키가 남기는 문서라 함께 커밋해도 된다 (팀 파이프라인과 무관).
+    assert [path for path in changed if not path.startswith(("golden_pipeline/", ".wiki/"))] == []
