@@ -100,6 +100,10 @@ def answer_questions(eval_set: list[dict], index, llm_cfg: dict, rewrite_cfg: di
     history = []
 
     for i, item in enumerate(eval_set, 1):
+        # 사용자가 reset_context: true를 지정한 질문 직전 초기화
+        if item.get("reset_context", False):
+            history.clear()
+
         row = answer_question(item, index, llm_cfg, rewrite_cfg, history=history[-history_window:])
         rows.append(row)
 

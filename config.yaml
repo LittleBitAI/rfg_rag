@@ -3,6 +3,7 @@
 #  노트북 사이에 주고받는 파일은 모두 artifacts/ 아래에 저장됩니다.
 # ============================================================
 paths:
+  org_csv: data/data_list.csv   # 담당자가 제공한 파일명 · 발주 기관 목록 (필수)
   input: data/rfp.zip           # ZIP 파일 또는 폴더 (PDF / HWP / HWPX)
 
 # ── ① 전처리 (01_preprocessing) ──
@@ -30,14 +31,14 @@ chunking:
 embedding:
   model: nlpai-lab/KURE-v1      # 한국어 검색 특화(bge-m3 기반)
   batch_size: 32
-  max_seq_length: 512
+  max_seq_length: 2048
 
 bm25:
   k1: 1.5
   b: 0.75
 
 retrieval:
-  top_k: 5
+  token_budget: 2500           # 검색 결과 본문 토큰 예산 (임베딩 토크나이저 기준)
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
 

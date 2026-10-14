@@ -1,10 +1,12 @@
-"""② 검색 — BM25(Kiwi) × Dense(FAISS) 하이브리드 + 발주기관 라우팅.
-담당: 검색.  indexing.py 가 만든 색인(artifacts/index/)과 01 전처리의 chunks.jsonl · docs.jsonl 을 읽는다."""
+"""② 검색 — BM25(Kiwi) × Dense(FAISS) 하이브리드 + 요구사항 코드 정확 일치 + 발주기관 라우팅.
+담당: 검색. 색인과 01 전처리의 chunks.jsonl · docs.jsonl, paths.org_csv의 기관 목록을 읽는다."""
 from __future__ import annotations
 
+import csv
 import json
-import math
 import re
+import unicodedata
+from collections import defaultdict
 from itertools import chain, zip_longest
 from pathlib import Path
 
@@ -13,8 +15,16 @@ import numpy as np
 from langfuse import observe
 from rank_bm25 import BM25Okapi
 
-from ..config import read_jsonl
-from .indexing import Embedder, KiwiTokenizer
+from ..config import ROOT, read_jsonl
+from .indexing import Embedder, KiwiTokenizer, find_codes
+
+
+_DUP_RATIO = 0.8
+
+
+def _is_dup(a: set[str], b: set[str]) -> bool:
+    """큰 낱말 집합의 80%가 겹쳐야 중복이다. 짧은 코드만 겹치는 상세 근거는 남긴다."""
+    return len(a & b) >= _DUP_RATIO * max(len(a), len(b))
 
 
 def _minmax(d: dict[int, float]) -> dict[int, float]:
@@ -33,39 +43,46 @@ class HybridIndex:
     def __init__(self, artifacts: Path, cfg: dict):
         self.chunks = read_jsonl(artifacts / "chunks.jsonl")
         self.doc_ids = np.array([c["doc_id"] for c in self.chunks])
+        self.code_chunks: dict[str, set[int]] = defaultdict(set)
+        for i, chunk in enumerate(self.chunks):
+            for code in find_codes(chunk["text"]):
+                self.code_chunks[code].add(i)
         self.faiss = faiss.read_index(str(artifacts / "index" / "faiss.index"))
         tokens = json.loads((artifacts / "index" / "bm25_tokens.json").read_text(encoding="utf-8"))
         self.bm25 = BM25Okapi(tokens, k1=float(cfg["bm25"]["k1"]), b=float(cfg["bm25"]["b"]))
         self.embedder = Embedder(cfg["embedding"])
         self.tokenizer = KiwiTokenizer()
-        self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"))
+        self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"), read_csv_orgs(ROOT / cfg["paths"]["org_csv"]))
         self.rcfg = cfg["retrieval"]
 
     @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str, *, query: str | None = None) -> list[dict]:
-        """원본 질문으로 기관을 고르고 query(없으면 원본)로 검색한다. 비교 질문은 기관별 결과를 번갈아 섞는다."""
+        """원본 질문으로 기관을 고르고 query(없으면 원본)로 검색한다. 비교 질문은 기관별 결과를 번갈아 섞는다.
+        요구사항 코드는 양쪽에서 모아 재작성 때 코드가 빠져도 정확 일치를 유지한다."""
         route = self.router.route(question)
         query = query or question
-        top_k = int(self.rcfg["top_k"])
+        codes = find_codes(question) | find_codes(query)
         if len(route) < 2:
-            return self._search(query, top_k, next(iter(route.values()), None))
-        k_each = max(2, math.ceil(top_k / len(route)))
-        lists = [self._search(query, k_each, doc_ids) for doc_ids in route.values()]
-        merged: dict[str, dict] = {}
-        for hit in chain.from_iterable(zip_longest(*lists)):
-            if hit is not None:
-                merged.setdefault(hit["chunk_id"], hit)
-        return list(merged.values())
+            return self._pack(self._rank(query, codes, next(iter(route.values()), None)))
+        lists = [self._rank(query, codes, doc_ids) for doc_ids in route.values()]
+        return self._pack([hit for hit in chain.from_iterable(zip_longest(*lists)) if hit is not None])
 
-    def _search(self, question: str, top_k: int, doc_ids: set | None) -> list[dict]:
+    def _rank(self, question: str, codes: set[str], doc_ids: set | None) -> list[tuple[int, float]]:
         allowed = np.isin(self.doc_ids, list(doc_ids)) if doc_ids else np.ones(len(self.chunks), dtype=bool)
         w = float(self.rcfg["dense_weight"])
         # 가중치 0 인 쪽은 후보도 내지 않는다 — 내면 점수 0 짜리 무관한 청크가 결과에 섞인다
         dense = _minmax(self._dense(question, allowed)) if w > 0 else {}
         sparse = _minmax(self._sparse(question, allowed)) if w < 1 else {}
         fused = {i: w * dense.get(i, 0.0) + (1 - w) * sparse.get(i, 0.0) for i in dense.keys() | sparse.keys()}
-        best = sorted(fused, key=fused.get, reverse=True)[:top_k]
-        return [{**self.chunks[i], "score": round(fused[i], 4)} for i in best]
+        exact = self._exact(codes, allowed)
+        fused |= {i: 0.0 for i in exact - fused.keys()}
+        order = sorted(fused, key=lambda i: (i in exact, fused[i]), reverse=True)
+        return [(i, fused[i]) for i in order]
+
+    def _exact(self, codes: set[str], allowed: np.ndarray) -> set[int]:
+        """요구사항 코드가 그대로 든 허용 청크"""
+        hits = set().union(*(self.code_chunks.get(code, set()) for code in codes))
+        return {i for i in hits if allowed[i]}
 
     def _dense(self, question: str, allowed: np.ndarray) -> dict[int, float]:
         """허용된 청크 중 내적 상위 candidate_k. 정확 검색(IndexFlatIP)이라 전체를 점수 매긴 뒤 거른다"""
@@ -79,6 +96,24 @@ class HybridIndex:
         top = np.argsort(-scores)[: int(self.rcfg["candidate_k"])]
         return {int(i): float(scores[i]) for i in top if scores[i] > 0}
 
+    def _pack(self, ranked: list[tuple[int, float]]) -> list[dict]:
+        """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크는 제외한다.
+        긴 청크는 건너뛰되 첫 청크는 예산을 넘어도 담아 빈 컨텍스트를 막는다."""
+        budget = int(self.rcfg["token_budget"])
+        picked: list[tuple[int, float, set[str]]] = []
+        used = 0
+        for i, score in ranked:
+            words = set(self.chunks[i]["body"].split())
+            if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(words, seen))
+                   for j, _, seen in picked):
+                continue
+            cost = self.embedder.token_counts([self.chunks[i]["body"]])[0]
+            if picked and used + cost > budget:
+                continue
+            picked.append((i, score, words))
+            used += cost
+        return [{**self.chunks[i], "score": round(score, 4)} for i, score, _ in picked]
+
 
 # ====================================================================================================
 # 발주기관 라우팅
@@ -88,6 +123,13 @@ _ORG_SUFFIX = (r"(?:공단|공사|연구원|연구소|대학교|대학|과학기
 _ORG_RE = re.compile(r"(?:한국|국립|재단법인|\(재\)|\(사\))?\s?[가-힣A-Za-z]{2,15}" + _ORG_SUFFIX)
 _GENERIC_ORG = re.compile(r"(?:자문|평가|심의|운영|선정|추진|협의|기술|제안)?위원회$|^(?:해당|발주|주관|수요|관련|전문|계약|용역|사업|기타|본|각)"
                           r"|^[가-힣]{1,2}(?:센터|연구소)$|^산학협력단$")
+_LEGAL_FORM = re.compile(r"^\((?:재|사)\)\s*|^(?:재단|사단)법인\s*|^주식회사\s*|\s*\(주\)$")
+
+
+def _is_org_name(name: str) -> bool:
+    return len(name) >= 4 and not _GENERIC_ORG.search(name)
+
+
 def _has(text: str, org: str) -> bool:
     if org.isascii():
         return re.search(rf"(?<![A-Za-z]){re.escape(org)}(?![A-Za-z])", text, re.IGNORECASE) is not None
@@ -99,24 +141,73 @@ def _extract_orgs(texts) -> list[str]:
     orgs: list[str] = []
     for text in texts:
         for m in _ORG_RE.finditer(text[:2500]):
-            name = re.sub(r"^\(?(재|사)\)?\s*|재단법인\s*", "", m.group().strip())
-            if len(name) >= 4 and not _GENERIC_ORG.search(name) and not any(org in name for org in orgs):
+            name = _LEGAL_FORM.sub("", m.group().strip())
+            if _is_org_name(name) and not any(org in name for org in orgs):
                 orgs.append(name)
     return orgs
 
 
+def _source_key(name: str) -> str:
+    """전체 파일명 비교에는 NFC를 적용하고 대소문자 차이를 무시한다. 기호와 확장자는 보존한다."""
+    return unicodedata.normalize("NFC", name).lower()
+
+
+def read_csv_orgs(path: Path) -> dict[str, str]:
+    """담당자가 제공한 CSV의 파일명 · 발주 기관 열을 읽는다"""
+    orgs: dict[str, str] = {}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            name, org = row["파일명"], row["발주 기관"]
+            key = _source_key(name)
+            if key in orgs and orgs[key] != org:
+                raise ValueError(f"CSV 파일명에 서로 다른 발주 기관이 지정되었습니다: {name}")
+            orgs[key] = org
+    return orgs
+
+
+def _file_key(name: str) -> str:
+    """대소문자를 무시한 NFC 파일명에서 확장자와 기호를 제거한 비교 키"""
+    stem = re.sub(r"\.(?:pdf|hwpx?)$", "", _source_key(name))
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", stem)
+
+
+def _org_names(org: str) -> set[str]:
+    """CSV의 전체 기관명과 공백을 제거한 전체 이름만 모은다"""
+    name = _LEGAL_FORM.sub("", org.strip())
+    return {n for n in {name, re.sub(r"\s+", "", name)} if _is_org_name(n)}
+
+
+def _csv_org_docs(docs: list[dict], csv_orgs: dict[str, str]) -> dict[str, set]:
+    """전체 파일명을 우선 맞추고, 정규화·앞부분 일치는 기관이 하나일 때만 쓴다"""
+    by_source: dict[str, set[str]] = defaultdict(set)
+    by_key: dict[str, set[str]] = defaultdict(set)
+    for name, org in csv_orgs.items():
+        by_source[_source_key(name)].add(org)
+        by_key[_file_key(name)].add(org)
+    org_docs: dict[str, set] = defaultdict(set)
+    for doc in docs:
+        key = _file_key(doc["source"])
+        orgs = (by_source.get(_source_key(doc["source"])) or by_key.get(key)
+                or set().union(*(orgs for k, orgs in by_key.items() if k.startswith(key))))
+        if len(orgs) == 1:
+            for name in _org_names(next(iter(orgs))):
+                org_docs[name].add(doc["doc_id"])
+    return org_docs
+
+
 class DocRouter:
     """질문에 나온 발주기관 → 그 기관 문서로 검색 범위를 좁힌다 (RFP 가 많을수록 정확도 ↑).
-    기관명은 파일명·표지(PDF 앞 N쪽, HWP 표지·목차 — 청크에서 뺀 부분)에서 자동 추출하고, 표지가 없으면 본문 앞부분을 쓴다."""
+    기관명은 담당자 CSV와 파일명·표지에서 모으고, 표지가 없으면 본문 앞부분을 쓴다."""
 
-    def __init__(self, docs: list[dict]):
+    def __init__(self, docs: list[dict], csv_orgs: dict[str, str]):
         self.titles = {d["doc_id"]: d["title"] for d in docs}
         hay = {d["doc_id"]: f"{d['title']}\n" + (d["cover_text"] or d["head_text"][:1500]) for d in docs}
-        self.org_docs: dict[str, set] = {}
+        self.org_docs: dict[str, set] = defaultdict(set)
         for org in _extract_orgs(hay.values()):
-            doc_ids = {did for did, text in hay.items() if _has(text, org)}
-            if doc_ids:
-                self.org_docs[org] = doc_ids
+            self.org_docs[org] |= {did for did, text in hay.items() if _has(text, org)}
+        for org, doc_ids in _csv_org_docs(docs, csv_orgs).items():
+            self.org_docs[org] |= doc_ids
+        self.org_docs = {org: doc_ids for org, doc_ids in self.org_docs.items() if doc_ids}
 
     def route(self, question: str) -> dict[str, set]:
         """질문에 나온 기관 → 검색할 문서 id 들. 기관이 없으면 빈 dict(전체 검색)"""

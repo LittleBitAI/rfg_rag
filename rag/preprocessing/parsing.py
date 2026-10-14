@@ -422,10 +422,10 @@ def _parse_hwp(path: str, pcfg: dict, image_parser) -> tuple[list[dict], str]:
 # ----------------------------------------------------------------------------------------------------
 # hwp-hwpx-parser 가 탭 제어문자(8 wchar) 일부를 글자로 내보내는 문제 정리: '\t洴ȃ 1' → '\t 1', '개요  練ȃ  1' → '개요   1'
 TAB_GARBAGE = re.compile(r"(?<=[\t ])[^\s가-힣A-Za-z0-9|]{0,2}[Ā-˿](?=[\s|]|$)")
-TOC_MARK = re.compile(r"(?:^|\|)[\s\-–\[\(<【]*(?:목\s*차|차\s*례|CONTENTS|Contents)[\s\-–\]\)>】]*(?:\||$)")
+TOC_MARK = re.compile(r"(?:^|\|)[\s\-–•·\[\(<【]*(?:목\s*차|차\s*례|CONTENTS|Contents)[\s\-–•·\]\)>】]*(?:\||$)")
 TOC_LINE = re.compile(r"(?:\.{3,}|·{3,}|…{2,}|\s\d{1,3})\s*\|?\s*$")
 MULTI_ENTRY = re.compile(r"\s\d{1,3}(?=\s|$)")
-NEUTRAL = re.compile(r"^\s*$|^[\s|:\-]+$|^(?:\|\s*)+\|?\s*$")      # 빈 줄, |---|, 빈 셀 행
+NEUTRAL = re.compile(r"^\s*$|^[\s|:\-•·]+$|^(?:\|\s*)+\|?\s*$")      # 빈 줄, |---|, 빈 셀 행
 BODY_START = re.compile(r"^\s*(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ][.\s]|제\s*1\s*[장편]|1\.\s|<[^>]{2,20}>|□|❏)")
 
 
