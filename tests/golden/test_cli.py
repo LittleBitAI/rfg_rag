@@ -213,6 +213,9 @@ def test_a_resumed_loop_continues_from_its_pinned_config_without_duplicate_ids(p
     assert sum(not user.startswith("{") for _, user in api.requests) == 6
     ids = [entry["candidate_id"] for entry in storage.read_catalog()]
     assert len(ids) == len(set(ids)) == 3
+    # 끝난 loop 는 다시 돌지 않는다.
+    with pytest.raises(FileExistsError):
+        golden("resume", "--topic", "numeric", "--method", "A", "--id", "l1")
 
 
 def test_a_resumed_audit_judges_only_the_pending_candidates_and_releases(planned, api, tmp_path):

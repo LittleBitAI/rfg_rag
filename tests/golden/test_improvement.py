@@ -7,9 +7,7 @@ import pytest
 
 from golden_pipeline import improvement, storage
 from golden_pipeline.generation import generate, import_c
-from golden_pipeline.improvement import (
-    PREVENTION_RULES, PREVENTION_VERSION, FailureMemoryError, improve, thresholds, write_memory,
-)
+from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.validation import release, validate
 
@@ -137,28 +135,6 @@ def test_failure_memory_holds_code_evidence_rule_and_version_but_no_answer(loope
         assert text not in stored
 
 
-def test_an_unverified_corrected_answer_cannot_be_written_as_a_fact(looped):
-    # 고친 답을 검증 없이 실패 기록에 넣으면 다음 round 프롬프트에 사실처럼 들어가 후보를 오염시킨다.
-    entry = memory(1)[1]
-    corrected = [
-        {**entry, "corrected_answer": "130,000,000원(부가세 포함)"},
-        {**entry, "prevention_rule": "사업 예산의 정답은 130,000,000원(부가세 포함)이다."},
-        {**entry, "rule_version": "prevention-0"},
-    ]
-    for bad in corrected:
-        with pytest.raises(FailureMemoryError):
-            write_memory("numeric", "l1-r1", [bad])
-
-
-def test_memory_takes_only_the_failure_code_its_rejected_row_gives(looped):
-    # 규칙이 없는 코드가 기록되면 다음 loop 가 그 규칙을 찾다 멈추고, 다른 코드는 그 줄과 무관한 규칙을 가르친다.
-    entry = memory(1)[1]
-    assert entry["failure_code"] == "answer_mismatch"
-    for code, rule in (("unknown", None), ("output_format", PREVENTION_RULES["output_format"])):
-        with pytest.raises(FailureMemoryError):
-            write_memory("numeric", "l1-r1", [{**entry, "failure_code": code, "prevention_rule": rule}])
-
-
 def test_next_round_gets_rules_for_the_topics_failure_codes_and_records_its_policy(loop_config):
     # 다른 주제의 실패 기록이 섞이면 주제와 무관한 규칙이 붙는다.
     other = storage.OUTPUTS / "goldens" / "table" / "failure_memory"
@@ -192,24 +168,6 @@ def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits,
     assert report["calls"] <= {**LOOP, **limits}["max_calls"]
     saved = json.loads((storage.OUTPUTS / "goldens/numeric/loops/l1/report.json").read_text(encoding="utf-8"))
     assert saved == report
-
-
-def test_resume_continues_after_the_last_completed_round_without_duplicate_ids(loop_config):
-    # round 2 의 검증 도중 끊긴다 (round 1 검증 두 번, round 2 첫 검증 호출).
-    generator = Generator()
-    with pytest.raises(ConnectionError):
-        improve("numeric", "p3", "l1", loop_config(), generator, Validator(crash_on=3))
-    assert len(generator.requests) == 5
-
-    report = improve("numeric", "p3", "l1", loop_config(), generator, Validator())
-
-    # 끝난 round 1 과 생성까지 끝난 round 2 는 다시 부르지 않는다: 3 + 2 + 1 번.
-    assert len(generator.requests) == 6
-    assert [r["run_id"] for r in report["rounds"]] == ["l1-r1", "l1-r2", "l1-r3"]
-    ids = [entry["candidate_id"] for entry in storage.read_catalog()]
-    assert len(ids) == len(set(ids)) == 3
-    with pytest.raises(FileExistsError):
-        improve("numeric", "p3", "l1", loop_config(), generator, Validator())
 
 
 @pytest.mark.parametrize("change, changed", [
@@ -307,7 +265,7 @@ def test_b_and_c_code_paths_never_read_failure_memory(looped, monkeypatch, tmp_p
     generator = Generator()
     with monkeypatch.context() as patch:
         patch.setattr(Path, "open", spy)
-        for name in ("related_failures", "record_failures", "write_memory", "open_bundles", "_revision"):
+        for name in ("related_failures", "record_failures", "open_bundles", "_revision"):
             patch.setattr(improvement, name, forbidden)
         generate("B", "numeric", "p3", "b1", run, generator)
         validate("numeric", "B", "b1", run, Validator())
@@ -317,55 +275,6 @@ def test_b_and_c_code_paths_never_read_failure_memory(looped, monkeypatch, tmp_p
 
     assert reads and not [path for path in reads if "failure_memory" in path]
     assert "MEMORY-MARKER" not in json.dumps(generator.requests, ensure_ascii=False)
-
-
-def test_questions_answers_and_feedback_of_released_items_are_blocked_from_failure_memory(loop_config, tmp_path):
-    # 출시본은 평가 정답이다. 그 질문 · 답 · 사람 확인 이유가 실패 기록에 들어가면 다음 생성으로 정답이 샌다.
-    run = tmp_path / "run.json"
-    run.write_text(json.dumps({**LOOP["generator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
-    learned = [{"role": "system", "content": PREVENTION_RULES["answer_mismatch"]}]
-    generate("A", "numeric", "p3", "a1", run, lambda model, messages: Generator()(model, learned + messages[1:]))
-    # 예산 후보는 근거 충돌로 held 가 되고, 사람이 확인해 출시한다.
-    validate("numeric", "A", "a1", run, Validator(E1={"conflict": True}))
-    [held] = read_jsonl(storage.run_path("numeric", "A", "a1") / "review.jsonl")
-    confirmations = tmp_path / "confirm.jsonl"
-    confirmations.write_text(json.dumps({"candidate_id": held["candidate_id"], "reason": "원문 표와 대조해 확인함"},
-                                        ensure_ascii=False) + "\n", encoding="utf-8")
-    release("numeric", "v1", [("A", "a1")], confirmations)
-    bond = next(item for item in read_jsonl(storage.OUTPUTS / "goldens/numeric/releases/v1/golden.jsonl")
-                if item["candidate_id"] != held["candidate_id"])
-
-    # a1 의 거절은 JSON 이 아닌 표 묶음 출력 한 줄뿐이다.
-    [table] = read_jsonl(storage.run_path("numeric", "A", "a1") / "rejected.jsonl")
-    rule = PREVENTION_RULES["output_format"]
-    entry = {"entry_id": "a1:1", "failure_code": "output_format", "prevention_rule": rule,
-             "rule_version": PREVENTION_VERSION,
-             "evidence": {"run": "A/a1", "line": 1, "candidate_id": None, "bundle_id": table["bundle_id"]}}
-    leaks = [
-        {**entry, "prevention_rule": f"{rule} 예: {held['question']}"},
-        {**entry, "prevention_rule": f"{rule} 예: {bond['answer']}"},
-        {**entry, "prevention_rule": f"{rule} 사람 확인: 원문 표와 대조해 확인함"},
-        {**entry, "entry_id": f"a1:1 {bond['answer']}"},
-        {**entry, "evidence": {**entry["evidence"], "candidate_id": held["candidate_id"]}},
-        {**entry, "evidence": {**entry["evidence"], "bundle_id": held["question"]}},
-    ]
-    for leak in leaks:
-        with pytest.raises(FailureMemoryError):
-            write_memory("numeric", "a1", [leak])
-    assert write_memory("numeric", "a1", [entry]).exists()
-
-
-def test_a_fixed_rule_is_recorded_even_when_a_released_answer_appears_in_its_text(loop_config):
-    # 출시본 표 답 JSON 은 output_format 규칙 글에 들어 있다. 출시본 글을 부분 문자열로 막으면 정해 둔 규칙까지 막혀 loop 가 멈춘다.
-    released = storage.OUTPUTS / "goldens/table/releases/v1"
-    released.mkdir(parents=True)
-    (released / "golden.jsonl").write_text(json.dumps(
-        {"candidate_id": "table-A-t1-0001", "question": "산출물 형식은?", "answer": "JSON", "state_history": []},
-        ensure_ascii=False) + "\n", encoding="utf-8")
-
-    improve("numeric", "p3", "l1", loop_config(), Generator(), Validator())
-
-    assert [entry["failure_code"] for entry in memory(1)] == ["output_format", "answer_mismatch"]
 
 
 def test_a_topic_short_of_its_target_is_reported_with_thresholds_unchanged(looped):

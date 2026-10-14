@@ -22,7 +22,7 @@ A 만의 자기 개선(실패 기록과 round), 이 모두를 부르는 CLI 와 
 | `plan.py` | 분포 계획: 주제별 개수 · 문서 범위 · 근거 묶음을 고정한 파일 (`make_plan`, `load_plan`) |
 | `generation.py` | 후보 생성: A · B (`generate`), C 가져오기 (`import_c`), 주제 구조 검사 (`check_structure`) |
 | `validation.py` | 독립 검증 (`validate`), 난도 판정 (`difficulty`), 출시 (`release`) |
-| `improvement.py` | A 의 자기 개선: round 반복 (`improve`), 실패 기록 (`record_failures`, `write_memory`), 관련 실패 찾기 (`related_failures`) |
+| `improvement.py` | A 의 자기 개선: round 반복 (`improve`), 실패 기록 (`record_failures`), 관련 실패 찾기 (`related_failures`) |
 | `report.py` | A · B · C 비교 보고서 (`compare`, `write_report`, `render`) |
 | `cli.py` | 하나뿐인 CLI (`python -m golden_pipeline.cli`)와 OpenAI 호출 (`api_client`) |
 | `golden.cmd` · `golden.command` | Windows · macOS 실행기. 둘 다 받은 인자를 그대로 `cli.py` 에 넘깁니다 |
@@ -472,11 +472,8 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `table_relation` · `missing_condition` · `duplicate` | 표 칸, 조건 · 예외 누락, 중복 |
 | `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
 
-실패 기록에 쓰는 곳은 `write_memory` 하나이고, 여기서 막습니다:
-필드가 다르거나, `PREVENTION_RULES` 에 없는 코드이거나, 규칙 글 · 버전이 그 코드의 것과 다르거나,
-`entry_id` · `evidence` · `failure_code` 가 그 run 의 `rejected.jsonl` 한 줄(과 그 거절 이유)에서 나온 값과 다른 항목.
+실패 기록에 쓰는 곳은 `record_failures` 하나이고, 항목을 밖에서 받지 않고 그 run 의 `rejected.jsonl` 줄에서만 만듭니다.
 그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유(사람 확인 이유 포함)가 들어올 자리가 없습니다.
-출시본 글을 부분 문자열로 찾지는 않습니다. `JSON` 같은 짧은 출시본 답이 정해 둔 규칙 글에 들어 있어도 그 규칙은 기록돼야 하기 때문입니다.
 
 loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 

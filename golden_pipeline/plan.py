@@ -19,7 +19,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         raise ValueError(f"counts 는 주제 {TOPICS} 별 양의 정수여야 합니다: {counts}")
     path = storage._child(storage.OUTPUTS / "plans", f"{plan_id}.json")
     run_dir = storage._child(storage.OUTPUTS / "evidence", evidence_run)
-    pinned = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["pinned_sha256"]
+    pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
     _check_package(package, pinned)
     units = eligible_units(run_dir, package)
 
@@ -53,15 +53,13 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
 def load_plan(plan_id):
     """계획과 그 파일의 SHA-256 을 돌려준다. run 매니페스트는 이 해시로 어떤 계획을 썼는지 남긴다."""
     path = storage._child(storage.OUTPUTS / "plans", f"{plan_id}.json")
-    return json.loads(path.read_text(encoding="utf-8")), storage._sha256(path)
+    return storage._read_json(path), storage._sha256(path)
 
 
 def topic_spec(topic):
     """주제 명세(configs/topics/{topic}.json)와 그 파일의 SHA-256."""
-    if topic not in TOPICS:
-        raise ValueError(f"topic 은 {TOPICS} 중 하나여야 합니다: {topic!r}")
     path = storage.CONFIGS / "topics" / f"{topic}.json"
-    return json.loads(path.read_text(encoding="utf-8")), storage._sha256(path)
+    return storage._read_json(path), storage._sha256(path)
 
 
 def eligible_units(run_dir, package):

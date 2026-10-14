@@ -322,11 +322,9 @@ def _call_all(client, config, instructions, bundles):
     """호출 수 한도와 예산 안에서 묶음마다 한 번 호출한다. 한도에 닿으면 멈추고 그 이유를 status 로 남긴다."""
     calls, outputs = [], []
     for bundle in bundles:
-        if len(calls) >= config["max_calls"]:
-            return calls, outputs, "call_cap"
-        # ponytail: 예산은 호출 사이에만 본다. 마지막 호출 하나만큼 넘을 수 있고, 호출 전 추정이 필요하면 그때 넣는다.
-        if _cost(config, calls) >= config["budget_usd"]:
-            return calls, outputs, "budget"
+        stop = limit_reached(config, len(calls), _cost(config, calls))
+        if stop:
+            return calls, outputs, stop
         messages = [{"role": "system", "content": instructions}, {"role": "user", "content": bundle["context"]}]
         response = client(model=config["model"], messages=messages)
         calls.append({
@@ -339,6 +337,17 @@ def _call_all(client, config, instructions, bundles):
     return calls, outputs, "complete"
 
 
+def limit_reached(config, calls, cost, needed=1):
+    """호출 needed 번을 더 하면 호출 수 한도를 넘거나 이미 예산에 닿았으면 call_cap · budget, 아니면 None.
+
+    생성 · 검증 · 자기 개선 loop 가 모두 이 규칙 하나로 멈춘다.
+    ponytail: 예산은 호출 사이에만 본다. 마지막 호출(검증은 마지막 후보의 호출)만큼 넘을 수 있고, 호출 전 추정이 필요하면 그때 넣는다.
+    """
+    if calls + needed > config["max_calls"]:
+        return "call_cap"
+    return "budget" if cost >= config["budget_usd"] else None
+
+
 def _cost(config, calls):
     tokens_in = sum(call["input_tokens"] for call in calls)
     tokens_out = sum(call["output_tokens"] for call in calls)
@@ -348,7 +357,7 @@ def _cost(config, calls):
 
 def _run_config(path):
     """모델·호출 수 한도·예산·단가가 모두 적힌 설정만 받는다. 빠진 값을 기본값으로 채우지 않는다."""
-    config = json.loads(Path(path).read_text(encoding="utf-8"))
+    config = storage._read_json(path)
     if not isinstance(config, dict) or set(config) != set(RUN_CONFIG):
         raise ValueError(f"run 설정은 정확히 {RUN_CONFIG} 를 가져야 합니다: {path}")
     numbers = [config[name] for name in RUN_CONFIG[1:]]
@@ -385,7 +394,7 @@ def _plan_info(plan_id, plan, plan_sha, topic, bundles):
 
 def _sidecar(path):
     """C 의 관측 기록. 정해진 필드만 받고, 비어 있거나 없는 값은 unobserved 로 둔다."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    data = storage._read_json(path)
     if not isinstance(data, dict) or set(data) - set(SIDECAR):
         raise ValueError(f"sidecar 는 {SIDECAR} 중의 필드만 가진 객체여야 합니다: {path}")
     return {name: data[name] if data.get(name) not in (None, "", [], {}) else UNOBSERVED for name in SIDECAR}

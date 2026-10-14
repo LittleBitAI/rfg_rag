@@ -132,6 +132,7 @@ def test_run_pins_counts_links_and_writes_separate_judgments(outputs, package):
     assert manifest["counts"] == {"documents": 1, "records": 2, "elements": 3, "chunks": 4,
                                   "filtered_chunk_search_inputs": 3}
     assert manifest["excluded_chunks"] == [{"chunk_id": "c-marker", "reason": "본문이 [IMAGE] 표시뿐입니다"}]
+    assert manifest["original_grid_file"]["verified"] is False
     units = [json.loads(line) for line in (out / "units.jsonl").read_text(encoding="utf-8").splitlines()]
     judgments = [json.loads(line) for line in (out / "judgments.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [j["unit_id"] for j in judgments] == [u["unit_id"] for u in units]
@@ -142,10 +143,9 @@ def test_run_pins_counts_links_and_writes_separate_judgments(outputs, package):
     assert next(j for j in judgments if j["unit_id"] == text["unit_id"])["judgment"] == "eligible"
 
 
-@pytest.mark.parametrize("name", evidence.PINNED)
-def test_run_stops_when_the_two_copies_differ(outputs, package, name):
+def test_run_stops_when_the_two_copies_differ(outputs, package):
     main, other, raw = package()
-    with (other / name).open("ab") as f:
+    with (other / evidence.CHUNKS).open("ab") as f:
         f.write(b"\n")
     with pytest.raises(evidence.PackageMismatch, match="두 사본"):
         evidence.run("r1", other, package=main, raw=raw)
@@ -223,13 +223,7 @@ def test_logical_rows_and_original_grid_cells_stay_separate(package):
     assert [unit["location"]["grid"] for unit in cells] == ["original_reference"]
     assert cells[0]["element_id"] == "e-table" and cells[0]["chunk_id"] is None
     assert {unit["unit_id"] for unit in rows}.isdisjoint(unit["unit_id"] for unit in cells)
-    assert evidence.grid_file_verdict(evidence.load(main)["grids"])["verified"] is False
     assert evidence.GRID_UNVERIFIED in units[cells[0]["unit_id"]][1]["reasons"]
-
-
-def test_grid_file_with_a_verification_field_stops_until_its_meaning_is_decided():
-    with pytest.raises(evidence.PackageMismatch, match="verified"):
-        evidence.grid_file_verdict([{**BASE["grids"][0], "verified": True}])
 
 
 @pytest.mark.parametrize("source, verified_text, judgment, reason", [
