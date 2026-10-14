@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "requires": "둘 이상의 대상(항목, 안, 기관, 단계 등)을 견주는 질문. 답은 각 대상의 값이나 내용을 함께 밝힌다.",
+  "structure": {
+    "entities": "견주는 대상 이름 2개 이상의 리스트. 각각 근거에 적힌 그대로"
+  },
+  "pattern": null,
+  "table_only": false,
+  "bundle_units": 3
+}

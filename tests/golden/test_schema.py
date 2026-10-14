@@ -26,7 +26,7 @@ def test_primary_topic_repeated_in_secondary_tags_is_rejected(make_item):
 
 
 @pytest.mark.parametrize("field", [
-    "candidate_id", "parent_candidate_id", "run_id", "method",
+    "candidate_id", "parent_candidate_id", "run_id", "method", "bundle_id", "context", "structure",
     "generator_version", "validator_version", "prompt_version", "state", "state_history",
 ])
 def test_missing_item_provenance_field_is_rejected(make_item, field):
@@ -42,6 +42,12 @@ def test_missing_evidence_provenance_field_is_rejected(make_item, field):
     del item["evidence"][1][field]
     with pytest.raises(SchemaError, match=field):
         validate_item(item)
+
+
+@pytest.mark.parametrize("field, value", [("bundle_id", ""), ("context", " "), ("structure", ["value"])])
+def test_bundle_and_context_must_be_text_and_structure_an_object(make_item, field, value):
+    with pytest.raises(SchemaError, match=field):
+        validate_item(make_item(**{field: value}))
 
 
 def test_item_without_evidence_is_rejected(make_item):
