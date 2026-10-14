@@ -147,8 +147,14 @@ def _extract_orgs(texts) -> list[str]:
 
 def read_csv_orgs(path: Path) -> dict[str, str]:
     """담당자가 제공한 CSV의 파일명 · 발주 기관 열을 읽는다"""
+    orgs: dict[str, str] = {}
     with open(path, encoding="utf-8-sig", newline="") as f:
-        return {row["파일명"]: row["발주 기관"] for row in csv.DictReader(f)}
+        for row in csv.DictReader(f):
+            name, org = row["파일명"], row["발주 기관"]
+            if name in orgs and orgs[name] != org:
+                raise ValueError(f"CSV 파일명에 서로 다른 발주 기관이 지정되었습니다: {name}")
+            orgs[name] = org
+    return orgs
 
 
 def _file_key(name: str) -> str:
@@ -158,20 +164,25 @@ def _file_key(name: str) -> str:
 
 
 def _org_names(org: str) -> set[str]:
-    """CSV 기관명에서 전체 이름과 띄어 쓴 이름들을 모은다"""
+    """CSV의 전체 기관명과 공백을 제거한 전체 이름만 모은다"""
     name = _LEGAL_FORM.sub("", org.strip())
-    return {n for n in {name, name.replace(" ", ""), *name.split()} if _is_org_name(n)}
+    return {n for n in {name, re.sub(r"\s+", "", name)} if _is_org_name(n)}
 
 
 def _csv_org_docs(docs: list[dict], csv_orgs: dict[str, str]) -> dict[str, set]:
-    """CSV 파일명을 문서 source와 맞춘다. 잘린 파일명은 앞부분으로 맞춘다"""
-    by_key = {_file_key(name): org for name, org in csv_orgs.items()}
+    """전체 파일명을 우선 맞추고, 정규화·앞부분 일치는 기관이 하나일 때만 쓴다"""
+    by_source: dict[str, set[str]] = defaultdict(set)
+    by_key: dict[str, set[str]] = defaultdict(set)
+    for name, org in csv_orgs.items():
+        by_source[unicodedata.normalize("NFC", name)].add(org)
+        by_key[_file_key(name)].add(org)
     org_docs: dict[str, set] = defaultdict(set)
     for doc in docs:
         key = _file_key(doc["source"])
-        org = by_key.get(key) or next((o for k, o in by_key.items() if k.startswith(key)), None)
-        if org:
-            for name in _org_names(org):
+        orgs = (by_source.get(unicodedata.normalize("NFC", doc["source"])) or by_key.get(key)
+                or set().union(*(orgs for k, orgs in by_key.items() if k.startswith(key))))
+        if len(orgs) == 1:
+            for name in _org_names(next(iter(orgs))):
                 org_docs[name].add(doc["doc_id"])
     return org_docs
 

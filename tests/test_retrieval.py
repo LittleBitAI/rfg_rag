@@ -107,3 +107,36 @@ def test_csv_routes_normalized_and_truncated_filenames_alongside_cover(tmp_path,
 def test_toc_bullet_markers_and_neutral_rows(bullet):
     assert parsing.TOC_MARK.search(f"| {bullet} 목 차 {bullet} |")
     assert parsing.NEUTRAL.fullmatch(f"| {bullet} -- {bullet} |")
+
+
+def test_csv_full_organization_name_does_not_route_topic_words():
+    docs = [{"doc_id": "a", "source": "사업.pdf", "title": "사업",
+             "cover_text": "", "head_text": ""}]
+    router = DocRouter(docs, {"사업.pdf": "한국 지능정보 사회진흥원"})
+    assert router.route("지능정보 시스템 요구사항은?") == {}
+    assert router.route("한국 지능정보 사회진흥원 요구사항은?") == {"한국 지능정보 사회진흥원": {"a"}}
+    assert router.route("한국지능정보사회진흥원 요구사항은?") == {"한국지능정보사회진흥원": {"a"}}
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_csv_symbol_collision_preserves_document_organization(reverse):
+    docs = [{"doc_id": did, "source": source, "title": "사업", "cover_text": "", "head_text": ""}
+            for did, source in [("a", "사업-A.pdf"), ("b", "사업A.pdf")]]
+    rows = [("사업-A.pdf", "기관가공사"), ("사업A.pdf", "기관나공사")]
+    router = DocRouter(docs, dict(reversed(rows) if reverse else rows))
+    assert router.route("기관가공사 요구사항") == {"기관가공사": {"a"}}
+    assert router.route("기관나공사 요구사항") == {"기관나공사": {"b"}}
+
+
+@pytest.mark.parametrize("source", ["사업_A.pdf", "사업.pdf"])
+def test_csv_ambiguous_normalized_or_truncated_filename_does_not_route(source):
+    docs = [{"doc_id": "a", "source": source, "title": "사업", "cover_text": "", "head_text": ""}]
+    router = DocRouter(docs, {"사업-A.pdf": "기관가공사", "사업A.pdf": "기관나공사"})
+    assert router.route("기관가공사와 기관나공사 요구사항") == {}
+
+
+def test_csv_conflicting_duplicate_filename_is_rejected(tmp_path):
+    path = tmp_path / "orgs.csv"
+    path.write_text("파일명,발주 기관\n사업.pdf,기관가공사\n사업.pdf,기관나공사\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="사업.pdf"):
+        read_csv_orgs(path)
