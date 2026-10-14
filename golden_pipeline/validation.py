@@ -7,6 +7,7 @@
 자기 개선에 쓸 수 없으므로 두지 않는다. 출시는 auto_validated 항목을 releases/{version}/ 로 모은다.
 """
 import json
+import re
 import unicodedata
 from decimal import Decimal
 
@@ -22,6 +23,8 @@ DIFFICULTY_RULE = (
 # Kiwi 는 얼마 를 일반 명사(NNG)로 단다. 의문사는 근거에 있을 수 없으므로 내용 형태소에서 뺀다.
 INTERROGATIVES = ("얼마", "몇", "무엇", "어디", "언제", "누구", "어느")
 VERDICT_FIELDS = ("answerable", "answer", "conditions", "conflict", "comparison")
+# generation.with_document 가 질문 앞에 붙인 문서 이름: "기관의 「사업 이름」 사업에서 ".
+DOCUMENT_PREFIX = re.compile(r"^.*?」 사업에서 ")
 # 천 · 만 · 억(NR) 은 수에 곱하는 단위다. 5만원 과 50,000원 은 같은 값이다.
 SCALES = {"십": 10, "백": 100, "천": 1000, "만": 10_000, "억": 10**8, "조": 10**12}
 CONTENT_TAGS = ("NNG", "NNP", "SL", "SN")
@@ -326,9 +329,13 @@ def _attributed(fact, expected, found):
 
 
 def difficulty(question, units, proven_multi_hop):
-    """DIFFICULTY_RULE 대로 easy · medium · hard 를 정한다."""
+    """DIFFICULTY_RULE 대로 easy · medium · hard 를 정한다.
+
+    생성이 질문 앞에 붙인 문서 이름은 근거 본문에 없으므로 떼고 본다. 붙이면 모든 질문이 medium 이 된다.
+    """
     if proven_multi_hop:
         return "hard"
+    question = DOCUMENT_PREFIX.sub("", question, count=1)
     evidence = _norm(" ".join(unit["text"] for unit in units))
     words = [_norm(t.form) for t in generation.tokens(question) if t.tag in CONTENT_TAGS and t.form not in INTERROGATIVES]
     return "easy" if all(word in evidence for word in words) else "medium"
@@ -357,11 +364,16 @@ def _answer_reason(item, units, full, error, judge):
     reason = next((reason for check in ANSWER_CHECKS if (reason := check(item, full))), None)
     if reason:
         return reason
-    same, error = _agreed(item, units, full, judge)
+    missing = [condition for condition in full["conditions"] if not _states(item["answer"], condition)]
+    same, error = _agreed(item, units, full, missing, judge)
     if error:
         return f"검증기 출력 오류 (판정기): {error}"
+    if same:
+        return None
+    if missing:
+        return f"조건 · 예외 누락: 독립 답이 단 조건 {missing} 이 답에 없습니다"
     independent = full["comparison"] if item["primary_topic"] == "comparison" else full["answer"]
-    return None if same else f"독립 답과 다릅니다: 독립 답 {independent!r}"
+    return f"독립 답과 다릅니다: 독립 답 {independent!r}"
 
 
 def _static_reason(item, spec, units, survivors):
@@ -409,11 +421,15 @@ def _numeric_answer(item, full):
     return None
 
 
-def _agreed(item, units, full, judge):
+def _agreed(item, units, full, missing, judge):
     """후보 답이 독립 답과 같은지 (참거짓, 출력 오류). 비교 항목은 글 대신 대상별 값과 고른 대상을 맞춘다.
 
-    값 · 글자로 정하지 못하면 판정기가 정한다.
+    값 · 글자로 정하지 못하면 판정기가 정한다. 독립 답이 단 조건이 답에 글자 그대로 없을 때(missing)도 판정기가 정한다.
+    검증기는 질문과 상관없는 조건까지 달기도 해서, 글자로만 보면 맞는 답이 조건 누락으로 쌓인다.
     """
+    if missing:
+        independent = f"{full['answer']} (조건 · 예외: {'; '.join(missing)})"
+        return judge(item["question"], units, independent, item["answer"])
     if item["primary_topic"] != "comparison":
         return _settled(item["question"], units, full["answer"], item["answer"], judge)
     same = same_comparison(item["structure"], full["comparison"])
@@ -435,11 +451,6 @@ def _settled(question, units, independent, answer, judge):
     return same, None
 
 
-def _conditions_stated(item, full):
-    missing = [condition for condition in full["conditions"] if not _states(item["answer"], condition)]
-    return f"조건 · 예외 누락: 독립 답이 단 조건 {missing} 이 답에 없습니다" if missing else None
-
-
 def _not_copied(item, full):
     """질문에 답이 이미 들어 있으면 복사형이다. 비교 질문이 선택지로 든 대상 이름 하나를 답하는 것은 예외다."""
     # 질문에 값이 모두 있으면 대상을 확인하지 못했어도(None) 답을 내준 것이다.
@@ -451,7 +462,7 @@ def _not_copied(item, full):
     return f"복사형: 질문에 답 {full['answer']!r} 이 들어 있습니다"
 
 
-ANSWER_CHECKS = (_answerable, _numeric_answer, _conditions_stated, _not_copied)
+ANSWER_CHECKS = (_answerable, _numeric_answer, _not_copied)
 
 
 def _table_relation(item, units):

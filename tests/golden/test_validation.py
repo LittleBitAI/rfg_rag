@@ -4,7 +4,7 @@ import json
 import pytest
 
 from golden_pipeline import storage
-from golden_pipeline.generation import comparison_answer, generate, import_c
+from golden_pipeline.generation import comparison_answer, generate, import_c, with_document
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.schema import DIFFICULTIES
 from golden_pipeline.validation import (
@@ -109,7 +109,8 @@ def test_validator_sees_only_the_question_and_the_cited_evidence_units(config):
     validate("numeric", "A", "a1", config, validator)
 
     numeric = bundle("p1", "numeric")
-    question_and_units = {"question": row["question"], "evidence": [{"label": "E1", "text": numeric["units"][0]["text"]}]}
+    question = with_document(row["question"], numeric["doc"])
+    question_and_units = {"question": question, "evidence": [{"label": "E1", "text": numeric["units"][0]["text"]}]}
     assert validator.requests == [[
         {"role": "system", "content": (storage.PROMPTS / "validator.txt").read_text(encoding="utf-8")},
         {"role": "user", "content": json.dumps(question_and_units, ensure_ascii=False)},

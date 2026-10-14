@@ -132,9 +132,11 @@ def evidence_run(outputs, tmp_path):
                  for unit_id, _, body, _ in UNITS if isinstance(body, str)]
     _write_jsonl(package / "final_elements.jsonl", elements)
     _write_jsonl(package / "final_records.jsonl", [
-        {"doc_id": DOC_1, "source_paths": ["원본 데이터/files/가기관_가사업 구축.hwp"]},
-        {"doc_id": DOC_2, "source_paths": ["원본 데이터/files/나기관_나사업 운영.hwp"]},
+        {"doc_id": DOC_1, "source_paths": ["원본 데이터/files/사단법인가기관_가사업 구축.hwp"]},
+        {"doc_id": DOC_2, "source_paths": ["원본 데이터/files/나기관_[재공고]나사업 운영.hwp"]},
     ])
+    (tmp_path / "data_list.csv").write_text(
+        "파일명,발주 기관\n사단법인가기관_가사업 구축.hwp,가기관\n나기관_[재공고]나사업 운영.hwp,나기관\n", encoding="utf-8")
     (package / "manifest.json").write_text('{"package": "fake v11"}', encoding="utf-8")
 
     run_dir = outputs / "outputs" / "evidence" / "ev1"

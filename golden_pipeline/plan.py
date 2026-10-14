@@ -3,6 +3,7 @@
 A · B · C 는 같은 계획 파일을 읽으므로 같은 근거 묶음과 같은 컨텍스트를 받는다.
 근거 묶음은 근거 어댑터가 eligible 로 판정한 단위로만 만든다.
 """
+import csv
 import hashlib
 import json
 import re
@@ -11,6 +12,9 @@ from pathlib import Path
 
 from golden_pipeline import evidence, storage
 from golden_pipeline.schema import EVIDENCE_FIELDS, TOPICS
+
+# 줄 끝에 쪽 번호가 붙은 목차 줄 (1. 용역개요 02). 목차로 만든 질문은 RFP 내용을 묻지 않는다.
+TOC_LINE = re.compile(r"\S\s+\d{1,3}\s*$")
 
 
 def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE):
@@ -22,7 +26,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     run_dir = storage._child(storage.OUTPUTS / "evidence", evidence_run)
     pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
     _check_package(package, pinned)
-    units = eligible_units(run_dir, package)
+    units = [unit for unit in eligible_units(run_dir, package) if not _is_toc(unit["text"])]
     names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
@@ -80,15 +84,26 @@ def eligible_units(run_dir, package):
 
 
 def doc_names(package, docs):
-    """문서 SHA → 원본 파일 이름(확장자 뺌, "발주 기관_사업명"). v11 레코드의 source_paths 첫 파일에서 읽는다.
+    """문서 SHA → {"agency": 발주 기관, "title": 사업 이름}. 문서 98개 가운데 어느 문서의 질문인지 밝히는 데 쓴다.
 
-    문서 98개 가운데 어느 문서의 질문인지 밝히려면 생성기가 문서 이름을 알아야 한다. 파일 이름은 잘려 있을 수 있다.
+    v11 레코드의 source_paths 첫 파일 이름("기관_사업명.hwp")으로 패키지 옆 data_list.csv 의 정리된 발주 기관을 찾고,
+    사업 이름은 파일 이름의 _ 뒤에서 앞머리 [재공고] 같은 표시를 뺀 것이다. 파일 이름이 잘려 사업 이름도 잘려 있을 수 있다.
+    한 기관에 문서가 여럿이라 기관 이름만으로는 문서를 가리지 못한다.
     """
+    with (package.parent / "data_list.csv").open(encoding="utf-8-sig") as f:
+        agencies = {row["파일명"]: row["발주 기관"] for row in csv.DictReader(f)}
     names = {}
     for record in evidence._iter_jsonl(package / evidence.RECORDS):
         if record["doc_id"] in docs and record["doc_id"] not in names:
-            names[record["doc_id"]] = Path(record["source_paths"][0]).stem
+            file = Path(record["source_paths"][0])
+            title = re.sub(r"^(\[[^\]]*\])+", "", file.stem.split("_", 1)[-1]).strip()
+            names[record["doc_id"]] = {"agency": agencies[file.name], "title": title}
     return names
+
+
+def _is_toc(text):
+    lines = [line for line in text.splitlines() if line.strip()]
+    return len(lines) >= 2 and 2 * sum(bool(TOC_LINE.search(line)) for line in lines) >= len(lines)
 
 
 def _check_package(package, pinned):
@@ -167,18 +182,17 @@ def _pick(groups, count):
     return chosen
 
 
-def _bundle(topic, units, doc_name):
-    """근거 묶음. 컨텍스트 첫 줄은 [문서] 이름이고 근거가 아니다 (검증기에는 근거 단위만 간다)."""
+def _bundle(topic, units, doc):
+    """근거 묶음. doc 은 그 문서의 발주 기관 · 사업 이름이고, 생성이 질문 앞에 붙인다."""
     labelled = [{"label": f"E{i}", **unit} for i, unit in enumerate(units, 1)]
     ids = "\n".join(unit["unit_id"] for unit in units)
-    body = "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in labelled)
     return {
         "bundle_id": "b-" + hashlib.sha256(ids.encode("utf-8")).hexdigest()[:16],
         "topic": topic,
         "doc_sha": units[0]["ref"]["doc_sha"],
-        "doc_name": doc_name,
+        "doc": doc,
         "units": labelled,
-        "context": f"[문서] {doc_name}\n\n{body}",
+        "context": "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in labelled),
     }
 
 

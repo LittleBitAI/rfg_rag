@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from golden_pipeline import improvement, storage
-from golden_pipeline.generation import generate, import_c
+from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.validation import release, validate
@@ -164,7 +164,8 @@ def test_a_retried_bundle_is_told_its_own_failed_question_and_why_but_not_an_ans
 
     budget, table = generator.requests[3][1]["content"], generator.requests[4][1]["content"]
     note = "\n\n이 근거 묶음에서 거절된 지난 시도\n"
-    assert budget.endswith(f"{note}- 질문 {BUDGET['question']!r}: {PREVENTION_RULES['answer_mismatch']}")
+    asked = with_document(BUDGET["question"], {"agency": "가기관", "title": "가사업 구축"})
+    assert budget.endswith(f"{note}- 질문 {asked!r}: {PREVENTION_RULES['answer_mismatch']}")
     assert table.endswith(f"{note}- 출력 (항목이 되지 못함): {PREVENTION_RULES['output_format']}")
     assert note not in generator.requests[0][1]["content"]
     assert manifest(2)["policy"]["notes"][manifest(2)["bundle_ids"][0]] == budget[budget.index(note):]

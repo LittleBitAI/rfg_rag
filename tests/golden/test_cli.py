@@ -243,13 +243,13 @@ def test_a_resumed_audit_judges_only_the_pending_candidates_and_releases(planned
     second = json.loads((run_dir / "validation-2.json").read_text(encoding="utf-8"))
     assert second["continues"] == {"file": "validation.json", "sha256": storage._sha256(run_dir / "validation.json")}
     assert (second["status"], second["pending"], second["run_config"]["model"]) == ("complete", [], "validator-test")
-    judged = [row for name in ("accepted.jsonl", "review.jsonl", "rejected.jsonl")
+    judged = [row for name in ("accepted.jsonl", "rejected.jsonl")
               for row in read_jsonl(run_dir / name) if "candidate_id" in row]
     ids = [row["candidate_id"] for row in judged]
     assert len(ids) == len(set(ids)) == 3
     # 앞에서 통과한 같은 run 의 항목도 중복 검사에 든다.
     [duplicate] = [row for row in judged if row["state"] == "rejected"]
-    assert duplicate["question"] == reworded["question"]
+    assert duplicate["question"].endswith(f"사업에서 {reworded['question']}")
     assert duplicate["state_history"][-1]["reason"].startswith("중복")
     # 앞 기록이 바뀌면 이어 쓴 기록의 continues 와 맞지 않아, 바뀐 비용이 보고서 · 출시본에 들어가지 못한다.
     (run_dir / "validation.json").write_text(json.dumps({**first, "cost_usd": 9.0}), encoding="utf-8")

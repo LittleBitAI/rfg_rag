@@ -294,12 +294,15 @@ def _candidate(run, candidate_id, row, bundle, spec, parent=None):
     # 주 주제를 보조 태그에 다시 적은 것은 틀린 사실이 아니라 겹친 표시라, 거절하지 않고 뺀다.
     if isinstance(tags, list):
         tags = [tag for tag in tags if tag != run["primary_topic"]]
+    question = row["question"]
+    if _is_text(question):
+        question = with_document(question, bundle["doc"])
     item = {
         **run,
         "candidate_id": candidate_id,
         "parent_candidate_id": parent,
         "secondary_tags": tags,
-        "question": row["question"],
+        "question": question,
         "answer": row["answer"],
         "evidence": [unit["ref"] for unit in cited],
         "bundle_id": bundle["bundle_id"],
@@ -317,6 +320,14 @@ def _candidate(run, candidate_id, row, bundle, spec, parent=None):
         return None, f"스키마: {error}"
     mismatch = check_structure(run["primary_topic"], spec, row, cited)
     return (None, f"유형 불일치: {mismatch}") if mismatch else (item, None)
+
+
+def with_document(question, doc):
+    """질문 앞에 문서를 밝힌다. 문서 98개를 함께 찾는 평가에서 문서를 밝히지 않은 질문은 답이 하나로 정해지지 않는다.
+
+    생성기에게 쓰게 하면 이름을 바꿔 쓰거나 글자를 깨뜨려, 계획에 적힌 이름을 그대로 붙인다.
+    """
+    return f"{doc['agency']}의 「{doc['title']}」 사업에서 {question}"
 
 
 def _write(topic, method, run_id, inputs, results, info):
