@@ -88,6 +88,9 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
     # 근거의 130,000,000원 · 12개월 안에 든 더 짧은 수다. 수는 통째로 맞아야 한다.
     ("예산은 30,000,000원이다", {"value": "30,000,000", "unit": "원"}),
     ("기간은 2개월이다", {"value": "2", "unit": "개월"}),
+    # 근거의 12개월 은 단위가 개월 이다. 단위도 통째로 맞아야 하고, 값과 단위를 다르게 나눠도 안 된다.
+    ("기간은 12개이다", {"value": "12", "unit": "개"}),
+    ("기간은 12개월이다", {"value": "12개", "unit": "월"}),
 ])
 def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch(planned, answer, structure):
     # 값 없이 설명만 하는 답이 numeric 후보로 남던 경우를 막는다. 근거에 없는 값도 같은 이유로 거절한다.
@@ -97,6 +100,15 @@ def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mis
     [reject] = read_jsonl(run_dir / "rejected.jsonl")
     assert reject["reason"].startswith("유형 불일치")
     assert reject["bundle_id"] == bundle("numeric")["bundle_id"]
+
+
+def test_numeric_unit_followed_by_a_particle_is_accepted(planned):
+    # 조사는 단위에 붙는다 (12개월이다). 단위 끝을 글자 종류로 가르는 수정은 이 답을 거절한다.
+    answer = {**NUMERIC, "answer": "계약 기간은 12개월이다", "structure": {"value": "12", "unit": "개월"}}
+    run_dir = generate("A", "numeric", "p1", "a1", planned, Client(answer))
+
+    [item] = read_jsonl(run_dir / "candidates.jsonl")
+    assert item["structure"] == {"value": "12", "unit": "개월"}
 
 
 def unit(text, kind="char"):

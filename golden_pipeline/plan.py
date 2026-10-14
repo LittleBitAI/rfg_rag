@@ -109,7 +109,8 @@ def _unit_text(ref, element):
 
 def _groups(topic, spec, units, used, max_context_chars):
     """문서마다 주제에 맞는 단위를 패키지 순서대로 bundle_units 개씩 묶는다. 컨텍스트가 한도를 넘는 묶음은 버린다."""
-    headers = {unit["ref"]["element_id"]: unit for unit in units if _table_row(unit) == 0}
+    # 다른 주제가 이미 가진 머리글 행은 붙이지 않는다. 그 표의 나머지 행은 묶음이 되지 못한다.
+    headers = {unit["ref"]["element_id"]: unit for unit in units if _table_row(unit) == 0 and unit["unit_id"] not in used}
     pattern = re.compile(spec["pattern"]) if spec["pattern"] else None
     by_doc = defaultdict(list)
     for unit in units:

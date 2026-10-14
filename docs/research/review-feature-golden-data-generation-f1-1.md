@@ -117,7 +117,7 @@ Extend `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed in the commit that adds this Result (parent `d92eceb`). Before the fix, `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch` failed for both new cases: `('기간은 12개이다', 12/개)` and the wrong split `('기간은 12개월이다', 12개/월)` each landed in `candidates.jsonl`. The accepted control `test_numeric_unit_followed_by_a_particle_is_accepted` (`계약 기간은 12개월이다`, 12/개월, evidence E1) already passed, as predicted. The fix follows the hypothesis: `_numeric` extracts (number, unit) pairs with the numeric spec `pattern` (`_pairs`) from the normalized answer and each cited text, and accepts only an exact `(_norm(value), _norm(unit))` pair. Both new rejections and the control pass, and the review-1 cases (30,000,000원, 2개월) and the 130,000,000원(부가세 포함) positive case pass unchanged. The change is confined to `_numeric`; the topic checks now also receive `spec` so `_numeric` can read the pattern. `_contains` stays for `_quoted` (condition, table, comparison). Full gate: `.venv\Scripts\python -m pytest -q tests` 331 passed. The unit-list limits under Counterevidence and Unresolved limits still hold and were not tested.
 
 ## Unresolved limits
 

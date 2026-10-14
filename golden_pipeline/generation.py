@@ -105,39 +105,48 @@ def check_structure(topic, spec, row, cited):
     if set(structure) != set(spec["structure"]):
         return f"structure 필드는 {sorted(spec['structure'])} 여야 합니다"
     texts = [_norm(unit["text"]) for unit in cited]
-    return CHECKS[topic](structure, row["answer"], cited, texts)
+    return CHECKS[topic](spec, structure, row["answer"], cited, texts)
 
 
-def _numeric(structure, answer, cited, texts):
+def _numeric(spec, structure, answer, cited, texts):
     value, unit = structure["value"], structure["unit"]
     if not (_is_text(value) and _is_text(unit) and re.search(r"\d", value)):
         return "숫자가 든 값과 단위가 있어야 합니다"
-    quote = _norm(value + unit)
-    if not _contains(_norm(answer), quote):
+    pair = (_norm(value), _norm(unit))
+    if pair not in _pairs(spec, _norm(answer)):
         return f"답에 값과 단위({value}{unit})가 없습니다"
-    if not any(_contains(text, quote) for text in texts):
+    if not any(pair in _pairs(spec, text) for text in texts):
         return f"값과 단위({value}{unit})가 근거에 없습니다"
     return None
 
 
-def _table(structure, answer, cited, texts):
+def _pairs(spec, text):
+    """text 에 적힌 (수, 단위) 쌍들. 단위는 numeric 명세 pattern 의 단위 목록으로 끊는다.
+
+    한국어는 단위가 수에, 조사가 단위에 붙어 써서 (12개월이다) 글자 종류로는 단위 끝을 가를 수 없다.
+    그래서 12개 는 12개월 의 일부로 맞지 않고, 12개월이다 는 (12, 개월) 로 읽힌다.
+    """
+    return {(match[0][:match.start(1) - match.start()], match[1]) for match in re.finditer(spec["pattern"], text)}
+
+
+def _table(spec, structure, answer, cited, texts):
     if not any(unit["ref"]["location"]["kind"] == "table" for unit in cited):
         return "표 행 근거가 없습니다"
     return _quoted([structure["row"], structure["column"]], texts, "행·열 이름")
 
 
-def _condition(structure, answer, cited, texts):
+def _condition(spec, structure, answer, cited, texts):
     return _quoted([structure["condition"]], texts, "조건·예외 문구")
 
 
-def _comparison(structure, answer, cited, texts):
+def _comparison(spec, structure, answer, cited, texts):
     entities = structure["entities"]
     if not isinstance(entities, list) or len(set(map(str, entities))) < 2:
         return "견주는 대상이 둘 이상이어야 합니다"
     return _quoted(entities, texts, "비교 대상")
 
 
-def _multi_hop(structure, answer, cited, texts):
+def _multi_hop(spec, structure, answer, cited, texts):
     return None if len(cited) >= 2 else "근거 단위가 둘 이상이어야 합니다"
 
 

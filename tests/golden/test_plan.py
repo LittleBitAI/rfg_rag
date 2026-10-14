@@ -58,9 +58,23 @@ def table_row(row, text):
     return {"unit_id": f"r{row}", "ref": {"doc_sha": DOC_1, "element_id": "e-table", "location": location}, "text": text}
 
 
+def six_rows():
+    return [table_row(0, "구분 | A안 | B안")] + [table_row(n, f"항목{n} | {n}억원 | {n + 1}억원") for n in range(1, 6)]
+
+
+def test_header_row_owned_by_an_earlier_topic_is_not_inserted_again():
+    rows = six_rows()
+    [numeric, *_] = _groups("numeric", topic_spec("numeric")[0], rows, set(), 2000)[DOC_1]
+    used = {u["unit_id"] for u in numeric["units"]}
+    assert used == {"r0", "r1", "r2"}
+
+    # 남은 r3 · r4 · r5 는 머리글 r0 을 numeric 이 가져 열 이름 없이 남으므로 묶음이 되지 않는다.
+    assert _groups("table", topic_spec("table")[0], rows, used, 2000)[DOC_1] == []
+
+
 @pytest.mark.parametrize("header_eligible", [True, False])
 def test_table_rows_are_bundled_with_their_header_row_or_left_out(header_eligible):
-    rows = [table_row(0, "구분 | A안 | B안")] + [table_row(n, f"항목{n} | {n}억원 | {n + 1}억원") for n in range(1, 6)]
+    rows = six_rows()
     units = rows if header_eligible else rows[1:]
 
     bundles = _groups("table", topic_spec("table")[0], units, set(), 2000)[DOC_1]
