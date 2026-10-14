@@ -6,7 +6,9 @@ API 응답이 알려 준 모델을 남겨 무엇을 넣어 무엇이 나왔는�
 """
 import json
 import re
+import threading
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 from string import Template
@@ -28,6 +30,9 @@ SIGNS = ("+", "-", "−", "±", "△", "▲")
 RANGES = ("~", "∼", "〜")
 # 수 바로 뒤에 붙어 단위를 이루는 형태소: 천 · 만 · 억(NR), 원 · 개월 · 개년(NNB), %(SW), MB · p(SL), 포인트(NNG), 간(XSN).
 UNIT_TAGS = ("NR", "NNB", "NNG", "SW", "SL", "XSN")
+# 동시에 보내는 API 호출 수. 호출 하나가 수십 초라 차례로 보내면 큰 run 이 밤새 끝나지 않는다.
+WORKERS = 8
+_KIWI_LOCK = threading.Lock()
 
 
 def generate(method, topic, plan_id, run_id, config_path, client, revision=None):
@@ -35,8 +40,9 @@ def generate(method, topic, plan_id, run_id, config_path, client, revision=None)
 
     client(model=..., reasoning_effort=..., messages=[...]) 는 {"model", "text", "input_tokens", "output_tokens"} 를 돌려준다.
     model 은 요청한 이름이 아니라 API 응답이 알려 준 이름이어야 한다.
-    revision 은 A 의 자기 개선 round 가 준다: {"parents": {묶음 id: 이전 거절 후보 id 또는 None}, "prevention", "policy"}.
-    그 묶음만 다시 부르고, 프롬프트 뒤에 예방 규칙 글(prevention)을 붙이며, policy 를 매니페스트에 남긴다.
+    revision 은 A 의 자기 개선 round 가 준다: {"parents": {묶음 id: 이전 거절 후보 id 또는 None}, "prevention", "notes", "policy"}.
+    그 묶음만 다시 부르고, 프롬프트 뒤에 예방 규칙 글(prevention)을, 묶음의 컨텍스트 뒤에 그 묶음의 지난 실패(notes)를 붙이며,
+    policy 를 매니페스트에 남긴다.
     """
     if method not in ("A", "B"):
         raise ValueError(f"generate 는 A · B 만 받습니다. C 는 import_c 를 씁니다: {method!r}")
@@ -52,12 +58,12 @@ def generate(method, topic, plan_id, run_id, config_path, client, revision=None)
         topic=topic, requires=spec["requires"], structure=json.dumps(spec["structure"], ensure_ascii=False),
     )
     prompt_sha = storage._sha256(prompt_path)
-    bundles, parents = _bundles(plan, topic), {}
+    bundles, parents, notes = _bundles(plan, topic), {}, {}
     if revision is not None:
         instructions += revision["prevention"]
-        parents = revision["parents"]
+        parents, notes = revision["parents"], revision["notes"]
         bundles = [bundle for bundle in bundles if bundle["bundle_id"] in parents]
-    calls, outputs, status = _call_all(client, config, instructions, bundles)
+    calls, outputs, status = _call_all(client, config, instructions, bundles, notes)
 
     run = {"run_id": run_id, "method": method, "primary_topic": topic, "prompt_version": prompt_sha}
     results = []
@@ -145,12 +151,12 @@ def _pairs(text):
     한국어는 단위가 수에, 조사가 단위에 붙어 써서 (12개월이다) 글자 종류로는 단위 끝을 가를 수 없다.
     형태소 품사로 가르면 조사 · 어미 · 문장부호에서 단위가 끝나고, 붙어 이어지는 단위 형태소는 끝까지 한 단위가 된다.
     """
-    tokens = _kiwi().tokenize(unicodedata.normalize("NFC", text))
+    found = tokens(text)
     pairs = set()
-    for i, token in enumerate(tokens):
+    for i, token in enumerate(found):
         if token.tag != "SN":
             continue
-        sign, unit = _sign(tokens, i), _unit(tokens, i)
+        sign, unit = _sign(found, i), _unit(found, i)
         if sign is not None and unit:
             pairs.add((_norm(sign + token.form), unit))
     return pairs
@@ -193,6 +199,12 @@ def _unit(tokens, i):
 def _kiwi():
     # 모델을 읽는 데 시간이 들어 한 번만 만든다.
     return Kiwi()
+
+
+def tokens(text):
+    """형태소 분석. 검증을 여러 스레드로 돌리므로 Kiwi 하나를 잠가 차례로 쓴다."""
+    with _KIWI_LOCK:
+        return _kiwi().tokenize(unicodedata.normalize("NFC", text))
 
 
 def _table(structure, answer, cited, texts):
@@ -278,11 +290,15 @@ def _candidate(run, candidate_id, row, bundle, spec, parent=None):
             and len(set(labels)) == len(labels) and set(labels) <= set(units)):
         return None, f"evidence 는 이 묶음의 서로 다른 근거 라벨 {sorted(units)} 이어야 합니다: {labels!r}"
     cited = [units[label] for label in labels]
+    tags = row["secondary_tags"]
+    # 주 주제를 보조 태그에 다시 적은 것은 틀린 사실이 아니라 겹친 표시라, 거절하지 않고 뺀다.
+    if isinstance(tags, list):
+        tags = [tag for tag in tags if tag != run["primary_topic"]]
     item = {
         **run,
         "candidate_id": candidate_id,
         "parent_candidate_id": parent,
-        "secondary_tags": row["secondary_tags"],
+        "secondary_tags": tags,
         "question": row["question"],
         "answer": row["answer"],
         "evidence": [unit["ref"] for unit in cited],
@@ -323,23 +339,39 @@ def _write(topic, method, run_id, inputs, results, info):
     return storage.write_run(topic, method, run_id, items, rejects, info)
 
 
-def _call_all(client, config, instructions, bundles):
-    """호출 수 한도와 예산 안에서 묶음마다 한 번 호출한다. 한도에 닿으면 멈추고 그 이유를 status 로 남긴다."""
+def _call_all(client, config, instructions, bundles, notes):
+    """호출 수 한도와 예산 안에서 묶음마다 한 번 호출한다. 한도에 닿으면 멈추고 그 이유를 status 로 남긴다.
+
+    WORKERS 개씩 함께 보내고 한도는 그 사이에서 본다. 출력은 묶음 차례대로 남는다.
+    """
     calls, outputs = [], []
-    for bundle in bundles:
+    while len(outputs) < len(bundles):
         stop = limit_reached(config, len(calls), _cost(config, calls))
         if stop:
             return calls, outputs, stop
-        messages = [{"role": "system", "content": instructions}, {"role": "user", "content": bundle["context"]}]
-        response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
-        calls.append({
-            "bundle_id": bundle["bundle_id"],
-            "model": response["model"],
-            "input_tokens": response["input_tokens"],
-            "output_tokens": response["output_tokens"],
-        })
-        outputs.append((bundle, response["text"]))
+        size = min(WORKERS, config["max_calls"] - len(calls))
+        batch = bundles[len(outputs):len(outputs) + size]
+        for bundle, response in zip(batch, parallel(lambda b: _ask(client, config, instructions, b, notes), batch)):
+            calls.append({
+                "bundle_id": bundle["bundle_id"],
+                "model": response["model"],
+                "input_tokens": response["input_tokens"],
+                "output_tokens": response["output_tokens"],
+            })
+            outputs.append((bundle, response["text"]))
     return calls, outputs, "complete"
+
+
+def _ask(client, config, instructions, bundle, notes):
+    content = bundle["context"] + notes.get(bundle["bundle_id"], "")
+    messages = [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
+    return client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
+
+
+def parallel(work, items):
+    """items 마다 work 를 WORKERS 개까지 함께 돌려, 결과를 items 차례대로 돌려준다."""
+    with ThreadPoolExecutor(max(1, min(WORKERS, len(items)))) as pool:
+        return list(pool.map(work, items))
 
 
 def limit_reached(config, calls, cost, needed=1):

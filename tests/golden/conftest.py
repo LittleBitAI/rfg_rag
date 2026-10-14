@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 
-from golden_pipeline import storage
+from golden_pipeline import generation, storage
 
 DOC_SHA = "a" * 64
 IMAGE_SHA = "b" * 64
@@ -53,6 +53,12 @@ ITEM = {
     "state": "candidate",
     "state_history": [],
 }
+
+
+@pytest.fixture(autouse=True)
+def one_worker(monkeypatch):
+    """가짜 생성기 · 검증기는 받은 차례대로 답한다. 호출 차례가 정해지도록 테스트에서는 한 번에 하나씩 보낸다."""
+    monkeypatch.setattr(generation, "WORKERS", 1)
 
 
 @pytest.fixture
@@ -125,6 +131,10 @@ def evidence_run(outputs, tmp_path):
                   "location": {"span_text_field": "search_text"}}
                  for unit_id, _, body, _ in UNITS if isinstance(body, str)]
     _write_jsonl(package / "final_elements.jsonl", elements)
+    _write_jsonl(package / "final_records.jsonl", [
+        {"doc_id": DOC_1, "source_paths": ["원본 데이터/files/가기관_가사업 구축.hwp"]},
+        {"doc_id": DOC_2, "source_paths": ["원본 데이터/files/나기관_나사업 운영.hwp"]},
+    ])
     (package / "manifest.json").write_text('{"package": "fake v11"}', encoding="utf-8")
 
     run_dir = outputs / "outputs" / "evidence" / "ev1"

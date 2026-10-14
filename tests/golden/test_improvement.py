@@ -157,6 +157,19 @@ def test_next_round_gets_rules_for_the_topics_failure_codes_and_records_its_poli
     assert second["policy"]["prevention_sha256"] != first["policy"]["prevention_sha256"]
 
 
+def test_a_retried_bundle_is_told_its_own_failed_question_and_why_but_not_an_answer(loop_config):
+    # 주제 전체 규칙만으로는 생성기가 이 묶음에서 무엇을 틀렸는지 모른다. 묶음마다 지난 질문과 실패 규칙을 붙인다.
+    generator = Generator()
+    improve("numeric", "p3", "l1", loop_config(), generator, Validator())
+
+    budget, table = generator.requests[3][1]["content"], generator.requests[4][1]["content"]
+    note = "\n\n이 근거 묶음에서 거절된 지난 시도\n"
+    assert budget.endswith(f"{note}- 질문 {BUDGET['question']!r}: {PREVENTION_RULES['answer_mismatch']}")
+    assert table.endswith(f"{note}- 출력 (항목이 되지 못함): {PREVENTION_RULES['output_format']}")
+    assert note not in generator.requests[0][1]["content"]
+    assert manifest(2)["policy"]["notes"][manifest(2)["bundle_ids"][0]] == budget[budget.index(note):]
+
+
 @pytest.mark.parametrize("limits, reason, rounds", [
     ({}, "max_rounds", 3),
     ({"max_calls": 4}, "call_cap", 1),

@@ -28,7 +28,11 @@ def test_bundles_use_only_eligible_units_once_and_carry_their_context(evidence_r
     assert plan["topic_specs"]["numeric"] == storage._sha256(storage.CONFIGS / "topics" / "numeric.json")
 
     table = next(b for b in plan["bundles"] if b["topic"] == "table")
-    assert table["context"] == "[E1]\n구분 | A안 | B안\n\n[E2]\n예산 | 1억원 | 2억원\n\n[E3]\n기간 | 6개월 | 12개월"
+    # 첫 줄은 문서 이름이다. 문서 98개 가운데 어느 문서의 질문인지 생성기가 질문에 밝힐 수 있어야 한다.
+    assert table["context"] == (
+        "[문서] 가기관_가사업 구축\n\n[E1]\n구분 | A안 | B안\n\n[E2]\n예산 | 1억원 | 2억원\n\n[E3]\n기간 | 6개월 | 12개월"
+    )
+    assert table["doc_name"] == "가기관_가사업 구축"
     assert table["units"][1]["ref"]["location"] == {"kind": "table", "grid": "logical_restored", "row": 1, "cell": None}
 
 
@@ -47,9 +51,9 @@ def test_documents_are_taken_in_turn_and_long_contexts_are_left_out(evidence_run
     assert plan["coverage"] == {"numeric": {DOC_1: 1, DOC_2: 1}}
     assert unit_ids(plan) == ["u1", "u2", "u6", "u8"]  # DOC_2 의 held 단위 u7 을 건너뛴다
 
-    make_plan("p2", "ev1", {"numeric": 2}, 60, package=evidence_run)
+    make_plan("p2", "ev1", {"numeric": 2}, 80, package=evidence_run)
     plan = load_plan("p2")[0]
-    assert all(len(b["context"]) <= 60 for b in plan["bundles"])
+    assert all(len(b["context"]) <= 80 for b in plan["bundles"])
     assert unit_ids(plan) == ["u3", "u4", "u5"]  # 표 행 u4 · u5 에 머리글 행 u3 이 붙는다
 
 
@@ -62,14 +66,17 @@ def six_rows():
     return [table_row(0, "구분 | A안 | B안")] + [table_row(n, f"항목{n} | {n}억원 | {n + 1}억원") for n in range(1, 6)]
 
 
+NAMES = {DOC_1: "가기관_가사업 구축"}
+
+
 def test_header_row_owned_by_an_earlier_topic_is_not_inserted_again():
     rows = six_rows()
-    [numeric, *_] = _groups("numeric", topic_spec("numeric")[0], rows, set(), 2000)[DOC_1]
+    [numeric, *_] = _groups("numeric", topic_spec("numeric")[0], rows, set(), 2000, NAMES)[DOC_1]
     used = {u["unit_id"] for u in numeric["units"]}
     assert used == {"r0", "r1", "r2"}
 
     # 남은 r3 · r4 · r5 는 머리글 r0 을 numeric 이 가져 열 이름 없이 남으므로 묶음이 되지 않는다.
-    assert _groups("table", topic_spec("table")[0], rows, used, 2000)[DOC_1] == []
+    assert _groups("table", topic_spec("table")[0], rows, used, 2000, NAMES)[DOC_1] == []
 
 
 @pytest.mark.parametrize("header_eligible", [True, False])
@@ -77,11 +84,11 @@ def test_table_rows_are_bundled_with_their_header_row_or_left_out(header_eligibl
     rows = six_rows()
     units = rows if header_eligible else rows[1:]
 
-    bundles = _groups("table", topic_spec("table")[0], units, set(), 2000)[DOC_1]
+    bundles = _groups("table", topic_spec("table")[0], units, set(), 2000, NAMES)[DOC_1]
 
     if header_eligible:
         assert [[u["unit_id"] for u in b["units"]] for b in bundles] == [["r0", "r1", "r2"], ["r0", "r3", "r4", "r5"]]
-        assert bundles[1]["context"].startswith("[E1]\n구분 | A안 | B안")
+        assert bundles[1]["context"].startswith("[문서] 가기관_가사업 구축\n\n[E1]\n구분 | A안 | B안")
     else:
         assert bundles == []
 

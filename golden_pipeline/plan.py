@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from pathlib import Path
 
 from golden_pipeline import evidence, storage
 from golden_pipeline.schema import EVIDENCE_FIELDS, TOPICS
@@ -22,12 +23,13 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
     _check_package(package, pinned)
     units = eligible_units(run_dir, package)
+    names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
     bundles, used = [], set()
     # 한 단위는 한 주제의 묶음에만 들어간다. 카탈로그가 같은 근거 묶음을 두 주제에 두지 않기 때문이다.
     for topic, (spec, _) in specs.items():
-        chosen = _pick(_groups(topic, spec, units, used, max_context_chars), counts[topic])
+        chosen = _pick(_groups(topic, spec, units, used, max_context_chars, names), counts[topic])
         used.update(unit["unit_id"] for bundle in chosen for unit in bundle["units"])
         bundles += chosen
 
@@ -77,6 +79,18 @@ def eligible_units(run_dir, package):
     return [unit for unit in units if unit["text"].strip()]
 
 
+def doc_names(package, docs):
+    """문서 SHA → 원본 파일 이름(확장자 뺌, "발주 기관_사업명"). v11 레코드의 source_paths 첫 파일에서 읽는다.
+
+    문서 98개 가운데 어느 문서의 질문인지 밝히려면 생성기가 문서 이름을 알아야 한다. 파일 이름은 잘려 있을 수 있다.
+    """
+    names = {}
+    for record in evidence._iter_jsonl(package / evidence.RECORDS):
+        if record["doc_id"] in docs and record["doc_id"] not in names:
+            names[record["doc_id"]] = Path(record["source_paths"][0]).stem
+    return names
+
+
 def _check_package(package, pinned):
     """근거 어댑터가 판정한 패키지와 지금 읽을 패키지가 같아야 본문이 판정과 맞는다."""
     for name, sha in pinned.items():
@@ -104,7 +118,7 @@ def _unit_text(ref, element):
     return " | ".join(cell["text"] for cell in element["cells"] if cell["row"] == location["row"])
 
 
-def _groups(topic, spec, units, used, max_context_chars):
+def _groups(topic, spec, units, used, max_context_chars, names):
     """문서마다 주제에 맞는 단위를 패키지 순서대로 bundle_units 개씩 묶는다. 컨텍스트가 한도를 넘는 묶음은 버린다."""
     # 다른 주제가 이미 가진 머리글 행은 붙이지 않는다. 그 표의 나머지 행은 묶음이 되지 못한다.
     headers = {unit["ref"]["element_id"]: unit for unit in units if _table_row(unit) == 0 and unit["unit_id"] not in used}
@@ -120,7 +134,7 @@ def _groups(topic, spec, units, used, max_context_chars):
     groups = {}
     for doc, doc_units in sorted(by_doc.items()):
         chunks = [_with_headers(doc_units[i:i + size], headers) for i in range(0, len(doc_units) - size + 1, size)]
-        bundles = [_bundle(topic, chunk) for chunk in chunks if chunk]
+        bundles = [_bundle(topic, chunk, names[doc]) for chunk in chunks if chunk]
         groups[doc] = [b for b in bundles if len(b["context"]) <= max_context_chars]
     return groups
 
@@ -153,15 +167,18 @@ def _pick(groups, count):
     return chosen
 
 
-def _bundle(topic, units):
+def _bundle(topic, units, doc_name):
+    """근거 묶음. 컨텍스트 첫 줄은 [문서] 이름이고 근거가 아니다 (검증기에는 근거 단위만 간다)."""
     labelled = [{"label": f"E{i}", **unit} for i, unit in enumerate(units, 1)]
     ids = "\n".join(unit["unit_id"] for unit in units)
+    body = "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in labelled)
     return {
         "bundle_id": "b-" + hashlib.sha256(ids.encode("utf-8")).hexdigest()[:16],
         "topic": topic,
         "doc_sha": units[0]["ref"]["doc_sha"],
+        "doc_name": doc_name,
         "units": labelled,
-        "context": "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in labelled),
+        "context": f"[문서] {doc_name}\n\n{body}",
     }
 
 

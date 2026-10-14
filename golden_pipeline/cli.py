@@ -27,11 +27,14 @@ def api_client():
 
     키는 저장소 .env 의 OPENAI_API_KEY 다. model 은 요청한 이름이 아니라 API 응답이 알려 준 이름을 돌려준다.
     거절 · 길이 초과로 본문이 없으면 빈 글을 돌려줘, run 을 멈추지 않고 그 출력을 거절 행으로 남긴다.
+    생성기 · 검증기 · 판정기의 출력 계약은 모두 JSON 객체 하나라 JSON 모드로 부른다.
+    호출을 여러 개 함께 보내 속도 제한(429)에 닿을 수 있어 다시 시도를 넉넉히 둔다.
     """
     load_dotenv(storage.PACKAGE.parent / ".env")
-    with openai.OpenAI(max_retries=3) as client:
+    with openai.OpenAI(max_retries=8) as client:
         def call(model, reasoning_effort, messages):
-            response = client.chat.completions.create(model=model, reasoning_effort=reasoning_effort, messages=messages)
+            response = client.chat.completions.create(model=model, reasoning_effort=reasoning_effort, messages=messages,
+                                                      response_format={"type": "json_object"})
             return {"model": response.model, "text": response.choices[0].message.content or "",
                     "input_tokens": response.usage.prompt_tokens, "output_tokens": response.usage.completion_tokens}
         yield call
@@ -96,7 +99,7 @@ def _audit(args):
 
 def _release(args):
     runs = [tuple(run.split(":", 1)) for run in args.run]
-    return validation.release(args.topic, args.version, runs, args.confirmations)
+    return validation.release(args.topic, args.version, runs)
 
 
 def _report(args):
@@ -191,7 +194,6 @@ def _record_commands(commands):
     command.add_argument("--topic", choices=TOPICS, required=True)
     command.add_argument("--version", required=True)
     command.add_argument("--run", action="append", required=True, metavar="METHOD:RUN_ID")
-    command.add_argument("--confirmations", help="사람이 held 항목을 확인한 JSONL")
     command.set_defaults(handler=_release)
 
     command = commands.add_parser("report", help="A · B · C 비교 보고서 (API 호출 없음)")

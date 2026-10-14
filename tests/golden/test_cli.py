@@ -307,7 +307,9 @@ def test_api_client_sends_the_effort_and_returns_the_reported_model_text_and_tok
             opened.append("open")
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
-        def create(self, model, reasoning_effort, messages):
+        def create(self, model, reasoning_effort, messages, response_format):
+            # 출력 계약이 JSON 객체 하나라, JSON 모드가 빠지면 형식만 틀린 출력이 거절로 쌓인다.
+            assert response_format == {"type": "json_object"}
             opened.append(reasoning_effort)
             return SimpleNamespace(model=f"{model}-2026-10-01", choices=[SimpleNamespace(message=SimpleNamespace(content=None))],
                                    usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3))
