@@ -4,8 +4,8 @@
 ③ 검증 파이프라인에 속하고 담당자도 같지만, `rag/validation/validation.py` 와는 일부러 분리했습니다
 (`CLAUDE.md` · `AGENTS.md` 4절).
 지금은 항목 스키마, 주제별 저장 규약, run·버전·상태 모델, 출력 경로 보호,
-v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C 후보 생성, 독립 검증 · 난도 판정 · 출시를 담습니다.
-자기 개선(실패 기록)과 실행기는 이후 단계에서 붙습니다.
+v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C 후보 생성, 독립 검증 · 난도 판정 · 출시,
+A 만의 자기 개선(실패 기록과 round)을 담습니다. 실행기 · CLI · 보고서는 이후 단계에서 붙습니다.
 
 - `rag/` 에서 아무것도 import 하지 않고, `rag/`·`artifacts/`·`data/`·`eval/` 에 쓰지 않습니다.
 - 표준 라이브러리와, numeric 검사의 형태소 분석에 `kiwipiepy` 를 씁니다 (이미 `requirements.txt` 에 있어 변경 없음).
@@ -22,6 +22,7 @@ v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C
 | `plan.py` | 분포 계획: 주제별 개수 · 문서 범위 · 근거 묶음을 고정한 파일 (`make_plan`, `load_plan`) |
 | `generation.py` | 후보 생성: A · B (`generate`), C 가져오기 (`import_c`), 주제 구조 검사 (`check_structure`) |
 | `validation.py` | 독립 검증 (`validate`), 난도 판정 (`difficulty`), 출시 (`release`) |
+| `improvement.py` | A 의 자기 개선: round 반복 (`improve`), 실패 기록 (`record_failures`, `write_memory`), 관련 실패 찾기 (`related_failures`) |
 | `configs/` | 설정 파일. `topics/{topic}.json` 은 주제 명세입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
 | `prompts/` | 생성 프롬프트. `A/{topic}.txt` 는 A 의 주제 전용, `B.txt` 는 B 의 고정 프롬프트입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
 | `outputs/` | 모든 출력 (git 에서 제외, `.gitignore`) |
@@ -90,7 +91,12 @@ golden_pipeline/outputs/
       rejected.jsonl                    rejected 항목, 그리고 항목이 되지 못한 생성 출력 {bundle_id, reason, raw}
       manifest.json                     설정·프롬프트 파일별 SHA-256, 코드 커밋, 개수, 생성 정보(generation)
       validation.json                   검증 기록: 검증기 버전, 난도 규칙, 호출, 상태 파일별 SHA-256 (run 마다 한 번)
-    failure_memory/{method}_{run_id}.jsonl   거절된 항목과 거절 이유
+    failure_memory/A_{run_id}.jsonl     A run 의 실패 코드 · 참조 · 예방 규칙 · 규칙 버전 (질문 · 답은 넣지 않음)
+    loops/{loop_id}/
+      start.json                        처음 받은 loop 설정 · 계획 id · 계획 SHA-256 · 통과 기준 (이어 돌 때 같아야 함)
+      calls.jsonl                       돌아온 생성 · 검증 호출마다 한 줄: 모델 · 토큰 · 비용 (끊긴 run 의 호출 포함)
+      r{n}-generator.json · r{n}-validator.json   round 의 run 설정 (남은 호출 수 · 예산)
+      report.json                       멈춘 이유, round 별 상태 · policy, 호출 · 비용, 목표 대비 모자란 수, 기준 해시
     releases/{version}/
       golden.jsonl                      released 항목
       manifest.json                     개수, golden.jsonl SHA-256, 원본 run 과 그 파일별 SHA-256, 사람 확인 기록 SHA-256, 코드 커밋
@@ -238,7 +244,7 @@ JSON 아님, 필드 불일치, 계획에 없는 묶음(C), 묶음에 없는 · �
 
 | 방식 | 입력 | 프롬프트 | 기록 |
 |---|---|---|---|
-| A (첫 생성) | `generate("A", topic, plan_id, run_id, config, client)` | `prompts/A/{topic}.txt` | 실패 기록을 읽지 않습니다 (자기 개선은 다음 단계) |
+| A (첫 생성) | `generate("A", topic, plan_id, run_id, config, client)` | `prompts/A/{topic}.txt` | 그대로 부르면 실패 기록을 읽지 않습니다. 자기 개선 round 는 `revision` 으로 예방 규칙을 붙입니다 (아래 자기 개선) |
 | B (고정 프롬프트) | `generate("B", ...)` | `prompts/B.txt` 하나 | 실패 기록을 읽지 않습니다. 같은 모델 · 계획 · 주제 명세를 받고 프롬프트만 고정 |
 | C (가져오기) | `import_c(topic, plan_id, run_id, exports, sidecar)` | 관측 불가 → `unobserved` | 사람이 웹 환경에서 받아 내보낸 JSONL 파일들과 관측 기록 |
 
@@ -270,6 +276,7 @@ run 매니페스트의 `generation`:
 | 모델 | `model_requested` (설정), `model_reported` (응답) | `model.observed_label` (관측값 또는 `unobserved`) |
 | 프롬프트 · 설정 | `prompt_file`, `prompt_sha256`, `run_config`, `run_config_sha256` | `observed`, `sidecar_sha256`, `exports` (파일별 SHA-256) |
 | `input_limits` | `{"max_context_chars": ...}` | sidecar 의 관측값 또는 `unobserved` |
+| `policy` | 자기 개선 round 의 예방 규칙 버전 · 실패 코드별 기록 · 붙인 글 SHA-256, 아니면 `null` | 없음 |
 | 호출 | `status`, `cost_usd`, `calls[]` (묶음, 응답 모델, 토큰) | 없음 (토큰 · 비용을 0 으로 채우지 않음) |
 
 LLM 출력은 같은 입력에도 달라질 수 있어 결정성을 주장하지 않습니다.
@@ -354,7 +361,78 @@ validate(topic, method, run_id, config_path, client)
 run 마다 한 번만 검증하며, 이미 검증한 run 은 호출 전에 막습니다.
 호출 수 한도와 예산은 후보를 시작하기 전에 보고, 닿으면 남은 후보를 검증하지 않은 채 `pending` 에 남깁니다
 (한 후보의 multi_hop 검사를 도중에 끊지 않음). 남은 후보를 이어서 검증하는 일은 실행기 단계에서 붙습니다.
-실패 기록(`failure_memory`)은 자기 개선 단계에서 채웁니다.
+실패 기록(`failure_memory`)은 아래 자기 개선이 채웁니다.
+
+## 자기 개선 (A 만)
+
+```python
+improve(topic, plan_id, loop_id, config_path, generator, validator)
+```
+
+A 를 round 마다 생성 → 독립 검증 → 실패 기록 순서로 돌립니다. round n 의 run 은 `{loop_id}-r{n}` 입니다.
+B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revision=...)` 는 거절합니다.
+
+1. 다시 부를 묶음: 계획의 주제 묶음 중 loop 의 앞 round 에서 `auto_validated` · `held` 가 되지 않은 묶음.
+   남은 묶음이 없으면 멈춥니다 (`no_open_bundles`).
+2. 관련 실패: 그 주제의 `failure_memory/A_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
+   코드마다 정해 둔 예방 규칙을 A 프롬프트 뒤에 `지난 실패에서 정한 예방 규칙` 으로 붙입니다.
+   다른 주제의 기록과, 실패한 후보의 질문 · 답은 붙이지 않습니다.
+3. 생성: 그 묶음만 부릅니다. 같은 묶음에서 거절된 앞 후보가 있으면 새 후보의 `parent_candidate_id` 가 그 id 이고,
+   새 후보는 새 `candidate_id` 를 받습니다. 앞 round 의 파일은 바꾸지 않습니다.
+   run 매니페스트의 `generation.prompt_sha256` (프롬프트 파일)과 `generation.policy`
+   (`version`, `loop_id`, `round`, `start.json` 의 `start_sha256`, 코드별 기록 `failures`, 붙인 글의 `prevention_sha256`)로
+   무엇을 보냈는지 남깁니다.
+4. 검증: 독립 검증과 같습니다. 기준은 바꾸지 않습니다.
+5. 실패 기록: `rejected.jsonl` 한 줄마다 항목 하나를 `failure_memory/A_{run_id}.jsonl` 에 씁니다 (`record_failures`).
+
+실패 기록 항목은 정확히 아래 필드이고, 고친 답은 넣을 수 없습니다.
+검증하지 않은 답이 다음 프롬프트에 사실로 들어가면 다음 후보가 오염되기 때문입니다.
+
+| 필드 | 값 |
+|---|---|
+| `entry_id` | `{run_id}:{rejected.jsonl 줄 번호}` |
+| `failure_code` | 거절 이유의 앞부분으로 정한 코드 (`FAILURE_CODES`). 코드가 없는 이유는 기록하지 않고 멈춥니다 |
+| `evidence` | 보존된 실패를 가리킴: `run` (`A/{run_id}`), `line`, `candidate_id` (항목이 되지 못한 출력이면 `null`), `bundle_id` |
+| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-1`). 글을 바꾸면 버전을 올립니다 |
+
+| 실패 코드 | 거절 이유 |
+|---|---|
+| `output_format` · `evidence_label` · `schema` | 생성 출력이 JSON · 필드 · 근거 라벨 · 스키마를 어김 |
+| `type_mismatch` · `evidence_owned` | 주제 구조 위반, 다른 주제가 가진 근거 묶음 |
+| `table_relation` · `missing_condition` · `duplicate` | 표 칸, 조건 · 예외 누락, 중복 |
+| `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
+
+실패 기록에 쓰는 곳은 `write_memory` 하나이고, 여기서 막습니다:
+필드가 다르거나, `PREVENTION_RULES` 에 없는 코드이거나, 규칙 글 · 버전이 그 코드의 것과 다르거나,
+`entry_id` · `evidence` · `failure_code` 가 그 run 의 `rejected.jsonl` 한 줄(과 그 거절 이유)에서 나온 값과 다른 항목.
+그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유(사람 확인 이유 포함)가 들어올 자리가 없습니다.
+출시본 글을 부분 문자열로 찾지는 않습니다. `JSON` 같은 짧은 출시본 답이 정해 둔 규칙 글에 들어 있어도 그 규칙은 기록돼야 하기 때문입니다.
+
+loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
+
+| 키 | 값 |
+|---|---|
+| `max_rounds` · `max_calls` | 최대 round 수, loop 전체(생성 + 검증)의 최대 호출 수 (1 이상의 정수) |
+| `budget_usd` | loop 전체 예산 (0 보다 큼) |
+| `generator` · `validator` | 각각 정확히 `model` · `usd_per_million_input_tokens` · `usd_per_million_output_tokens` |
+
+round 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정(`loops/{loop_id}/r{n}-*.json`)으로 돕니다.
+쓴 호출 · 비용은 호출이 돌아올 때마다 `calls.jsonl` 에 남기므로, 생성 · 검증이 도중에 끊겨도 이어 돌 때 그만큼 한도에서 빠집니다.
+멈춘 이유는 `max_rounds` · `call_cap` · `budget` · `no_open_bundles` 중 하나로 `report.json` 에 남습니다.
+생성이나 검증이 한도에 닿아 끝나지 않은 round 가 있으면 그 round 에서 멈추고, 검증 전에 한도에 닿은 round 는 `not_validated` 로 남습니다.
+
+멈춘 loop 를 같은 인자로 다시 부르면 이어 돕니다. 생성 run · `validation.json` · 실패 기록이 이미 있는 단계는 건너뛰므로
+끝난 round 를 다시 부르지 않고 같은 `candidate_id` 가 두 번 생기지 않습니다.
+loop 설정, 계획(id 와 SHA-256), 통과 기준(`thresholds`)은 처음 시작할 때 `start.json` 에 고정하고,
+round 마다와 `report.json` 을 쓰기 전에 지금 값과 맞춰 봅니다. 하나라도 다르면 바뀐 키를 밝히고 멈춥니다.
+이미 있는 `{loop_id}-r{n}` run 은 이 loop 가 만든 것일 때만 이어 씁니다: 매니페스트의 `generation.policy` 의 `loop_id` · `round` ·
+`start_sha256` 과 `generation.plan_id` · `plan_sha256` 이 이 loop 와 `start.json` 의 값과 같아야 합니다.
+따로 만든 run (`policy` 가 `null`)이나 다른 계획 · 다른 시작 기록의 run 이 그 이름에 있으면 다른 키를 밝히고 멈춥니다.
+`report.json` 이 있는 loop 는 다시 돌지 않습니다.
+
+`report.json` 은 목표(계획의 요청 개수)와 `auto_validated` 묶음 수, `held` 묶음 수, 모자란 수(`shortfall`)를 남깁니다.
+목표에 못 미쳐도 기준을 낮추지 않고 모자란 수만 보고합니다. 기준 해시(`thresholds`: 주제 명세 파일별 SHA-256,
+검증기 프롬프트 SHA-256, 검증기 버전, 난도 규칙)를 함께 남깁니다. 이 값은 `start.json` 에 고정한 값과 같습니다.
 
 ## 출시
 
