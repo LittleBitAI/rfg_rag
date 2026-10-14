@@ -135,6 +135,8 @@ def test_quantities_normalize_value_and_unit(text, expected):
     ("A안은 1억원, B안은 2억원", "A안 2억원, B안 1억원", False),
     ("B안 예산은 1억원이고 A안 예산은 2억원이다", "A안 2억원, B안 1억원", True),
     ("1차년도 2억원, 2차년도 1억원", "1차년도 1억원, 2차년도 2억원", False),
+    ("C안은 2억원, D안은 1억원", "A안 2억원, B안 1억원", None),
+    ("2억원, 1억원", "A안 2억원, B안 1억원", None),
 ])
 def test_same_answer_compares_after_value_and_unit_normalization(candidate, independent, same):
     assert same_answer(candidate, independent) is same
@@ -197,6 +199,9 @@ TABLE = {"question": "A안의 예산은?", "answer": "1억원", "evidence": ["E1
                  id="evidence-conflict"),
     pytest.param("numeric", NUMERIC, {"*": "검증기 출력이 깨졌습니다"}, "held", "검증기 출력 오류",
                  id="broken-validator-output"),
+    pytest.param("numeric", {**NUMERIC, "answer": "130,000,000원, 2억원(부가세 포함)"},
+                 {"*": verdict("사업 예산 130,000,000원, 예비비 2억원")}, "held", "대상 확인 불가",
+                 id="unattributed-values"),
 ])
 def test_each_check_sends_the_candidate_to_its_state(config, topic, row, verdicts, state, reason):
     generate("A", topic, "p1", "a1", config, Generator(row))

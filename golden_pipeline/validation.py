@@ -22,6 +22,8 @@ DIFFICULTY_RULE = (
 INTERROGATIVES = ("얼마", "몇", "무엇", "어디", "언제", "누구", "어느")
 VERDICT_FIELDS = ("answerable", "answer", "conditions", "conflict")
 CONFIRMATION_FIELDS = ("candidate_id", "reason")
+# 값은 독립 답과 같지만 어느 값이 어느 대상의 것인지 글로 확인하지 못한 답. 맞을 수도 있어 거절하지 않고 사람에게 넘긴다.
+UNATTRIBUTED = "대상 확인 불가: 값은 같지만 값마다 대상이 독립 답과 같은지 확인하지 못했습니다"
 # 천 · 만 · 억(NR) 은 수에 곱하는 단위다. 5만원 과 50,000원 은 같은 값이다.
 SCALES = {"십": 10, "백": 100, "천": 1000, "만": 10_000, "억": 10**8, "조": 10**12}
 CONTENT_TAGS = ("NNG", "NNP", "SL", "SN")
@@ -170,26 +172,38 @@ def facts(text):
 def same_answer(text, independent):
     """독립 답이 text 에 들어 있는지. 수 · 단위는 값과 그 대상으로 맞추고, 수가 없는 답은 글자로 맞춘다 (공백 · 쉼표 차이만 허용).
 
-    독립 답의 값마다 text 에 같은 값이 있어야 하고, 그 값의 대상이 독립 답에서 다른 값의 대상인 낱말이면 안 된다.
-    그래서 A안 1억원, B안 2억원 은 A안 2억원, B안 1억원 과 값은 같아도 다른 답이다.
+    True · False 이고, 값은 모두 있지만 어느 값이 어느 대상의 것인지 확인하지 못하면 None 이다 (사람이 볼 일).
+    그래서 A안 1억원, B안 2억원 은 A안 2억원, B안 1억원 과 값은 같아도 다른 답이고, 1억원, 2억원 은 확인하지 못한 답이다.
     """
     expected = facts(independent)
     if not expected:
         return _contains(_norm(text), _norm(independent))
     found = facts(text)
-    return all(
-        any(pair == other and not subject & _foreign(pair, expected) for other, subject in found)
-        for pair, _ in expected
-    )
+    results = [_attributed(fact, expected, found) for fact in expected]
+    if False in results:
+        return False
+    return None if None in results else True
 
 
-def _foreign(pair, expected):
-    """독립 답에서 pair 가 아닌 값의 대상에만 있는 낱말.
+def _attributed(fact, expected, found):
+    """독립 답의 값 하나가 text 에서 같은 대상에 붙어 있는지: True · False · None (확인하지 못함).
 
-    ponytail: 대상은 값 앞에서만 읽는다. 2억원(A안), 1억원(B안) 처럼 대상을 값 뒤에 쓴 답은 바뀐 답으로 읽힌다.
+    독립 답에 단위가 같은 값이 그 하나뿐이면 바뀔 상대가 없어 값만 본다. 여럿이면 그 값의 대상에만 있는 낱말(own)이
+    text 의 대상에 모두 있어야 하고, 다른 값의 대상에 있는 낱말(foreign)이 있으면 다른 대상의 값이다.
+    ponytail: 대상은 값 앞에서만 읽는다. 2억원(A안) 처럼 대상을 값 뒤에 쓴 답은 확인하지 못하거나 바뀐 답으로 읽힌다.
     """
-    own = set().union(*(subject for other, subject in expected if other == pair))
-    return set().union(*(subject for other, subject in expected if other != pair)) - own
+    pair, subject = fact
+    subjects = [other_subject for other, other_subject in found if other == pair]
+    if not subjects:
+        return False
+    rivals = [other for other in expected if other is not fact and other[0][1] == pair[1]]
+    if not rivals:
+        return True
+    own = subject - set().union(*(other_subject for _, other_subject in rivals))
+    foreign = set().union(*(other_subject for other, other_subject in rivals if other != pair)) - subject
+    if own and any(own <= other_subject and not other_subject & foreign for other_subject in subjects):
+        return True
+    return False if all(other_subject & foreign for other_subject in subjects) else None
 
 
 def difficulty(question, units, proven_multi_hop):
@@ -215,6 +229,8 @@ def _verdict(item, spec, units, ask, survivors):
     reason = next((reason for check in ANSWER_CHECKS if (reason := check(item, full))), None)
     if reason:
         return "rejected", reason
+    if same_answer(item["answer"], full["answer"]) is None:
+        return "held", f"{UNATTRIBUTED}: 독립 답 {full['answer']!r}"
     if item["primary_topic"] == "multi_hop":
         return _single_unit_verdict(item, units, full, ask)
     return "auto_validated", "자동 검증 통과"
@@ -241,7 +257,10 @@ def _single_unit_verdict(item, units, full, ask):
         single, error = ask(item["question"], plan._with_headers([unit], headers))
         if error:
             return "held", f"검증기 출력 오류 (근거 {unit['label']} 단독): {error}"
-        if single["answerable"] and same_answer(single["answer"], full["answer"]):
+        same = single["answerable"] and same_answer(single["answer"], full["answer"])
+        if same is None:
+            return "held", f"{UNATTRIBUTED} (근거 {unit['label']} 단독): 답 {single['answer']!r}"
+        if same:
             return "rejected", f"multi_hop 아님: 근거 {unit['label']} 하나로 답이 나옵니다"
     return "auto_validated", "자동 검증 통과: 근거 하나만으로는 답이 나오지 않습니다"
 
@@ -263,7 +282,10 @@ def _numeric_answer(item, full):
 
 
 def _same_as_independent(item, full):
-    return None if same_answer(item["answer"], full["answer"]) else f"독립 답과 다릅니다: 독립 답 {full['answer']!r}"
+    # 대상을 확인하지 못한 답(None)은 여기서 거절하지 않고, 다른 거절 검사를 마친 뒤 held 로 보낸다.
+    if same_answer(item["answer"], full["answer"]) is False:
+        return f"독립 답과 다릅니다: 독립 답 {full['answer']!r}"
+    return None
 
 
 def _conditions_stated(item, full):
@@ -273,7 +295,8 @@ def _conditions_stated(item, full):
 
 def _not_copied(item, full):
     """질문에 답이 이미 들어 있으면 복사형이다. 비교 질문이 선택지로 든 대상 이름 하나를 답하는 것은 예외다."""
-    if not same_answer(item["question"], full["answer"]):
+    # 질문에 값이 모두 있으면 대상을 확인하지 못했어도(None) 답을 내준 것이다.
+    if same_answer(item["question"], full["answer"]) is False:
         return None
     entities = item["structure"].get("entities", []) if item["primary_topic"] == "comparison" else []
     if _norm(full["answer"]) in {_norm(entity) for entity in entities}:
