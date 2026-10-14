@@ -253,6 +253,7 @@ def _candidate(run, candidate_id, row, bundle, spec):
         "structure": row["structure"],
         "generator_version": GENERATOR_VERSION,
         "validator_version": None,
+        "difficulty": None,
         "state": "candidate",
         "state_history": [],
     }

@@ -49,6 +49,7 @@ ITEM = {
     "generator_version": "gen-0.1",
     "validator_version": None,
     "prompt_version": "prompt-0.1",
+    "difficulty": None,
     "state": "candidate",
     "state_history": [],
 }

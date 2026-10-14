@@ -13,7 +13,8 @@ def read_jsonl(path):
 
 
 def validated(make_item, candidate_id, question, to, reason):
-    return transition(make_item(candidate_id=candidate_id, question=question), to, reason, validator_version="val-0.1")
+    item = make_item(candidate_id=candidate_id, question=question)
+    return transition(item, to, reason, validator_version="val-0.1", difficulty="easy")
 
 
 def run_items(make_item):
@@ -93,7 +94,7 @@ def test_release_refuses_items_not_released_or_not_in_catalog(outputs, make_item
 
 
 @pytest.mark.parametrize("field", [
-    "question", "answer", "method", "run_id", "evidence", "validator_version", "state_history",
+    "question", "answer", "method", "run_id", "evidence", "validator_version", "difficulty", "state_history",
 ])
 def test_release_refuses_content_that_differs_from_its_registered_run(outputs, make_item, field):
     # candidate_id 만 카탈로그와 맞추고 내용·출처를 바꿔 끼운 항목이
@@ -102,7 +103,7 @@ def test_release_refuses_content_that_differs_from_its_registered_run(outputs, m
     storage.write_run("numeric", "A", "r1", items)
     other = make_item(question="바꿔 끼운 질문", answer="바꿔 끼운 답", method="B", run_id="r9")
     other["evidence"][0]["chunk_id"] = "c-99"
-    other = transition(other, "auto_validated", "다른 검증 기록", validator_version="val-9")
+    other = transition(other, "auto_validated", "다른 검증 기록", validator_version="val-9", difficulty="hard")
     substituted = transition({**items[1], field: other[field]}, "released", "출시")
 
     with pytest.raises(storage.CatalogError, match="등록된 기록과 다릅니다"):

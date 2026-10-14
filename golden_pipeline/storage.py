@@ -74,9 +74,13 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
     return run_dir
 
 
+def run_path(topic, method, run_id):
+    return _child(_topic_dir(topic) / "runs" / method, run_id)
+
+
 def new_run_dir(topic, method, run_id):
     """새 run 이 쓸 디렉터리. run_id 가 경로 한 칸 이름이 아니거나 이미 쓴 run 이면 막는다."""
-    run_dir = _child(_topic_dir(topic) / "runs" / method, run_id)
+    run_dir = run_path(topic, method, run_id)
     used = run_dir.exists() or any(
         (entry["topic"], entry["method"], entry["run_id"]) == (topic, method, run_id) for entry in read_catalog()
     )
@@ -85,8 +89,61 @@ def new_run_dir(topic, method, run_id):
     return run_dir
 
 
-def write_release(topic, version, items):
-    """출시 상태 항목을 releases/{version}/golden.jsonl 과 출시 매니페스트로 쓴다."""
+def unvalidated_run(topic, method, run_id):
+    """검증할 run 의 디렉터리. 없는 run 이거나 이미 검증한 run 이면 막는다 (검증 결과를 덮어쓰지 않는다)."""
+    run_dir = run_path(topic, method, run_id)
+    if not (run_dir / "candidates.jsonl").exists():
+        raise FileNotFoundError(f"없는 run 입니다: {topic}/{method}/{run_id}")
+    if (run_dir / "validation.json").exists():
+        raise FileExistsError(f"이미 검증한 run 입니다: {topic}/{method}/{run_id}")
+    return run_dir
+
+
+def write_validation(topic, method, run_id, items, info):
+    """검증한 항목을 run 의 상태 파일에 쓰고 검증 기록(validation.json)을 남긴다.
+
+    생성 때 비워 둔 accepted.jsonl · review.jsonl 을 채우고, 거절 항목은 rejected.jsonl 뒤에 붙인다.
+    항목은 candidates.jsonl 의 기록에서 상태만 나아간 것이어야 한다. 파일별 SHA-256 은 출시 때 다시 확인한다.
+    """
+    run_dir = unvalidated_run(topic, method, run_id)
+    originals = {record["candidate_id"]: record for record in _read_jsonl(run_dir / "candidates.jsonl")}
+    for item in items:
+        validate_item(item)
+        if item["state"] == "candidate" or item["candidate_id"] not in originals:
+            raise ValueError(f"{item['candidate_id']} 는 {topic}/{method}/{run_id} 의 검증한 항목이 아닙니다")
+        _require_same_record(originals[item["candidate_id"]], item)
+    for name in ("accepted.jsonl", "review.jsonl"):
+        if _count_lines(run_dir / name):
+            raise FileExistsError(f"{name} 이 비어 있지 않습니다: {topic}/{method}/{run_id}")
+
+    for state, name in STATE_FILES.items():
+        mode = "a" if state == "rejected" else "w"
+        with guard(run_dir / name).open(mode, encoding="utf-8") as f:
+            f.writelines(json.dumps(item, ensure_ascii=False) + "\n" for item in items if item["state"] == state)
+    with guard(run_dir / "validation.json").open("x", encoding="utf-8") as f:
+        f.write(json.dumps({
+            **info,
+            "counts": {state: sum(item["state"] == state for item in items) for state in STATE_FILES},
+            "files": {name: _sha256(run_dir / name) for name in STATE_FILES.values()},
+        }, ensure_ascii=False, indent=2) + "\n")
+    return run_dir
+
+
+def read_validated(topic, method, run_id):
+    """검증한 run 의 (auto_validated 항목, held 항목). 검증 뒤 상태 파일이 바뀌었으면 막는다."""
+    run_dir = run_path(topic, method, run_id)
+    record = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))
+    changed = [name for name, sha in record["files"].items() if _sha256(run_dir / name) != sha]
+    if changed:
+        raise CatalogError(f"{topic}/{method}/{run_id} 의 {changed} 가 검증 기록(validation.json)과 다릅니다")
+    return _read_jsonl(run_dir / "accepted.jsonl"), _read_jsonl(run_dir / "review.jsonl")
+
+
+def write_release(topic, version, items, info=None):
+    """출시 상태 항목을 releases/{version}/golden.jsonl 과 출시 매니페스트로 쓴다.
+
+    매니페스트에는 원본 run 마다 그 run 파일들의 SHA-256 을, release 에는 출시를 만든 쪽의 기록(info)을 남긴다.
+    """
     for item in items:
         validate_item(item)
         if item["state"] != "released" or item["primary_topic"] != topic:
@@ -102,6 +159,7 @@ def write_release(topic, version, items):
 
     golden = release_dir / "golden.jsonl"
     _write_jsonl(golden, items)
+    runs = {(item["method"], item["run_id"]) for item in items}
     _write_json(release_dir / "manifest.json", {
         "version": version,
         "topic": topic,
@@ -109,7 +167,9 @@ def write_release(topic, version, items):
         "code_commit": _code_commit(),
         "count": len(items),
         "golden_sha256": _sha256(golden),
-        "runs": sorted({f"{item['method']}/{item['run_id']}" for item in items}),
+        "runs": [f"{method}/{run_id}" for method, run_id in sorted(runs)],
+        "sources": {f"{method}/{run_id}": _run_hashes(topic, method, run_id) for method, run_id in sorted(runs)},
+        "release": info,
     })
     return release_dir
 
@@ -170,17 +230,23 @@ def _require_same_record(original, item):
 
     질문·답·근거·방법·run 을 바꿔 끼우면 카탈로그의 근거 묶음 소유와 출시 매니페스트의 원본 run 이 거짓이 된다.
     """
-    progress = ("state", "state_history", "validator_version")
+    progress = ("state", "state_history", "validator_version", "difficulty")
     changed = [name for name in ITEM_FIELDS if name not in progress and item[name] != original[name]]
     history = original["state_history"]
     if item["state_history"][:len(history)] != history:
         changed.append("state_history")
-    if original["validator_version"] not in (None, item["validator_version"]):
-        changed.append("validator_version")
+    changed += [name for name in progress[2:] if original[name] not in (None, item[name])]
     if changed:
         raise CatalogError(
             f"{item['candidate_id']} 가 run {original['method']}/{original['run_id']} 에 등록된 기록과 다릅니다: {changed}"
         )
+
+
+def _run_hashes(topic, method, run_id):
+    """출시본의 원본 run 파일별 SHA-256. 검증 기록(validation.json)이 있으면 그것도 넣는다."""
+    run_dir = run_path(topic, method, run_id)
+    names = ("candidates.jsonl", *STATE_FILES.values(), "manifest.json", "validation.json")
+    return {name: _sha256(run_dir / name) for name in names if (run_dir / name).exists()}
 
 
 def _catalog_entry(item):
