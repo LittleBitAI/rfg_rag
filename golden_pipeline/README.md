@@ -482,7 +482,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `entry_id` | `{run_id}:{rejected.jsonl 줄 번호}` |
 | `failure_code` | 거절 이유의 앞부분으로 정한 코드 (`FAILURE_CODES`). 코드가 없는 이유는 기록하지 않고 멈춥니다 |
 | `evidence` | 보존된 실패를 가리킴: `run` (`A/{run_id}`), `line`, `candidate_id` (항목이 되지 못한 출력이면 `null`), `bundle_id` |
-| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-3`). 글을 바꾸면 버전을 올립니다 |
+| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-4`). 글을 바꾸면 버전을 올립니다 |
 
 | 실패 코드 | 거절 이유 |
 |---|---|

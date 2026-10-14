@@ -128,7 +128,8 @@ def check_structure(topic, spec, row, cited):
     """주제가 요구하는 구조가 출력에 있는지 본다. 어기면 이유를, 지키면 None 을 돌려준다."""
     structure = row["structure"]
     if set(structure) != set(spec["structure"]):
-        return f"structure 필드는 {sorted(spec['structure'])} 여야 합니다"
+        # 필드가 없는 주제(multi_hop)에 "필드는 [] 여야" 라고 하면 생성기가 고치지 못하고 필드를 채워 거듭 거절됐다.
+        return f"structure 필드는 {sorted(spec['structure'])} 여야 합니다" if spec["structure"] else "structure 는 빈 객체 {} 여야 합니다"
     texts = [unit["text"] for unit in cited]
     return CHECKS[topic](structure, row["answer"], cited, texts)
 

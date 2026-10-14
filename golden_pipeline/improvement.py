@@ -11,7 +11,7 @@ import threading
 
 from golden_pipeline import generation, plan, storage, validation
 
-PREVENTION_VERSION = "prevention-3"
+PREVENTION_VERSION = "prevention-4"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
 FAILURE_CODES = (
     ("JSON 이 아닙니다", "output_format"),
@@ -35,7 +35,7 @@ PREVENTION_RULES = {
     "output_format": "출력은 정해진 필드만 가진 JSON 객체 하나로 쓰고, 다른 글을 붙이지 않는다.",
     "evidence_label": "evidence 에는 사용자 메시지에 있는 서로 다른 근거 라벨만 넣는다.",
     "schema": "필드마다 정해진 형을 지키고 질문과 답을 비우지 않는다.",
-    "type_mismatch": "structure 는 주제가 요구하는 필드를 모두 갖고, 값은 근거에 적힌 그대로 쓴다.",
+    "type_mismatch": "structure 에는 주제 명세의 필드만 넣고 (필드가 없는 주제는 빈 객체 {}), 값은 근거에 적힌 그대로 쓴다.",
     "evidence_owned": "다른 주제의 질문이 되는 근거 조합은 피하고, 이 주제가 요구하는 근거로만 묻는다.",
     "table_relation": "답에는 행 이름과 열 이름이 만나는 칸의 값을 근거에 적힌 그대로 넣는다.",
     "missing_condition": "답 글에는 그 답을 제한하는 조건 · 예외 문구를 근거에 적힌 그대로 함께 쓴다. structure 의 값 · 단위에는 넣지 않는다.",

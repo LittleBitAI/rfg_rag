@@ -107,6 +107,12 @@ def test_a_table_row_cited_without_its_header_row_gets_the_header_row_as_evidenc
     assert item["evidence"] == [units[0]["ref"], units[1]["ref"]]
 
 
+def test_multi_hop_structure_with_fields_is_told_to_be_an_empty_object():
+    # 이 이유 글이 실패 기록 · 묶음별 지난 실패로 다음 round 에 간다. "필드는 [] 여야" 로는 생성기가 필드를 채운 채 120 묶음이 거듭 거절됐다.
+    row = {"answer": "5, 8", "structure": {"PER": "5", "DAR": "8"}}
+    assert check_structure("multi_hop", topic_spec("multi_hop")[0], row, []) == "structure 는 빈 객체 {} 여야 합니다"
+
+
 def unit(text, kind="char"):
     location = {"kind": "table", "row": 0} if kind == "table" else {"kind": "char"}
     return {"text": text, "ref": {"location": location}}
