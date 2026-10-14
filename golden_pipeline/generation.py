@@ -19,7 +19,7 @@ from golden_pipeline.schema import SchemaError, validate_item
 
 GENERATOR_VERSION = "generation-1"
 # 유료 호출 한도는 기본값을 두지 않는다. 설정 파일에 모두 적어야 run 이 시작된다.
-RUN_CONFIG = ("model", "max_calls", "budget_usd", "usd_per_million_input_tokens", "usd_per_million_output_tokens")
+RUN_CONFIG = ("model", "reasoning_effort", "max_calls", "budget_usd", "usd_per_million_input_tokens", "usd_per_million_output_tokens")
 ROW_FIELDS = ("question", "answer", "evidence", "structure", "secondary_tags")
 SIDECAR = ("model_label", "run_date", "provided_files", "tool_use", "input_limits")
 UNOBSERVED = "unobserved"
@@ -33,7 +33,7 @@ UNIT_TAGS = ("NR", "NNB", "NNG", "SW", "SL", "XSN")
 def generate(method, topic, plan_id, run_id, config_path, client, revision=None):
     """A 또는 B 로 계획의 근거 묶음마다 한 번 호출해 후보를 만든다.
 
-    client(model=..., messages=[...]) 는 {"model", "text", "input_tokens", "output_tokens"} 를 돌려준다.
+    client(model=..., reasoning_effort=..., messages=[...]) 는 {"model", "text", "input_tokens", "output_tokens"} 를 돌려준다.
     model 은 요청한 이름이 아니라 API 응답이 알려 준 이름이어야 한다.
     revision 은 A 의 자기 개선 round 가 준다: {"parents": {묶음 id: 이전 거절 후보 id 또는 None}, "prevention", "policy"}.
     그 묶음만 다시 부르고, 프롬프트 뒤에 예방 규칙 글(prevention)을 붙이며, policy 를 매니페스트에 남긴다.
@@ -123,7 +123,7 @@ def check_structure(topic, spec, row, cited):
     structure = row["structure"]
     if set(structure) != set(spec["structure"]):
         return f"structure 필드는 {sorted(spec['structure'])} 여야 합니다"
-    texts = [_norm(unit["text"]) for unit in cited]
+    texts = [unit["text"] for unit in cited]
     return CHECKS[topic](structure, row["answer"], cited, texts)
 
 
@@ -247,18 +247,23 @@ def _quoted(values, texts, label):
     """구조의 값은 근거에 적힌 그대로여야 한다 (공백·쉼표 차이만 허용)."""
     if not all(_is_text(value) for value in values):
         return f"{label}은 비어 있지 않은 문자열이어야 합니다"
-    missing = [value for value in values if not any(_contains(text, _norm(value)) for text in texts)]
+    missing = [value for value in values if not any(_contains(text, value) for text in texts)]
     return f"{label}이 근거에 없습니다: {missing}" if missing else None
 
 
 def _contains(text, quote):
-    """quote 가 text 에 있는지 본다. 숫자로 시작하거나 끝나는 quote 는 더 긴 수의 일부와 맞추지 않는다.
+    """quote 가 text 에 있는지 본다 (공백 · 쉼표 차이만 허용). 숫자로 시작하거나 끝나는 quote 는 더 긴 수의 일부와 맞추지 않는다.
 
-    쉼표를 지우고 견주므로 그냥 부분 문자열이면 30000000원 이 130000000원 안에서, 2개월 이 12개월 안에서 맞는다.
+    쉼표를 지우고 견주므로 그냥 부분 문자열이면 30,000,000원 이 130,000,000원 안에서, 2개월 이 12개월 안에서 맞는다.
+    수의 경계는 공백을 지우기 전의 글에서 본다. 띄어 쓴 두 수(목차의 13\\n 1.)를 지운 뒤 보면 131 로 이어져 맞지 않는다.
+    다만 줄바꿈 등으로 쉼표 앞뒤가 벌어진 세 자리 묶음(1,\\n300,000)은 먼저 붙여 한 수로 본다. 그러지 않으면 300,000 이 그 안에서 맞는다.
     """
-    head = r"(?<!\d)(?<!\d\.)" if quote[:1].isdigit() else ""
-    tail = r"(?!\.?\d)" if quote[-1:].isdigit() else ""
-    return re.search(head + re.escape(quote) + tail, text) is not None
+    quote = _norm(quote)
+    head = r"(?<!\d)(?<!\d,)(?<!\d\.)" if quote[:1].isdigit() else ""
+    tail = r"(?!,?\.?\d)" if quote[-1:].isdigit() else ""
+    body = r"[\s,]*".join(map(re.escape, quote))
+    text = re.sub(r"(?<=\d)\s*,\s*(?=\d{3}(?!\d))", ",", unicodedata.normalize("NFC", text))
+    return re.search(head + body + tail, text) is not None
 
 
 def _candidate(run, candidate_id, row, bundle, spec, parent=None):
@@ -326,7 +331,7 @@ def _call_all(client, config, instructions, bundles):
         if stop:
             return calls, outputs, stop
         messages = [{"role": "system", "content": instructions}, {"role": "user", "content": bundle["context"]}]
-        response = client(model=config["model"], messages=messages)
+        response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
         calls.append({
             "bundle_id": bundle["bundle_id"],
             "model": response["model"],
@@ -356,13 +361,14 @@ def _cost(config, calls):
 
 
 def _run_config(path):
-    """모델·호출 수 한도·예산·단가가 모두 적힌 설정만 받는다. 빠진 값을 기본값으로 채우지 않는다."""
+    """모델·추론 강도·호출 수 한도·예산·단가가 모두 적힌 설정만 받는다. 빠진 값을 기본값으로 채우지 않는다."""
     config = storage._read_json(path)
     if not isinstance(config, dict) or set(config) != set(RUN_CONFIG):
         raise ValueError(f"run 설정은 정확히 {RUN_CONFIG} 를 가져야 합니다: {path}")
-    numbers = [config[name] for name in RUN_CONFIG[1:]]
-    if not _is_text(config["model"]) or not all(_is_number(n) and n >= 0 for n in numbers):
-        raise ValueError(f"model 은 문자열, 한도·단가는 0 이상의 수여야 합니다: {path}")
+    numbers = [config[name] for name in RUN_CONFIG[2:]]
+    texts = [config["model"], config["reasoning_effort"]]
+    if not all(map(_is_text, texts)) or not all(_is_number(n) and n >= 0 for n in numbers):
+        raise ValueError(f"model · reasoning_effort 는 문자열, 한도·단가는 0 이상의 수여야 합니다: {path}")
     if not isinstance(config["max_calls"], int) or config["max_calls"] < 1 or config["budget_usd"] <= 0:
         raise ValueError(f"max_calls 는 1 이상의 정수, budget_usd 는 0 보다 커야 합니다: {path}")
     return config, storage._sha256(path)

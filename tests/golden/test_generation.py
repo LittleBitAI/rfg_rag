@@ -10,7 +10,7 @@ from golden_pipeline.plan import load_plan, make_plan, topic_spec
 DOC_1 = "1" * 64
 REPORTED = "gpt-test-2026-10-01"
 CONFIG = {
-    "model": "gpt-test", "max_calls": 10, "budget_usd": 1.0,
+    "model": "gpt-test", "reasoning_effort": "low", "max_calls": 10, "budget_usd": 1.0,
     "usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0,
 }
 NUMERIC = {
@@ -26,8 +26,8 @@ class Client:
         self.replies = [json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else r for r in replies]
         self.requests = []
 
-    def __call__(self, model, messages):
-        self.requests.append({"model": model, "messages": messages})
+    def __call__(self, model, reasoning_effort, messages):
+        self.requests.append({"model": model, "reasoning_effort": reasoning_effort, "messages": messages})
         return {"model": REPORTED, "text": self.replies.pop(0), "input_tokens": 1000, "output_tokens": 200}
 
 
@@ -139,6 +139,13 @@ def test_numeric_pair_must_be_the_whole_expression_in_evidence(value, unit_name,
     ("condition", {"condition": "우편 접수는 받지 않는다"}, [unit("단, 우편 접수는 받지 않는다.")], True),
     ("condition", {"condition": "방문 접수만 받는다"}, [unit("단, 우편 접수는 받지 않는다.")], False),
     ("condition", {"condition": "1년 이내"}, [unit("계약 종료 후 11년 이내로 한다.")], False),
+    # 띄어 쓴 두 수는 다른 수다. 공백을 지운 뒤 경계를 보면 앞 줄 끝의 13 과 이어진 131 로 읽어 거절한다.
+    ("condition", {"condition": "1. 입찰참가자격 13"}, [unit("Ⅲ. 입찰 안내사항 13\n 1. 입찰참가자격 13")], True),
+    # 줄바꿈으로 쉼표 뒤가 벌어진 세 자리 묶음은 한 수다. 앞뒤 어느 쪽에서도 그 일부와 맞추지 않는다.
+    ("condition", {"condition": "300,000원 이하"}, [unit("1,\n300,000원 이하")], False),
+    ("condition", {"condition": "최대 1,300"}, [unit("최대 1,300,\n000원")], False),
+    # 세 자리 묶음이 아닌 쉼표 뒤는 나열이다.
+    ("condition", {"condition": "2차 평가"}, [unit("1, 2차 평가")], True),
     ("multi_hop", {}, [unit("가"), unit("나")], True),
     ("multi_hop", {}, [unit("가")], False),
     ("numeric", {"value": "5"}, [unit("5%")], False),

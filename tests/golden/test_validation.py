@@ -12,7 +12,7 @@ from golden_pipeline.validation import (
 )
 
 CONFIG = {
-    "model": "validator-test", "max_calls": 20, "budget_usd": 1.0,
+    "model": "validator-test", "reasoning_effort": "high", "max_calls": 20, "budget_usd": 1.0,
     "usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0,
 }
 NUMERIC = {
@@ -36,7 +36,7 @@ class Generator:
     def __init__(self, *rows):
         self.rows = list(rows)
 
-    def __call__(self, model, messages):
+    def __call__(self, model, reasoning_effort, messages):
         text = json.dumps(self.rows.pop(0), ensure_ascii=False)
         return {"model": "generator-test", "text": text, "input_tokens": 10, "output_tokens": 10}
 
@@ -48,7 +48,7 @@ class Validator:
         self.verdicts = verdicts
         self.requests = []
 
-    def __call__(self, model, messages):
+    def __call__(self, model, reasoning_effort, messages):
         self.requests.append(messages)
         reply = self.verdicts.get(self.labels(messages), self.verdicts.get("*"))
         return {"model": "validator-test", "text": json.dumps(reply, ensure_ascii=False),

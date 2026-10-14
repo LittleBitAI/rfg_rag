@@ -34,7 +34,7 @@ SUBJECT_TAGS = CONTENT_TAGS + ("NNB",)
 def validate(topic, method, run_id, config_path, client):
     """run 의 후보마다 독립 검증기를 불러 auto_validated · held · rejected 로 나눠 쓴다. run 마다 한 번만 한다.
 
-    client 는 생성과 같은 계약이다: client(model=..., messages=[...]) -> {"model", "text", "input_tokens", "output_tokens"}.
+    client 는 생성과 같은 계약이다: client(model=..., reasoning_effort=..., messages=[...]) -> {"model", "text", "input_tokens", "output_tokens"}.
     """
     run_dir = storage.unvalidated_run(topic, method, run_id)
     candidates = storage._read_jsonl(run_dir / "candidates.jsonl")
@@ -226,7 +226,7 @@ def same_answer(text, independent):
     """
     expected = facts(independent)
     if not expected:
-        return _contains(_norm(text), _norm(independent))
+        return _contains(text, independent)
     found = facts(text)
     return _combined([_attributed(fact, expected, found) for fact in expected])
 
@@ -460,7 +460,7 @@ def _cell(units, row, column):
 
 
 def _states(answer, phrase):
-    return _contains(_norm(answer), _norm(phrase))
+    return _contains(answer, phrase)
 
 
 def _scale(tokens, i):
@@ -525,7 +525,7 @@ def _asker(client, config, instructions, calls):
     def ask(question, units):
         content = json.dumps(validator_input(question, units), ensure_ascii=False)
         messages = [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
-        response = client(model=config["model"], messages=messages)
+        response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
         calls.append({
             "question": question,
             "labels": [unit["label"] for unit in units],

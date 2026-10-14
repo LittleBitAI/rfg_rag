@@ -14,7 +14,8 @@ from golden_pipeline.validation import release, validate
 PRICED = {"usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0}
 LOOP = {
     "max_rounds": 3, "max_calls": 50, "budget_usd": 1.0,
-    "generator": {"model": "generator-test", **PRICED}, "validator": {"model": "validator-test", **PRICED},
+    "generator": {"model": "generator-test", "reasoning_effort": "low", **PRICED},
+    "validator": {"model": "validator-test", "reasoning_effort": "high", **PRICED},
 }
 BUDGET = {"question": "사업 예산은 얼마인가?", "answer": "130,000,000원(부가세 포함)", "evidence": ["E1"],
           "structure": {"value": "130,000,000", "unit": "원"}, "secondary_tags": []}
@@ -37,7 +38,7 @@ class Generator:
     def __init__(self):
         self.requests = []
 
-    def __call__(self, model, messages):
+    def __call__(self, model, reasoning_effort, messages):
         self.requests.append(messages)
         system, context = messages[0]["content"], messages[1]["content"]
         if "130,000,000원" in context:
@@ -57,7 +58,7 @@ class Validator:
         self.crash_on = crash_on
         self.verdicts = {**VERDICTS, **{(label,): {**VERDICTS[(label,)], **o} for label, o in overrides.items()}}
 
-    def __call__(self, model, messages):
+    def __call__(self, model, reasoning_effort, messages):
         self.calls += 1
         if self.calls == self.crash_on:
             raise ConnectionError("검증 도중 끊김")
@@ -105,10 +106,10 @@ def test_a_failed_candidate_stays_and_its_revision_gets_a_new_id_with_the_parent
     # 다시 만든 후보가 원래 후보를 덮어쓰면 무엇이 왜 거절됐는지가 사라진다.
     generator, frozen = Generator(), {}
 
-    def watching(model, messages):
+    def watching(model, reasoning_effort, messages):
         if "예방 규칙" in messages[0]["content"] and not frozen:
             frozen.update(storage.snapshot(run_dir(1)))
-        return generator(model, messages)
+        return generator(model, reasoning_effort, messages)
 
     improve("numeric", "p3", "l1", loop_config(), watching, Validator())
 
