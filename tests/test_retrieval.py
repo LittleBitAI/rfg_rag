@@ -77,7 +77,7 @@ def test_pack_keeps_first_chunk_over_budget():
 
 
 def test_pack_removes_near_duplicates_and_repeated_candidates():
-    index = make_index(["가 나 다 라 마", "가 나 다 라 바", "별도 근거", "가 나 다 라 마"], [5, 5, 2, 5], budget=7)
+    index = make_index(["가 나 다 라 마", "가 나 다 라 바", "별도 근거", "가 나 다 라 마"], [5, 5, 2, 5], budget=25)
     hits = index._pack([(0, 0.912345), (0, 0.9), (1, 0.8), (3, 0.75), (2, 0.7)])
     assert [hit["chunk_id"] for hit in hits] == ["c0", "c2"]
     assert hits[0]["score"] == 0.9123
