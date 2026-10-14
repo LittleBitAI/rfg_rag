@@ -30,14 +30,18 @@ RANGES = ("~", "∼", "〜")
 UNIT_TAGS = ("NR", "NNB", "NNG", "SW", "SL", "XSN")
 
 
-def generate(method, topic, plan_id, run_id, config_path, client):
+def generate(method, topic, plan_id, run_id, config_path, client, revision=None):
     """A 또는 B 로 계획의 근거 묶음마다 한 번 호출해 후보를 만든다.
 
     client(model=..., messages=[...]) 는 {"model", "text", "input_tokens", "output_tokens"} 를 돌려준다.
     model 은 요청한 이름이 아니라 API 응답이 알려 준 이름이어야 한다.
+    revision 은 A 의 자기 개선 round 가 준다: {"parents": {묶음 id: 이전 거절 후보 id 또는 None}, "prevention", "policy"}.
+    그 묶음만 다시 부르고, 프롬프트 뒤에 예방 규칙 글(prevention)을 붙이며, policy 를 매니페스트에 남긴다.
     """
     if method not in ("A", "B"):
         raise ValueError(f"generate 는 A · B 만 받습니다. C 는 import_c 를 씁니다: {method!r}")
+    if revision is not None and method != "A":
+        raise ValueError("실패 기록으로 고친 생성(revision)은 A 만 받습니다. B 는 고정 프롬프트입니다")
     config, config_sha = _run_config(config_path)
     plan, plan_sha, spec = _plan_for(plan_id, topic)
     # 저장할 수 없는 run 이면 돈을 쓰기 전에 멈춘다.
@@ -48,14 +52,20 @@ def generate(method, topic, plan_id, run_id, config_path, client):
         topic=topic, requires=spec["requires"], structure=json.dumps(spec["structure"], ensure_ascii=False),
     )
     prompt_sha = storage._sha256(prompt_path)
-    calls, outputs, status = _call_all(client, config, instructions, _bundles(plan, topic))
+    bundles, parents = _bundles(plan, topic), {}
+    if revision is not None:
+        instructions += revision["prevention"]
+        parents = revision["parents"]
+        bundles = [bundle for bundle in bundles if bundle["bundle_id"] in parents]
+    calls, outputs, status = _call_all(client, config, instructions, bundles)
 
     run = {"run_id": run_id, "method": method, "primary_topic": topic, "prompt_version": prompt_sha}
     results = []
     for n, (bundle, text) in enumerate(outputs, 1):
         row, reason = _parse(text, ROW_FIELDS)
         candidate_id = f"{topic}-{method}-{run_id}-{n:04d}"
-        results.append(_candidate(run, candidate_id, row, bundle, spec) if row else (None, reason))
+        parent = parents.get(bundle["bundle_id"])
+        results.append(_candidate(run, candidate_id, row, bundle, spec, parent) if row else (None, reason))
     sent = [bundle for bundle, _ in outputs]
     info = {
         **_plan_info(plan_id, plan, plan_sha, topic, sent),
@@ -66,6 +76,7 @@ def generate(method, topic, plan_id, run_id, config_path, client):
         "prompt_file": prompt_path.relative_to(storage.PROMPTS).as_posix(),
         "prompt_sha256": prompt_sha,
         "input_limits": {"max_context_chars": plan["max_context_chars"]},
+        "policy": revision["policy"] if revision else None,
         "status": status,
         "cost_usd": _cost(config, calls),
         "calls": calls,
@@ -250,10 +261,11 @@ def _contains(text, quote):
     return re.search(head + re.escape(quote) + tail, text) is not None
 
 
-def _candidate(run, candidate_id, row, bundle, spec):
+def _candidate(run, candidate_id, row, bundle, spec, parent=None):
     """출력 한 행을 candidate 항목으로 만든다. 어기면 (None, 이유) 를 돌려준다.
 
     run 은 run 전체에 같은 값 {run_id, method, primary_topic, prompt_version} 이다.
+    parent 는 같은 묶음에서 거절된 이전 후보 id 다. 다시 만든 후보는 새 id 를 받고, 원래 후보는 그 run 에 그대로 남는다.
     """
     units = {unit["label"]: unit for unit in bundle["units"]}
     labels = row["evidence"]
@@ -264,7 +276,7 @@ def _candidate(run, candidate_id, row, bundle, spec):
     item = {
         **run,
         "candidate_id": candidate_id,
-        "parent_candidate_id": None,
+        "parent_candidate_id": parent,
         "secondary_tags": row["secondary_tags"],
         "question": row["question"],
         "answer": row["answer"],

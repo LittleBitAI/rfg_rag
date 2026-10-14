@@ -29,7 +29,7 @@ def ids(path):
     return [item["candidate_id"] for item in read_jsonl(path)]
 
 
-def test_run_writes_state_files_failure_memory_and_manifest(outputs, make_item):
+def test_run_writes_state_files_and_manifest_but_no_failure_memory(outputs, make_item):
     (outputs / "configs" / "run.yaml").write_text("seed: 1\n", encoding="utf-8")
     (outputs / "prompts" / "numeric.txt").write_text("질문을 만드세요\n", encoding="utf-8")
 
@@ -40,8 +40,8 @@ def test_run_writes_state_files_failure_memory_and_manifest(outputs, make_item):
     assert ids(run_dir / "accepted.jsonl") == ["n-2"]
     assert ids(run_dir / "review.jsonl") == ["n-3"]
     assert ids(run_dir / "rejected.jsonl") == ["n-4"]
-    memory = read_jsonl(outputs / "outputs/goldens/numeric/failure_memory/A_r1.jsonl")
-    assert [(m["candidate_id"], m["reason"]) for m in memory] == [("n-4", "근거와 답 불일치")]
+    # 실패 기록은 자기 개선(improvement.record_failures)만 쓴다. 여기서 쓰면 거절 항목의 질문 · 답이 그대로 들어갔다.
+    assert not (outputs / "outputs/goldens/numeric/failure_memory").exists()
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()

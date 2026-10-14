@@ -45,7 +45,6 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
         validate_item(item)
         if (item["primary_topic"], item["method"], item["run_id"]) != (topic, method, run_id):
             raise ValueError(f"{item['candidate_id']} 는 {topic}/{method}/{run_id} 의 항목이 아닙니다")
-    topic_dir = _topic_dir(topic)
     run_dir = new_run_dir(topic, method, run_id)
     entries = [_catalog_entry(item) for item in items]
     _check_catalog(entries)
@@ -55,10 +54,6 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
     for state, name in STATE_FILES.items():
         _write_jsonl(run_dir / name, [item for item in items if item["state"] == state])
     _append_jsonl(run_dir / "rejected.jsonl", rejects)
-    memory_dir = topic_dir / "failure_memory"
-    memory_dir.mkdir(exist_ok=True)
-    rejected = [item for item in items if item["state"] == "rejected"]
-    _write_jsonl(memory_dir / f"{method}_{run_id}.jsonl", [_failure(item) for item in rejected])
     _write_json(run_dir / "manifest.json", {
         "run_id": run_id,
         "topic": topic,
@@ -256,18 +251,6 @@ def _catalog_entry(item):
         "evidence_group": evidence_group(item),
         "method": item["method"],
         "run_id": item["run_id"],
-    }
-
-
-def _failure(item):
-    return {
-        "candidate_id": item["candidate_id"],
-        "parent_candidate_id": item["parent_candidate_id"],
-        "run_id": item["run_id"],
-        "method": item["method"],
-        "question": item["question"],
-        "answer": item["answer"],
-        "reason": item["state_history"][-1]["reason"],
     }
 
 
