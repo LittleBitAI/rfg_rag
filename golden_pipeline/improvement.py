@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 
 from golden_pipeline import generation, plan, storage, validation
-from golden_pipeline.generation import _norm
 
 PREVENTION_VERSION = "prevention-1"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
@@ -60,14 +59,18 @@ def improve(topic, plan_id, loop_id, config_path, generator, validator):
 
     round n 의 run_id 는 {loop_id}-r{n} 이다. 도중에 멈춘 loop 를 같은 인자로 다시 부르면
     끝난 round 는 건너뛰고, 끝나지 않은 round 는 남은 단계(생성 · 검증 · 실패 기록)부터 잇는다.
+    설정 · 계획 · 통과 기준은 loop 를 시작할 때 고정하고, round 마다와 report 직전에 그대로인지 본다.
     """
     config = _loop_config(config_path)
-    loop_dir = _loop_dir(topic, loop_id, config_path)
+    loop_dir = _loop_dir(topic, loop_id)
+    clients = (_counted(generator, loop_dir, config["generator"]), _counted(validator, loop_dir, config["validator"]))
     stop = None
     for n in range(1, config["max_rounds"] + 1):
-        stop = _round(topic, plan_id, loop_id, n, config, (generator, validator))
+        _pin(loop_dir, plan_id, config)
+        stop = _round(topic, plan_id, loop_id, n, config, clients)
         if stop:
             break
+    _pin(loop_dir, plan_id, config)
     report = _report(topic, plan_id, loop_id, stop or "max_rounds")
     with storage.guard(loop_dir / "report.json").open("x", encoding="utf-8") as f:
         f.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
@@ -106,12 +109,16 @@ def failure_code(reason):
 
 
 def write_memory(topic, run_id, entries):
-    """실패 기록의 유일한 출구. 출시본의 질문 · 답 · 항목별 피드백과, 코드마다 정해 둔 예방 규칙이 아닌 글을 막는다."""
-    released = _released()
+    """실패 기록의 유일한 출구. 항목의 글은 코드마다 정해 둔 예방 규칙뿐이고, 나머지는 이 run 의 rejected.jsonl 한 줄을 가리키는 참조뿐이다.
+
+    그래서 출시본의 질문 · 답 · 항목별 피드백(전이 이유)이 들어올 자리가 없다. 평가 정답이 생성 쪽으로 새지 않는다.
+    출시본 글을 부분 문자열로 찾지 않는다. JSON 같은 짧은 출시본 답이 정해 둔 규칙 글에 들어 있어도 그 규칙은 막으면 안 되기 때문이다.
+    """
+    rows = storage._read_jsonl(storage.run_path(topic, "A", run_id) / "rejected.jsonl")
     for entry in entries:
         _check_shape(entry)
-        _refuse_released(entry, released)
         _check_rule(entry)
+        _check_reference(entry, run_id, rows)
     path = _memory_path(topic, run_id)
     path.parent.mkdir(exist_ok=True)
     storage._write_jsonl(path, entries)
@@ -215,16 +222,22 @@ def _limits(topic, loop_id, n, config, role):
     return path
 
 
+def _counted(client, loop_dir, priced):
+    """돌아온 호출마다 그 자리에서 calls.jsonl 에 남기는 client. 생성 · 검증이 도중에 끊겨도 쓴 호출 · 비용이 남는다."""
+    def call(model, messages):
+        response = client(model=model, messages=messages)
+        usage = {"model": response["model"], "input_tokens": response["input_tokens"],
+                 "output_tokens": response["output_tokens"]}
+        storage._append_jsonl(loop_dir / "calls.jsonl", [{**usage, "cost_usd": generation._cost(priced, [usage])}])
+        return response
+    return call
+
+
 def _spent(topic, loop_id):
-    """loop 의 round 들이 생성 · 검증에 쓴 호출 수와 비용. 파일에서 읽으므로 다시 이어도 같은 값이다."""
-    calls, cost = 0, 0.0
-    for run_dir in _rounds(topic, loop_id):
-        records = [_read_json(run_dir / "manifest.json")["generation"]]
-        if (run_dir / "validation.json").exists():
-            records.append(_read_json(run_dir / "validation.json"))
-        calls += sum(len(record["calls"]) for record in records)
-        cost += sum(record["cost_usd"] for record in records)
-    return calls, cost
+    """loop 가 생성 · 검증에 쓴 호출 수와 비용. 끊긴 run 의 호출까지 든 calls.jsonl 에서 읽는다."""
+    path = _loop_path(topic, loop_id) / "calls.jsonl"
+    records = storage._read_jsonl(path) if path.exists() else []
+    return len(records), sum(record["cost_usd"] for record in records)
 
 
 def _report(topic, plan_id, loop_id, stop):
@@ -276,18 +289,30 @@ def _loop_config(path):
     return config
 
 
-def _loop_dir(topic, loop_id, config_path):
-    """loop 기록 디렉터리. 끝난 loop 는 다시 돌지 않고, 이어 돌 때는 처음과 같은 설정만 받는다 (한도를 도중에 바꾸지 못하게)."""
+def _loop_dir(topic, loop_id):
+    """loop 기록 디렉터리. 끝난 loop 는 다시 돌지 않는다."""
     loop_dir = _loop_path(topic, loop_id)
     if (loop_dir / "report.json").exists():
         raise FileExistsError(f"이미 끝난 loop 입니다: {topic}/{loop_id}")
     loop_dir.mkdir(parents=True, exist_ok=True)
-    pinned, given = loop_dir / "config.json", Path(config_path).read_bytes()
-    if not pinned.exists():
-        storage.guard(pinned).write_bytes(given)
-    elif pinned.read_bytes() != given:
-        raise ValueError(f"loop {topic}/{loop_id} 를 시작할 때와 설정이 다릅니다")
     return loop_dir
+
+
+def _pin(loop_dir, plan_id, config):
+    """loop 를 시작할 때의 설정 · 계획 · 통과 기준을 start.json 에 고정하고, 그 뒤로는 지금 값이 같은지 본다.
+
+    한도 · 계획 · 기준이 round 사이에 바뀌면 한 loop 의 round 들이 서로 다른 조건으로 돌고, report 는 그것을 드러내지 못한다.
+    """
+    current = {"config": config, "plan_id": plan_id, "plan_sha256": plan.load_plan(plan_id)[1],
+               "thresholds": thresholds()}
+    path = loop_dir / "start.json"
+    if not path.exists():
+        storage._write_json(path, current)
+        return
+    pinned = _read_json(path)
+    changed = sorted(key for key in current if current[key] != pinned[key])
+    if changed:
+        raise ValueError(f"loop {loop_dir.name} 를 시작할 때와 다릅니다: {changed}")
 
 
 def _loop_path(topic, loop_id):
@@ -314,25 +339,15 @@ def _check_rule(entry):
         raise FailureMemoryError(f"{entry['entry_id']} 의 예방 규칙이 {PREVENTION_VERSION} 의 {code!r} 규칙과 다릅니다")
 
 
-def _released():
-    """모든 주제의 출시본에 든 (항목 id, 질문 · 답 · 전이 이유를 정규화한 글)."""
-    ids, texts = set(), set()
-    for path in storage.OUTPUTS.glob("goldens/*/releases/*/golden.jsonl"):
-        for item in storage._read_jsonl(path):
-            ids.add(item["candidate_id"])
-            reasons = [step["reason"] for step in item["state_history"]]
-            texts.update(_norm(text) for text in (item["question"], item["answer"], *reasons))
-    texts.discard("")
-    return ids, texts
-
-
-def _refuse_released(entry, released):
-    """출시본 항목의 질문 · 답 · 항목별 피드백(전이 이유)은 실패 기록으로 들어가지 못한다. 평가 정답이 생성 쪽으로 새기 때문이다."""
-    ids, texts = released
-    strings = [_norm(value) for part in (entry, entry["evidence"]) for value in part.values() if isinstance(value, str)]
-    leaked = entry["evidence"]["candidate_id"] in ids or any(text in value for text in texts for value in strings)
-    if leaked:
-        raise FailureMemoryError(f"{entry['entry_id']} 에 출시본 항목이나 그 질문 · 답 · 피드백이 들어 있습니다")
+def _check_reference(entry, run_id, rows):
+    """entry_id · evidence 는 이 run 의 rejected.jsonl 한 줄에서 나온 값과 꼭 같아야 한다. 참조 칸에 다른 글을 실어 보내지 못하게 한다."""
+    line = entry["evidence"]["line"]
+    if type(line) is not int or not 1 <= line <= len(rows):
+        raise FailureMemoryError(f"{entry['entry_id']} 의 evidence.line 이 A/{run_id} 의 rejected.jsonl 한 줄이 아닙니다")
+    row = rows[line - 1]
+    expected = {"run": f"A/{run_id}", "line": line, "candidate_id": row.get("candidate_id"), "bundle_id": row["bundle_id"]}
+    if entry["entry_id"] != f"{run_id}:{line}" or entry["evidence"] != expected:
+        raise FailureMemoryError(f"{entry['entry_id']} 의 참조가 A/{run_id} 의 rejected.jsonl {line} 번째 줄과 다릅니다")
 
 
 def _read_json(path):

@@ -1,5 +1,6 @@
 """A 의 자기 개선 loop. 생성 · 검증은 가짜 클라이언트로 돌린다. API 호출은 없다."""
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -146,8 +147,7 @@ def test_an_unverified_corrected_answer_cannot_be_written_as_a_fact(looped):
     ]
     for bad in corrected:
         with pytest.raises(FailureMemoryError):
-            write_memory("numeric", "x1", [bad])
-    assert not (storage.OUTPUTS / "goldens" / "numeric" / "failure_memory" / "A_x1.jsonl").exists()
+            write_memory("numeric", "l1-r1", [bad])
 
 
 def test_next_round_gets_rules_for_the_topics_failure_codes_and_records_its_policy(loop_config):
@@ -192,8 +192,6 @@ def test_resume_continues_after_the_last_completed_round_without_duplicate_ids(l
         improve("numeric", "p3", "l1", loop_config(), generator, Validator(crash_on=3))
     assert len(generator.requests) == 5
 
-    with pytest.raises(ValueError, match="설정이 다릅니다"):
-        improve("numeric", "p3", "l1", loop_config(max_calls=99), generator, Validator())
     report = improve("numeric", "p3", "l1", loop_config(), generator, Validator())
 
     # 끝난 round 1 과 생성까지 끝난 round 2 는 다시 부르지 않는다: 3 + 2 + 1 번.
@@ -203,6 +201,45 @@ def test_resume_continues_after_the_last_completed_round_without_duplicate_ids(l
     assert len(ids) == len(set(ids)) == 3
     with pytest.raises(FileExistsError):
         improve("numeric", "p3", "l1", loop_config(), generator, Validator())
+
+
+@pytest.mark.parametrize("change, changed", [
+    ("config", ["config"]),
+    ("plan", ["plan_id", "plan_sha256"]),
+    ("validator_prompt", ["thresholds"]),
+])
+def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, change, changed):
+    # 이어 돌면서 한도 · 계획 · 검증 기준이 바뀌면 한 loop 의 round 들이 서로 다른 조건으로 돌고 report 가 그것을 숨긴다.
+    with pytest.raises(ConnectionError):
+        improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=3))
+    config, plan_id = loop_config(), "p3"
+    if change == "config":
+        config = loop_config(max_calls=99)
+    elif change == "plan":
+        make_plan("p1", "ev1", {"numeric": 1}, 2000, package=evidence_run)
+        plan_id = "p1"
+    else:
+        prompt = storage.PROMPTS / "validator.txt"
+        prompt.write_text(prompt.read_text(encoding="utf-8") + "\n바뀐 기준", encoding="utf-8")
+
+    generator, validator = Generator(), Validator()
+    with pytest.raises(ValueError, match=re.escape(f"시작할 때와 다릅니다: {changed}")):
+        improve("numeric", plan_id, "l1", config, generator, validator)
+    assert not generator.requests and not validator.calls
+
+
+def test_calls_of_an_interrupted_validation_count_against_the_loop_limit(loop_config):
+    # 끊긴 검증의 호출을 세지 않으면 이어 돌 때 한도를 처음부터 다시 받아 max_calls 를 넘는다.
+    generator, interrupted = Generator(), Validator(crash_on=2)
+    with pytest.raises(ConnectionError):
+        improve("numeric", "p3", "l1", loop_config(max_calls=5), generator, interrupted)
+    resumed = Validator()
+    report = improve("numeric", "p3", "l1", loop_config(max_calls=5), generator, resumed)
+
+    answered = len(generator.requests) + (interrupted.calls - 1) + resumed.calls
+    assert (report["calls"], report["stop_reason"]) == (answered, "call_cap") and answered == 5
+    # 호출마다 입력 10 · 출력 10 토큰, 단가 1 · 4 USD / 100만 토큰.
+    assert report["cost_usd"] == pytest.approx(answered * 50 / 1_000_000)
 
 
 def test_b_and_c_code_paths_never_read_failure_memory(looped, monkeypatch, tmp_path):
@@ -259,20 +296,37 @@ def test_questions_answers_and_feedback_of_released_items_are_blocked_from_failu
     bond = next(item for item in read_jsonl(storage.OUTPUTS / "goldens/numeric/releases/v1/golden.jsonl")
                 if item["candidate_id"] != held["candidate_id"])
 
-    rule = PREVENTION_RULES["answer_mismatch"]
-    entry = {"entry_id": "x1:1", "failure_code": "answer_mismatch", "prevention_rule": rule,
+    # a1 의 거절은 JSON 이 아닌 표 묶음 출력 한 줄뿐이다.
+    [table] = read_jsonl(storage.run_path("numeric", "A", "a1") / "rejected.jsonl")
+    rule = PREVENTION_RULES["output_format"]
+    entry = {"entry_id": "a1:1", "failure_code": "output_format", "prevention_rule": rule,
              "rule_version": PREVENTION_VERSION,
-             "evidence": {"run": "A/x1", "line": 1, "candidate_id": None, "bundle_id": held["bundle_id"]}}
+             "evidence": {"run": "A/a1", "line": 1, "candidate_id": None, "bundle_id": table["bundle_id"]}}
     leaks = [
         {**entry, "prevention_rule": f"{rule} 예: {held['question']}"},
         {**entry, "prevention_rule": f"{rule} 예: {bond['answer']}"},
         {**entry, "prevention_rule": f"{rule} 사람 확인: 원문 표와 대조해 확인함"},
+        {**entry, "entry_id": f"a1:1 {bond['answer']}"},
         {**entry, "evidence": {**entry["evidence"], "candidate_id": held["candidate_id"]}},
+        {**entry, "evidence": {**entry["evidence"], "bundle_id": held["question"]}},
     ]
     for leak in leaks:
-        with pytest.raises(FailureMemoryError, match="출시본"):
-            write_memory("numeric", "x1", [leak])
-    assert write_memory("numeric", "x1", [entry]).exists()
+        with pytest.raises(FailureMemoryError):
+            write_memory("numeric", "a1", [leak])
+    assert write_memory("numeric", "a1", [entry]).exists()
+
+
+def test_a_fixed_rule_is_recorded_even_when_a_released_answer_appears_in_its_text(loop_config):
+    # 출시본 표 답 JSON 은 output_format 규칙 글에 들어 있다. 출시본 글을 부분 문자열로 막으면 정해 둔 규칙까지 막혀 loop 가 멈춘다.
+    released = storage.OUTPUTS / "goldens/table/releases/v1"
+    released.mkdir(parents=True)
+    (released / "golden.jsonl").write_text(json.dumps(
+        {"candidate_id": "table-A-t1-0001", "question": "산출물 형식은?", "answer": "JSON", "state_history": []},
+        ensure_ascii=False) + "\n", encoding="utf-8")
+
+    improve("numeric", "p3", "l1", loop_config(), Generator(), Validator())
+
+    assert [entry["failure_code"] for entry in memory(1)] == ["output_format", "answer_mismatch"]
 
 
 def test_a_topic_short_of_its_target_is_reported_with_thresholds_unchanged(looped):

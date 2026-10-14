@@ -93,7 +93,8 @@ golden_pipeline/outputs/
       validation.json                   검증 기록: 검증기 버전, 난도 규칙, 호출, 상태 파일별 SHA-256 (run 마다 한 번)
     failure_memory/A_{run_id}.jsonl     A run 의 실패 코드 · 참조 · 예방 규칙 · 규칙 버전 (질문 · 답은 넣지 않음)
     loops/{loop_id}/
-      config.json                       처음 받은 loop 설정 (이어 돌 때 같아야 함)
+      start.json                        처음 받은 loop 설정 · 계획 id · 계획 SHA-256 · 통과 기준 (이어 돌 때 같아야 함)
+      calls.jsonl                       돌아온 생성 · 검증 호출마다 한 줄: 모델 · 토큰 · 비용 (끊긴 run 의 호출 포함)
       r{n}-generator.json · r{n}-validator.json   round 의 run 설정 (남은 호출 수 · 예산)
       report.json                       멈춘 이유, round 별 상태 · policy, 호출 · 비용, 목표 대비 모자란 수, 기준 해시
     releases/{version}/
@@ -401,8 +402,9 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
 
 실패 기록에 쓰는 곳은 `write_memory` 하나이고, 여기서 막습니다:
-필드가 다르거나, 규칙 글 · 버전이 그 코드의 것과 다르거나, 어느 주제든 출시본(`releases/*/golden.jsonl`) 항목의 id 를 가리키거나,
-그 질문 · 답 · 전이 이유(사람 확인 이유 포함)를 담은 항목.
+필드가 다르거나, 규칙 글 · 버전이 그 코드의 것과 다르거나, `entry_id` · `evidence` 가 그 run 의 `rejected.jsonl` 한 줄에서 나온 값과 다른 항목.
+그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유(사람 확인 이유 포함)가 들어올 자리가 없습니다.
+출시본 글을 부분 문자열로 찾지는 않습니다. `JSON` 같은 짧은 출시본 답이 정해 둔 규칙 글에 들어 있어도 그 규칙은 기록돼야 하기 때문입니다.
 
 loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 
@@ -413,16 +415,19 @@ loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 | `generator` · `validator` | 각각 정확히 `model` · `usd_per_million_input_tokens` · `usd_per_million_output_tokens` |
 
 round 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정(`loops/{loop_id}/r{n}-*.json`)으로 돕니다.
+쓴 호출 · 비용은 호출이 돌아올 때마다 `calls.jsonl` 에 남기므로, 생성 · 검증이 도중에 끊겨도 이어 돌 때 그만큼 한도에서 빠집니다.
 멈춘 이유는 `max_rounds` · `call_cap` · `budget` · `no_open_bundles` 중 하나로 `report.json` 에 남습니다.
 생성이나 검증이 한도에 닿아 끝나지 않은 round 가 있으면 그 round 에서 멈추고, 검증 전에 한도에 닿은 round 는 `not_validated` 로 남습니다.
 
 멈춘 loop 를 같은 인자로 다시 부르면 이어 돕니다. 생성 run · `validation.json` · 실패 기록이 이미 있는 단계는 건너뛰므로
-끝난 round 를 다시 부르지 않고 같은 `candidate_id` 가 두 번 생기지 않습니다. 설정 파일이 처음과 다르면 멈추고,
+끝난 round 를 다시 부르지 않고 같은 `candidate_id` 가 두 번 생기지 않습니다.
+loop 설정, 계획(id 와 SHA-256), 통과 기준(`thresholds`)은 처음 시작할 때 `start.json` 에 고정하고,
+round 마다와 `report.json` 을 쓰기 전에 지금 값과 맞춰 봅니다. 하나라도 다르면 바뀐 키를 밝히고 멈춥니다.
 `report.json` 이 있는 loop 는 다시 돌지 않습니다.
 
 `report.json` 은 목표(계획의 요청 개수)와 `auto_validated` 묶음 수, `held` 묶음 수, 모자란 수(`shortfall`)를 남깁니다.
 목표에 못 미쳐도 기준을 낮추지 않고 모자란 수만 보고합니다. 기준 해시(`thresholds`: 주제 명세 파일별 SHA-256,
-검증기 프롬프트 SHA-256, 검증기 버전, 난도 규칙)를 함께 남겨 loop 가 기준을 바꾸지 않았음을 확인할 수 있습니다.
+검증기 프롬프트 SHA-256, 검증기 버전, 난도 규칙)를 함께 남깁니다. 이 값은 `start.json` 에 고정한 값과 같습니다.
 
 ## 출시
 
