@@ -178,16 +178,39 @@ def same_answer(text, independent, entities=None):
 
     True · False 이고, 값은 모두 있지만 어느 값이 어느 대상의 것인지 확인하지 못하면 None 이다 (사람이 볼 일).
     그래서 A안 1억원, B안 2억원 은 A안 2억원, B안 1억원 과 값은 같아도 다른 답이고, 1억원, 2억원 은 확인하지 못한 답이다.
-    entities (비교 항목의 대상 이름) 가 있으면 값마다 그 이름으로 대상을 맞춘다 (_anchored).
+    entities (비교 항목의 대상 이름) 가 있으면 _comparison_same 으로 맞춘다.
     """
+    if entities:
+        return _comparison_same(text, independent, entities)
     expected = facts(independent)
     if not expected:
         return _contains(_norm(text), _norm(independent))
     found = facts(text)
-    if entities:
-        results = [_anchored(fact, found, entities) for fact in expected]
-    else:
-        results = [_attributed(fact, expected, found) for fact in expected]
+    return _combined([_attributed(fact, expected, found) for fact in expected])
+
+
+def _comparison_same(text, independent, entities):
+    """비교 항목의 같은 답. True 는 주제 명세(대상마다 값을 밝힘)를 보였을 때만 준다.
+
+    글이 같거나, 독립 답이 entities 마다 꼭 한 번 그 이름 뒤에 값을 쓰고 그 값들이 모두 후보 답에서 같은 이름 뒤에 있을 때다.
+    값이 다른 이름 뒤에만 있거나 아예 없으면, 또는 글만 든 답이 독립 답을 담지도 않으면 False 다.
+    나머지(글만 든 답이 독립 답을 담기만 함, 독립 답이 한 대상만 밝힘)는 결론 방향을 글자로 알 수 없어 None (held) 이다.
+    A안이 B안보다 예산이 많다 는 B안 을 담지만 B안 을 고르지 않았다.
+    """
+    if _norm(text) == _norm(independent):
+        return True
+    expected = facts(independent)
+    if not expected:
+        return None if _contains(_norm(text), _norm(independent)) else False
+    found = facts(text)
+    results = [_anchored(fact, found, entities) for fact in expected]
+    owners = sorted(name for _, _, window in expected for name in _named(window, entities))
+    covered = owners == sorted(set(entities))
+    return _combined(results if covered else [*results, None])
+
+
+def _combined(results):
+    """값마다의 결과를 하나로: 하나라도 False 면 False, 아니면 하나라도 None 이면 None, 모두 True 면 True."""
     if False in results:
         return False
     return None if None in results else True

@@ -136,7 +136,19 @@ Before editing, on 6c334d7: (a) the reviewer's repro (comparison candidate 'A안
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Draft observation, not a verification. Before the edit, on c9ff991 (code identical to 6c334d7):
+- (b) `same_answer('B안이 2억원으로 더 적다', 'B안이 2억원으로 더 많다', ['A안','B안'])` returned True.
+- (c) `same_answer('B안은 예산이 많지 않다', 'B안', ['A안','B안'])` returned True.
+- `same_answer('A안이 B안보다 예산이 많다', 'B안', ['A안','B안'])` returned True.
+- (a) `test_comparison_values_must_belong_to_the_same_entity_as_in_the_independent_answer`, rewritten so each row carries its own validator answer, failed on the reviewer's row (validator `B안`) and on the `더 적다` row: both reached auto_validated where held was expected.
+
+After the fix (`_comparison_same`, in the commit that adds this result), comparison items return True only in two cases: the texts are equal, or the validator's answer names every entity exactly once before its own value and each of those values is anchored to the same name in the candidate.
+- (a) is held, (b) is None and (c) is None.
+- `same_answer('A안은 1억원, B안은 2억원', 'A안 1억원, B안 2억원', ['A안','B안'])` is True, and the swapped candidate is False.
+- Every row of `test_comparison_attribution_is_read_from_the_entity_names_for_every_value` keeps its result. So does every row of `test_same_answer_compares_after_value_and_unit_normalization` and `test_each_check_sends_the_candidate_to_its_state`, none of which pass entities.
+- tests/golden/test_validation.py: 55 passed.
+- The grep confirms that only the two answer-comparison sites pass entities: the None-to-held step in `_verdict` and `_same_as_independent`. `_single_unit_verdict` and `_not_copied` call without entities and are unchanged.
+- `validator.txt` gained one line asking the validator to give each compared entity its value, to lower the held rate. The held rate itself was not measured.
 
 ## Unresolved limits
 

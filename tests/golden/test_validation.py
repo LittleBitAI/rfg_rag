@@ -227,19 +227,25 @@ def test_each_check_sends_the_candidate_to_its_state(config, topic, row, verdict
     assert record["validator_version"] == VALIDATOR_VERSION and record["difficulty_rule"].startswith("difficulty-1")
 
 
-@pytest.mark.parametrize("answer, state", [
-    ("B안이 2억원으로 더 많다", "auto_validated"),
-    ("A안이 2억원으로 더 많다", "rejected"),
-    ("2억원인 안이 더 많다", "held"),
+@pytest.mark.parametrize("answer, independent, state", [
+    ("A안은 1억원, B안은 2억원으로 B안이 더 많다", "A안 1억원, B안 2억원", "auto_validated"),
+    ("A안은 2억원, B안은 1억원으로 A안이 더 많다", "A안 1억원, B안 2억원", "rejected"),
+    ("1억원, 2억원", "A안 1억원, B안 2억원", "held"),
+    ("A안이 2억원으로 더 많다", "B안이 2억원으로 더 많다", "rejected"),
+    ("B안이 2억원으로 더 적다", "B안이 2억원으로 더 많다", "held"),
+    ("A안이 B안보다 예산이 많다", "B안", "held"),
+    ("B안", "B안", "auto_validated"),
 ])
-def test_comparison_values_must_belong_to_the_same_entity_as_in_the_independent_answer(config, answer, state):
+def test_comparison_values_must_belong_to_the_same_entity_as_in_the_independent_answer(config, answer, independent,
+                                                                                       state):
     # 비교 후보는 값이 맞아도 그 값을 다른 대상에 붙이면 틀린 답이다. 대상은 구조의 entities 이름으로 읽는다.
+    # 같은 답은 독립 답이 대상마다 값을 밝혔을 때만 확인되고, 그 밖(글만 든 답, 한 대상만 밝힌 답)은 사람이 본다.
     make_plan("p3", "ev1", {"comparison": 1}, 2000, package=config.parent / "v11")
     row = {"question": "A안과 B안 중 예산이 더 많은 안은?", "answer": answer, "evidence": ["E3"],
            "structure": {"entities": ["A안", "B안"]}, "secondary_tags": []}
     generate("A", "comparison", "p3", "a1", config, Generator(row))
 
-    run_dir = validate("comparison", "A", "a1", config, Validator({"*": verdict("B안이 2억원으로 더 많다")}))
+    run_dir = validate("comparison", "A", "a1", config, Validator({"*": verdict(independent)}))
 
     [item] = validated(run_dir).values()
     assert item["state"] == state
