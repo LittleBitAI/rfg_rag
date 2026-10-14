@@ -1,7 +1,8 @@
 """A 의 자기 개선. round 마다 A 생성 → 독립 검증 → 거절을 실패 기록(failure_memory)으로 남기고, 다음 round 의 A 프롬프트에 그 예방 규칙을 붙인다.
 
 실패 기록에는 고친 답을 사실로 넣지 않는다. 검증하지 않은 답이 다음 후보에 사실처럼 들어가면 오염되기 때문이다.
-그래서 기록 항목은 실패 코드, 보존된 실패(rejected.jsonl 의 한 줄)를 가리키는 참조, 코드마다 정해 둔 예방 규칙과 그 버전만 갖는다.
+그래서 기록 항목은 실패 코드, 보존된 실패(rejected.jsonl 의 한 줄, 또는 사람이 검토해 틀렸다고 정한 항목)를 가리키는 참조,
+코드마다 정해 둔 예방 규칙과 그 버전만 갖는다.
 B · C 는 실패 기록을 읽지 않는다. 이 모듈은 A run 만 다룬다.
 기준(주제 명세, 검증기 프롬프트 · 버전, 난도 규칙)은 바꾸지 않는다. 목표에 못 미치면 모자란 수를 보고한다.
 """
@@ -11,7 +12,7 @@ import threading
 
 from golden_pipeline import generation, plan, storage, validation
 
-PREVENTION_VERSION = "prevention-4"
+PREVENTION_VERSION = "prevention-5"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
 FAILURE_CODES = (
     ("JSON 이 아닙니다", "output_format"),
@@ -46,6 +47,17 @@ PREVENTION_RULES = {
     "not_multi_hop": "근거 하나만으로는 답이 나오지 않고 둘 이상을 이어야 답이 나오는 질문을 만든다.",
     "validator_output": "질문은 근거만 읽고 짧은 답 하나로 답할 수 있게 묻는다.",
     "evidence_conflict": "근거끼리 값이 다르게 적힌 사실은 묻지 않는다.",
+    # 아래는 검증을 통과했지만 사람이 읽고 틀렸다고 정한 실패의 코드다 (record_review).
+    "misread_source": "근거가 말하는 대상 · 범위(예: '유역별', 기존 시스템, 평가 등급표)를 바꿔 읽어 묻지 않는다.",
+    "useless_answer": "답이 '방문 후 열람 가능' · '없음' 같은 안내 문구나 빈 값이 되는 질문은 만들지 않는다.",
+    "ordinal_reference": "대상을 순번('1행' · '번호 3' · '연번 2')이나 '둘 중' 으로 가리키지 말고 이름으로 가리킨다.",
+    "broken_table": "병합 셀 · 빈 칸 · 밀린 열이 있어 칸의 뜻이 하나로 정해지지 않는 표 행은 묻지 않는다.",
+    "answer_dump": "답에는 묻는 내용만 쓰고, 근거 원문이나 '(조건: …)' 같은 덧붙임을 붙이지 않는다.",
+    "invalid_comparison": "같은 종류의 대상끼리만 비교하고, 표 머리글 · 합계와 그 부분 · 서로 다른 속성(예: 인원과 기간)은 비교하지 않는다.",
+    "malformed_question": "질문은 끊기지 않은 완결된 한 문장으로 쓴다.",
+    "personal_info": "사람 이름 · 연락처 · 결재란을 묻지 않는다.",
+    "partial_all": "근거에 보이는 범위만으로 문서의 '모든 · 전체' 를 세거나 나열하지 않는다.",
+    "structure_question": "목차 번호 · 항목 위치 · 표 형식을 묻지 말고 내용을 묻는다.",
 }
 LOOP_CONFIG = ("max_rounds", "max_calls", "budget_usd", "generator", "validator")
 # 생성기 · 검증기마다 모델 · 추론 강도 · 단가. 호출 수 한도와 예산은 loop 전체의 값에서 남은 만큼을 round 마다 넘긴다.
@@ -102,6 +114,32 @@ def record_failures(topic, run_id):
     return path
 
 
+def record_review(topic, review_id, verdicts):
+    """사람이 읽고 틀렸다고 정한 항목을 failure_memory/review_{review_id}.jsonl 로 남긴다. verdicts 는 {candidate_id: 실패 코드}.
+
+    검증을 통과해도 사람이 읽어 확실히 틀린 항목은 다음 생성이 피해야 할 실패다. 기록에 넣지 않으면 생성기가 같은 실패를 되풀이한다.
+    record_failures 처럼 항목에는 코드 · 참조 · 예방 규칙만 남기고, 질문 · 답은 넣지 않는다.
+    """
+    registered = {entry["candidate_id"] for entry in storage.read_catalog() if entry["topic"] == topic}
+    unknown = sorted(set(verdicts) - registered)
+    if unknown:
+        raise ValueError(f"{topic} 카탈로그에 없는 항목입니다: {unknown}")
+    undefined = sorted(set(verdicts.values()) - set(PREVENTION_RULES))
+    if undefined:
+        raise ValueError(f"PREVENTION_RULES 에 없는 실패 코드입니다: {undefined}")
+    entries = [{
+        "entry_id": f"review-{review_id}:{n}",
+        "failure_code": code,
+        "evidence": {"review": review_id, "candidate_id": candidate_id},
+        "prevention_rule": PREVENTION_RULES[code],
+        "rule_version": PREVENTION_VERSION,
+    } for n, (candidate_id, code) in enumerate(sorted(verdicts.items()), 1)]
+    path = storage._child(storage._topic_dir(topic) / "failure_memory", f"review_{review_id}.jsonl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    storage._write_jsonl(path, entries)
+    return path
+
+
 def failure_code(reason):
     code = next((code for prefix, code in FAILURE_CODES if reason.startswith(prefix)), None)
     if code is None:
@@ -115,9 +153,10 @@ def _reason(row):
 
 
 def related_failures(topic):
-    """주제의 A 실패 기록을 실패 코드별로 묶은 {코드: [entry_id]}. 다른 주제와 B · C 의 기록은 없다."""
+    """주제의 A 실패 기록과 사람 검토 기록을 실패 코드별로 묶은 {코드: [entry_id]}. 다른 주제와 B · C 의 기록은 없다."""
     related = {}
-    for path in sorted((storage._topic_dir(topic) / "failure_memory").glob("A_*.jsonl")):
+    folder = storage._topic_dir(topic) / "failure_memory"
+    for path in sorted([*folder.glob("A_*.jsonl"), *folder.glob("review_*.jsonl")]):
         for entry in storage._read_jsonl(path):
             related.setdefault(entry["failure_code"], []).append(entry["entry_id"])
     return related

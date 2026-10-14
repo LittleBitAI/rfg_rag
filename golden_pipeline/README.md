@@ -43,6 +43,7 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `plan` | 주제 · 목표 개수를 정한 분포 계획 (아래 분포 계획) | 없음 |
 | `run` | A: 자기 개선 loop (생성 → 검증 → 실패 기록을 round 마다). B: 고정 프롬프트 생성만 | 유료 |
 | `import` | C 가져오기 | 없음 |
+| `review` | 사람이 읽고 틀렸다고 정한 항목을 실패 기록으로 (아래 자기 개선) | 없음 |
 | `audit` | B · C run 의 독립 검증. A 는 loop 안에서 검증합니다 | 유료 |
 | `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
 | `release` | 검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (아래 출시) | 유료 |
@@ -62,6 +63,8 @@ golden_pipeline\golden.cmd resume --topic numeric --method A --id a1
 golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls 40 --budget 1
 
 golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 400 --budget 2
+golden_pipeline\golden.cmd review --topic numeric --id rv1 --verdicts review_numeric.json
+golden_pipeline\golden.cmd plan p2 v11-20261014 --count numeric 20 --max-context-chars 4000 --skip-plan p1
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
 
@@ -141,6 +144,7 @@ golden_pipeline/outputs/
       validation.json                   검증 기록: 검증기 버전, 난도 규칙, 호출, 상태 파일별 SHA-256 (run 마다 한 번)
       validation-{n}.json               이어서 검증한 기록 (B · C 의 pending 후보, n = 2, 3, ...)
     failure_memory/A_{run_id}.jsonl     A run 의 실패 코드 · 참조 · 예방 규칙 · 규칙 버전 (질문 · 답은 넣지 않음)
+    failure_memory/review_{id}.jsonl    사람이 읽고 틀렸다고 정한 항목의 같은 기록 (record_review)
     loops/{loop_id}/
       start.json                        처음 받은 loop 설정 · 계획 id · 계획 SHA-256 · 통과 기준 (이어 돌 때 같아야 함)
       calls.jsonl                       돌아온 생성 · 검증 호출마다 한 줄: 모델 · 토큰 · 비용 (끊긴 run 의 호출 포함)
@@ -254,12 +258,17 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
    v11 레코드의 원본 파일 이름으로 찾고, 사업 이름은 파일 이름의 `_` 뒤에서 `[재공고]` 같은 앞 표시를 뺀 것입니다.
    원본 파일 이름 일부는 한글 자모가 풀린 NFD 라 두 이름 모두 NFC 로 맞춘 뒤 찾습니다.
 
+묶음은 늘 같은 순서로 고르므로, 같은 개수로 새 계획을 만들면 앞 계획의 묶음이 다시 뽑힙니다.
+새 근거로 재생성하려면 `--skip-plan <앞 계획 id>` 를 줍니다 (여러 번 줄 수 있음). 그 계획이 쓴 단위는 1번 다음에 바로 빼고,
+계획 파일의 `skipped_plans` 에 계획 id → SHA-256 을 남깁니다. 머리글 행을 앞 계획이 가졌던 표의 나머지 행도 3번 규칙대로 빠집니다.
+
 계획 파일(`outputs/plans/{plan_id}.json`)은 덮어쓰지 않으며, run 은 이 파일의 SHA-256 을 남깁니다.
 
 | 필드 | 값 |
 |---|---|
 | `evidence_run` · `v11_manifest_sha256` | 근거 어댑터 run 과 v11 `manifest.json` SHA-256 |
 | `topic_specs` | 주제 명세 파일별 SHA-256. 생성 때 명세가 바뀌었으면 멈춥니다 |
+| `skipped_plans` | 단위를 뺀 앞 계획 id → 그 계획 파일 SHA-256 (없으면 `{}`) |
 | `max_context_chars` | 묶음 컨텍스트 글자 수 한도 (A · B 의 입력 한도) |
 | `counts` · `planned` · `coverage` | 요청 개수, 실제 묶음 수, 주제별 문서 SHA → 묶음 수 |
 | `bundles[]` | `bundle_id`, `topic`, `doc_sha`, `doc` (`agency`, `title`), `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
@@ -460,7 +469,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 
 1. 다시 부를 묶음: 계획의 주제 묶음 중 loop 의 앞 round 에서 `auto_validated` 가 되지 않은 묶음.
    남은 묶음이 없으면 멈춥니다 (`no_open_bundles`).
-2. 관련 실패: 그 주제의 `failure_memory/A_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
+2. 관련 실패: 그 주제의 `failure_memory/A_*.jsonl` 과 `review_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
    코드마다 정해 둔 예방 규칙을 A 프롬프트 뒤에 `지난 실패에서 정한 예방 규칙` 으로 붙입니다.
    다른 주제의 기록과, 실패한 후보의 답은 붙이지 않습니다.
    묶음마다 그 묶음의 지난 실패(`bundle_notes`)도 user 메시지 뒤에 붙입니다. 최근 3개까지
@@ -482,7 +491,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `entry_id` | `{run_id}:{rejected.jsonl 줄 번호}` |
 | `failure_code` | 거절 이유의 앞부분으로 정한 코드 (`FAILURE_CODES`). 코드가 없는 이유는 기록하지 않고 멈춥니다 |
 | `evidence` | 보존된 실패를 가리킴: `run` (`A/{run_id}`), `line`, `candidate_id` (항목이 되지 못한 출력이면 `null`), `bundle_id` |
-| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-4`). 글을 바꾸면 버전을 올립니다 |
+| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-5`). 글을 바꾸면 버전을 올립니다 |
 
 | 실패 코드 | 거절 이유 |
 |---|---|
@@ -492,8 +501,20 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
 | `validator_output` · `evidence_conflict` | 검증기 · 판정기 출력이 두 번 다 계약을 어김, 근거끼리 값이 다름 |
 
-실패 기록에 쓰는 곳은 `record_failures` 하나이고, 항목을 밖에서 받지 않고 그 run 의 `rejected.jsonl` 줄에서만 만듭니다.
+A run 의 실패 기록은 `record_failures` 가 그 run 의 `rejected.jsonl` 줄에서만 만듭니다.
 그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유가 들어올 자리가 없습니다.
+
+검증을 통과했지만 사람이 읽어 확실히 틀린 항목도 다음 생성이 피해야 할 실패입니다.
+`review` 명령(`record_review`)이 `{candidate_id: 실패 코드}` JSON 을 받아 `failure_memory/review_{id}.jsonl` 에 같은 꼴로 씁니다.
+`entry_id` 는 `review-{id}:{n}`, `evidence` 는 `{review, candidate_id}` 이고, 질문 · 답은 넣지 않습니다.
+카탈로그에서 그 주제의 항목이 아니거나 `PREVENTION_RULES` 에 없는 코드면 쓰지 않고 멈춥니다. 같은 id 로 다시 쓰지 않습니다.
+
+| 검토 실패 코드 | 틀린 이유 |
+|---|---|
+| `misread_source` · `broken_table` | 근거의 대상 · 범위를 바꿔 읽음, 병합 셀 · 빈 칸 · 밀린 열로 칸의 뜻이 정해지지 않음 |
+| `useless_answer` · `answer_dump` | 답이 안내 문구 · 빈 값, 답에 근거 원문 · 덧붙임이 붙음 |
+| `ordinal_reference` · `malformed_question` · `structure_question` | 순번 · '둘 중' 으로 가리킴, 끊긴 질문, 목차 · 위치 · 형식을 물음 |
+| `invalid_comparison` · `partial_all` · `personal_info` | 다른 종류 · 머리글 · 합계와 부분을 비교함, 근거 범위만으로 '모든' 을 셈, 사람 이름 · 결재란 |
 
 loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 

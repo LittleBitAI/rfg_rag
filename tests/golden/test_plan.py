@@ -57,6 +57,16 @@ def test_documents_are_taken_in_turn_and_long_contexts_are_left_out(evidence_run
     assert unit_ids(plan) == ["u3", "u4", "u5"]  # 표 행 u4 · u5 에 머리글 행 u3 이 붙는다
 
 
+def test_units_of_a_skipped_plan_are_left_out_and_the_skip_is_recorded(evidence_run):
+    # 묶음은 늘 같은 순서로 골라, 빼지 않으면 재생성 계획이 앞 계획의 묶음을 그대로 다시 뽑는다.
+    first = make_plan("p1", "ev1", {"numeric": 1}, 2000, package=evidence_run)
+    make_plan("p2", "ev1", {"numeric": 1}, 2000, package=evidence_run, skip_plans=["p1"])
+    before, after = load_plan("p1")[0], load_plan("p2")[0]
+
+    assert unit_ids(after) and not set(unit_ids(after)) & set(unit_ids(before))
+    assert after["skipped_plans"] == {"p1": storage._sha256(first)}
+
+
 def table_row(row, text):
     location = {"kind": "table", "grid": "logical_restored", "row": row, "cell": None}
     return {"unit_id": f"r{row}", "ref": {"doc_sha": DOC_1, "element_id": "e-table", "location": location}, "text": text}

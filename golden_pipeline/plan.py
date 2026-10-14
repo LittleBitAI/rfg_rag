@@ -18,8 +18,11 @@ from golden_pipeline.schema import EVIDENCE_FIELDS, TOPICS
 TOC_LINE = re.compile(r"\S\s+\d{1,3}\s*$")
 
 
-def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE):
-    """근거 어댑터 run 의 eligible 단위로 주제별 근거 묶음을 골라 outputs/plans/{plan_id}.json 에 쓴다."""
+def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE, skip_plans=()):
+    """근거 어댑터 run 의 eligible 단위로 주제별 근거 묶음을 골라 outputs/plans/{plan_id}.json 에 쓴다.
+
+    skip_plans 의 계획이 쓴 단위는 넣지 않는다. 묶음은 늘 같은 순서로 고르므로, 빼지 않으면 앞 계획의 묶음이 다시 뽑힌다.
+    """
     unknown = sorted(set(counts) - set(TOPICS))
     if unknown or not all(isinstance(n, int) and n > 0 for n in counts.values()):
         raise ValueError(f"counts 는 주제 {TOPICS} 별 양의 정수여야 합니다: {counts}")
@@ -31,7 +34,9 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
-    bundles, used = [], set()
+    bundles = []
+    skipped = {skipped_id: load_plan(skipped_id) for skipped_id in skip_plans}
+    used = {unit["unit_id"] for planned, _ in skipped.values() for bundle in planned["bundles"] for unit in bundle["units"]}
     # 한 단위는 한 주제의 묶음에만 들어간다. 카탈로그가 같은 근거 묶음을 두 주제에 두지 않기 때문이다.
     for topic, (spec, _) in specs.items():
         chosen = _pick(_groups(topic, spec, units, used, max_context_chars, names), counts[topic])
@@ -43,6 +48,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         "created_at": storage._now(),
         "code_commit": storage._code_commit(),
         "evidence_run": evidence_run,
+        "skipped_plans": {skipped_id: sha for skipped_id, (_, sha) in skipped.items()},
         "v11_manifest_sha256": pinned["manifest.json"],
         "topic_specs": {topic: sha for topic, (_, sha) in specs.items()},
         "max_context_chars": max_context_chars,

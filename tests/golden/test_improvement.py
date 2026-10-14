@@ -171,6 +171,24 @@ def test_a_retried_bundle_is_told_its_own_failed_question_and_why_but_not_an_ans
     assert manifest(2)["policy"]["notes"][manifest(2)["bundle_ids"][0]] == budget[budget.index(note):]
 
 
+def test_a_reviewed_wrong_item_reaches_the_next_loops_first_round_without_its_question(looped, loop_config):
+    # 검증을 통과했어도 사람이 틀렸다고 정한 항목이 실패 기록에 없으면, 다음 생성이 같은 실패를 되풀이한다.
+    [accepted] = read_jsonl(run_dir(1) / "accepted.jsonl")
+    with pytest.raises(ValueError, match="카탈로그에 없는"):
+        improvement.record_review("numeric", "rv0", {"numeric-none": "ordinal_reference"})
+    with pytest.raises(ValueError, match="실패 코드"):
+        improvement.record_review("numeric", "rv0", {accepted["candidate_id"]: "made_up"})
+    path = improvement.record_review("numeric", "rv1", {accepted["candidate_id"]: "ordinal_reference"})
+    assert accepted["question"] not in path.read_text(encoding="utf-8")
+
+    generator = Generator()
+    improve("numeric", "p3", "l2", loop_config(), generator, Validator())
+
+    policy = json.loads((storage.run_path("numeric", "A", "l2-r1") / "manifest.json").read_text(encoding="utf-8"))
+    assert policy["generation"]["policy"]["failures"]["ordinal_reference"] == ["review-rv1:1"]
+    assert PREVENTION_RULES["ordinal_reference"] in generator.requests[0][0]["content"]
+
+
 @pytest.mark.parametrize("limits, reason, rounds", [
     ({}, "max_rounds", 3),
     ({"max_calls": 4}, "call_cap", 1),
