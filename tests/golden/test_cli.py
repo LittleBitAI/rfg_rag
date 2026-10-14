@@ -12,9 +12,10 @@ from golden_pipeline import cli, evidence, storage
 from golden_pipeline.improvement import PREVENTION_RULES
 from golden_pipeline.plan import load_plan
 
-GENERATOR = ["--model", "generator-test", "--price", "1", "4"]
-VALIDATOR = ["--model", "validator-test", "--price", "1", "4"]
-A_ONLY = ["--max-rounds", "3", "--validator-model", "validator-test", "--validator-price", "1", "4"]
+GENERATOR = ["--model", "generator-test", "--reasoning-effort", "low", "--price", "1", "4"]
+VALIDATOR = ["--model", "validator-test", "--reasoning-effort", "high", "--price", "1", "4"]
+A_ONLY = ["--max-rounds", "3", "--validator-model", "validator-test",
+          "--validator-reasoning-effort", "high", "--validator-price", "1", "4"]
 LIMITS = ["--max-calls", "50", "--budget", "1"]
 BUDGET = {"question": "사업 예산은 얼마인가?", "answer": "130,000,000원(부가세 포함)", "evidence": ["E1"],
           "structure": {"value": "130,000,000", "unit": "원"}, "secondary_tags": []}
@@ -41,9 +42,9 @@ class FakeAPI:
     def __init__(self, crash_on=None):
         self.requests, self.validations, self.crash_on = [], 0, crash_on
 
-    def __call__(self, model, messages):
+    def __call__(self, model, reasoning_effort, messages):
         system, user = messages[0]["content"], messages[1]["content"]
-        self.requests.append((model, user))
+        self.requests.append((model, reasoning_effort, user))
         if user.startswith("{"):
             text = self._verdict(json.loads(user))
         elif "130,000,000원" in user:
@@ -140,6 +141,13 @@ def test_a_b_and_c_run_through_audit_release_and_report(planned, api, tmp_path, 
     assert b["total_cost_usd"] == pytest.approx(5 * CALL_USD)
     # C: 계획에 없는 묶음 · JSON 아닌 줄은 항목이 되지 못해 유형 검사까지 가지 못한다.
     assert (c["outputs"], c["valid_rate"], c["type_compliance"], c["coverage"]) == (4, ratio(2, 4), ratio(2, 2), ratio(2, 3))
+    # 추론 강도는 역할마다 API 호출에 실리고, loop 시작 기록 · 생성 매니페스트 · 검증 기록에 남는다.
+    assert {(effort, user.startswith("{")) for _, effort, user in api.requests} == {("low", False), ("high", True)}
+    loop = json.loads((storage.OUTPUTS / "goldens/numeric/loops/l1/start.json").read_text(encoding="utf-8"))["config"]
+    assert (loop["generator"]["reasoning_effort"], loop["validator"]["reasoning_effort"]) == ("low", "high")
+    run = storage.OUTPUTS / "goldens/numeric/runs/A/l1-r1"
+    assert json.loads((run / "manifest.json").read_text(encoding="utf-8"))["generation"]["run_config"]["reasoning_effort"] == "low"
+    assert json.loads((run / "validation.json").read_text(encoding="utf-8"))["run_config"]["reasoning_effort"] == "high"
     table = capsys.readouterr().out
     assert "| 유효 문항률 | 2/6 = 33.3% | 1/3 = 33.3% | 2/4 = 50.0% |" in table
 
@@ -186,9 +194,11 @@ PAID = {
 }
 
 
-@pytest.mark.parametrize("command", PAID)
-@pytest.mark.parametrize("missing", ["--model", "--max-calls", "--budget"])
-def test_paid_commands_refuse_to_start_without_model_call_cap_and_budget(planned, api, command, missing):
+@pytest.mark.parametrize("command, missing", [
+    *[(command, flag) for command in PAID for flag in ("--model", "--reasoning-effort", "--max-calls", "--budget")],
+    ("run A", "--validator-reasoning-effort"),
+])
+def test_paid_commands_refuse_to_start_without_model_effort_call_cap_and_budget(planned, api, command, missing):
     # 값 하나라도 기본값으로 채우면 정하지 않은 모델 · 한도로 유료 호출이 나간다.
     args = PAID[command]
     at = args.index(missing)
@@ -210,7 +220,7 @@ def test_a_resumed_loop_continues_from_its_pinned_config_without_duplicate_ids(p
     loop = storage.OUTPUTS / "goldens/numeric/loops/l1"
     assert json.loads((loop / "report.json").read_text(encoding="utf-8"))["stop_reason"] == "max_rounds"
     # 끝난 round 1 과 생성까지 끝난 round 2 는 다시 생성하지 않는다: 3 + 2 + 1 번.
-    assert sum(not user.startswith("{") for _, user in api.requests) == 6
+    assert sum(not user.startswith("{") for _, _, user in api.requests) == 6
     ids = [entry["candidate_id"] for entry in storage.read_catalog()]
     assert len(ids) == len(set(ids)) == 3
     # 끝난 loop 는 다시 돌지 않는다.
@@ -286,7 +296,8 @@ def test_the_launcher_for_this_platform_reaches_the_cli_from_another_folder(tmp_
     assert b"usage: golden" in result.stdout and b"release" in result.stdout
 
 
-def test_api_client_returns_the_reported_model_text_and_tokens_and_closes(monkeypatch):
+def test_api_client_sends_the_effort_and_returns_the_reported_model_text_and_tokens_and_closes(monkeypatch):
+    # 추론 강도가 호출에 실리지 않으면 기록에 남은 강도와 실제로 쓴 강도가 다르다.
     # 응답의 모델 이름 대신 요청한 이름을 남기면 실제로 어떤 모델이 답했는지가 기록에서 사라진다.
     # 본문 없는 응답(거절 · 길이 초과)을 None 으로 넘기면 run 이 예외로 멈춰 이미 낸 호출 기록이 사라진다.
     opened = []
@@ -296,7 +307,8 @@ def test_api_client_returns_the_reported_model_text_and_tokens_and_closes(monkey
             opened.append("open")
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
-        def create(self, model, messages):
+        def create(self, model, reasoning_effort, messages):
+            opened.append(reasoning_effort)
             return SimpleNamespace(model=f"{model}-2026-10-01", choices=[SimpleNamespace(message=SimpleNamespace(content=None))],
                                    usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3))
 
@@ -309,7 +321,7 @@ def test_api_client_returns_the_reported_model_text_and_tokens_and_closes(monkey
     monkeypatch.setattr(cli.openai, "OpenAI", OpenAI)
     monkeypatch.setattr(cli, "load_dotenv", lambda path: None)
     with cli.api_client() as call:
-        response = call(model="gpt-x", messages=[])
+        response = call(model="gpt-x", reasoning_effort="high", messages=[])
 
     assert response == {"model": "gpt-x-2026-10-01", "text": "", "input_tokens": 7, "output_tokens": 3}
-    assert opened == ["open", "closed"]
+    assert opened == ["open", "high", "closed"]

@@ -43,8 +43,8 @@ PREVENTION_RULES = {
     "not_multi_hop": "근거 하나만으로는 답이 나오지 않고 둘 이상을 이어야 답이 나오는 질문을 만든다.",
 }
 LOOP_CONFIG = ("max_rounds", "max_calls", "budget_usd", "generator", "validator")
-# 생성기 · 검증기마다 모델과 단가. 호출 수 한도와 예산은 loop 전체의 값에서 남은 만큼을 round 마다 넘긴다.
-PRICED = ("model", "usd_per_million_input_tokens", "usd_per_million_output_tokens")
+# 생성기 · 검증기마다 모델 · 추론 강도 · 단가. 호출 수 한도와 예산은 loop 전체의 값에서 남은 만큼을 round 마다 넘긴다.
+PRICED = ("model", "reasoning_effort", "usd_per_million_input_tokens", "usd_per_million_output_tokens")
 
 
 def improve(topic, plan_id, loop_id, config_path, generator, validator):
@@ -202,8 +202,8 @@ def _limits(topic, loop_id, n, config, role):
 
 def _counted(client, loop_dir, priced):
     """돌아온 호출마다 그 자리에서 calls.jsonl 에 남기는 client. 생성 · 검증이 도중에 끊겨도 쓴 호출 · 비용이 남는다."""
-    def call(model, messages):
-        response = client(model=model, messages=messages)
+    def call(model, reasoning_effort, messages):
+        response = client(model=model, reasoning_effort=reasoning_effort, messages=messages)
         usage = {"model": response["model"], "input_tokens": response["input_tokens"],
                  "output_tokens": response["output_tokens"]}
         storage._append_jsonl(loop_dir / "calls.jsonl", [{**usage, "cost_usd": generation._cost(priced, [usage])}])
@@ -275,7 +275,7 @@ def _generated(topic, loop_id, n):
 
 
 def _loop_config(path):
-    """max_rounds · max_calls · budget_usd 와 생성기 · 검증기의 모델 · 단가. 기본값 없이 모두 적어야 한다."""
+    """max_rounds · max_calls · budget_usd 와 생성기 · 검증기의 모델 · 추론 강도 · 단가. 기본값 없이 모두 적어야 한다."""
     config = storage._read_json(path)
     if not isinstance(config, dict) or set(config) != set(LOOP_CONFIG):
         raise ValueError(f"loop 설정은 정확히 {LOOP_CONFIG} 를 가져야 합니다: {path}")

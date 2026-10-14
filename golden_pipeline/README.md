@@ -52,11 +52,11 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 golden_pipeline\golden.cmd evidence v11-20261014 "<내려받은 압축>\RFP_Preprocessing_Final_v11_Team\RFP_Preprocessing_Final_v11_Team"
 golden_pipeline\golden.cmd plan p1 v11-20261014 --count numeric 20 --count table 20 --max-context-chars 4000
 
-golden_pipeline\golden.cmd run --topic numeric --method A --plan p1 --id a1 --model <모델> --price <입력 단가> <출력 단가> --max-calls 200 --budget 5 --max-rounds 3 --validator-model <모델> --validator-price <입력 단가> <출력 단가>
-golden_pipeline\golden.cmd run --topic numeric --method B --plan p1 --id b1 --model <모델> --price <입력 단가> <출력 단가> --max-calls 40 --budget 2
-golden_pipeline\golden.cmd audit --topic numeric --method B --id b1 --model <모델> --price <입력 단가> <출력 단가> --max-calls 80 --budget 2
+golden_pipeline\golden.cmd run --topic numeric --method A --plan p1 --id a1 --model <모델> --reasoning-effort low --price <입력 단가> <출력 단가> --max-calls 200 --budget 5 --max-rounds 3 --validator-model <모델> --validator-reasoning-effort high --validator-price <입력 단가> <출력 단가>
+golden_pipeline\golden.cmd run --topic numeric --method B --plan p1 --id b1 --model <모델> --reasoning-effort low --price <입력 단가> <출력 단가> --max-calls 40 --budget 2
+golden_pipeline\golden.cmd audit --topic numeric --method B --id b1 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 80 --budget 2
 golden_pipeline\golden.cmd import --topic numeric --plan p1 --id c1 --export c_numeric.jsonl --sidecar c_sidecar.json
-golden_pipeline\golden.cmd audit --topic numeric --method C --id c1 --model <모델> --price <입력 단가> <출력 단가> --max-calls 80 --budget 2
+golden_pipeline\golden.cmd audit --topic numeric --method C --id c1 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 80 --budget 2
 
 golden_pipeline\golden.cmd resume --topic numeric --method A --id a1
 golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls 40 --budget 1
@@ -66,15 +66,15 @@ golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
 
 - 주제(`--topic`)는 명령마다 하나, 목표 개수는 `plan` 의 `--count` 로 정합니다. A · B · C 는 같은 계획을 받아야 견줄 수 있습니다.
-- 유료 명령은 모델(`--model`), 단가(`--price`, USD / 100만 토큰), 최대 호출 수(`--max-calls`), 총예산(`--budget`, USD)을
+- 유료 명령은 모델(`--model`), 추론 강도(`--reasoning-effort`, 예: `low` · `medium` · `high`), 단가(`--price`, USD / 100만 토큰), 최대 호출 수(`--max-calls`), 총예산(`--budget`, USD)을
   모두 받아야 시작합니다. 하나라도 빠지면 API 클라이언트를 열기 전에 멈춥니다. 기본값은 없습니다.
-  A 는 최대 round 수(`--max-rounds`)와 검증기 모델 · 단가(`--validator-model`, `--validator-price`)도 받고,
+  A 는 최대 round 수(`--max-rounds`)와 검증기 모델 · 추론 강도 · 단가(`--validator-model`, `--validator-reasoning-effort`, `--validator-price`)도 받고,
   호출 수 · 예산은 loop 전체(생성 + 검증)의 한도입니다.
 - 키는 저장소 `.env` 의 `OPENAI_API_KEY` 입니다. 명령 하나 동안 OpenAI 클라이언트 하나를 열어 생성기 · 검증기가 함께 쓰고 명령이 끝나면 닫습니다.
   기록하는 모델 이름은 요청한 이름이 아니라 API 응답이 알려 준 이름입니다.
 - 플래그로 받은 설정은 `outputs/` 아래 임시 파일로 넘기고 지웁니다. 내용과 SHA-256 은 run 매니페스트 · `validation.json` · loop `start.json` 에 남습니다.
 - `resume --method A` 는 `start.json` 에 고정된 설정 · 계획으로 loop 를 잇고 한도를 받지 않습니다. 이미 끝난(`report.json` 이 있는) loop 는 잇지 않습니다.
-- `resume --method B|C` 는 아래 독립 검증의 "이어서 검증" 입니다. 모델 · 단가는 앞 검증 기록의 것을 그대로 쓰고, 이번에 쓸 `--max-calls` · `--budget` 만 받습니다.
+- `resume --method B|C` 는 아래 독립 검증의 "이어서 검증" 입니다. 모델 · 추론 강도 · 단가는 앞 검증 기록의 것을 그대로 쓰고, 이번에 쓸 `--max-calls` · `--budget` 만 받습니다.
 - `release` 의 A run 은 loop 의 round run(`{loop_id}-r{n}`)입니다.
 
 ## 항목 스키마
@@ -300,15 +300,17 @@ JSON 아님, 필드 불일치, 계획에 없는 묶음(C), 묶음에 없는 · �
 | B (고정 프롬프트) | `generate("B", ...)` | `prompts/B.txt` 하나 | 실패 기록을 읽지 않습니다. 같은 모델 · 계획 · 주제 명세를 받고 프롬프트만 고정 |
 | C (가져오기) | `import_c(topic, plan_id, run_id, exports, sidecar)` | 관측 불가 → `unobserved` | 사람이 웹 환경에서 받아 내보낸 JSONL 파일들과 관측 기록 |
 
-A · B 는 묶음마다 한 번 `client(model=..., messages=[system: 프롬프트, user: context])` 를 부릅니다.
+A · B 는 묶음마다 한 번 `client(model=..., reasoning_effort=..., messages=[system: 프롬프트, user: context])` 를 부릅니다.
+`reasoning_effort` 는 OpenAI 호출에 그대로 실립니다.
 `client` 는 `{"model", "text", "input_tokens", "output_tokens"}` 를 돌려주며, `model` 은 API 응답이 알려 준 이름이어야 합니다.
 
 `run_id` 가 경로 한 칸 이름이 아니거나 이미 쓴 run 이면 호출 전에 멈춥니다.
-run 설정(JSON 파일)은 아래 다섯 값을 모두 가져야 하고, 빠지면 호출 전에 멈춥니다. 기본값이 없으므로 설정 없이 유료 호출이 나가지 않습니다.
+run 설정(JSON 파일)은 아래 여섯 값을 모두 가져야 하고, 빠지면 호출 전에 멈춥니다. 기본값이 없으므로 설정 없이 유료 호출이 나가지 않습니다.
 
 | 키 | 값 |
 |---|---|
 | `model` | 요청할 모델 이름 |
+| `reasoning_effort` | 추론 강도 (예: `low` · `high`). run 매니페스트 · 검증 기록 · loop `start.json` 의 설정에 남습니다 |
 | `max_calls` | 최대 호출 수 (1 이상의 정수) |
 | `budget_usd` | 총예산 (0 보다 큼) |
 | `usd_per_million_input_tokens` · `usd_per_million_output_tokens` | 단가. 응답 토큰 수로 비용을 계산합니다 |
@@ -340,7 +342,7 @@ LLM 출력은 같은 입력에도 달라질 수 있어 결정성을 주장하지
 validate(topic, method, run_id, config_path, client)
 ```
 
-검증기는 생성기와 같은 `client` 계약으로 부르며, run 설정도 생성과 같은 다섯 값을 기본값 없이 받습니다.
+검증기는 생성기와 같은 `client` 계약으로 부르며, run 설정도 생성과 같은 여섯 값을 기본값 없이 받습니다.
 검증기가 받는 것은 system 메시지 `prompts/validator.txt` 와 user 메시지 `{"question", "evidence": [{"label", "text"}]}` 뿐입니다.
 근거 단위는 후보가 인용한 단위를 계획의 근거 묶음에서 찾은 것이고, 표 행에는 그 표의 머리글 행을 붙입니다.
 계획 파일의 SHA-256 이 생성 run `manifest.json` 의 `generation.plan_sha256` 과 다르면 검증기를 부르기 전에 멈춥니다.
@@ -425,7 +427,7 @@ B · C run 의 마지막 검증 기록에 `pending` 이 남았으면 그 후보�
 A 의 검증은 자기 개선 loop 가 맡으므로 받지 않습니다.
 
 1. 상태 파일이 마지막 검증 기록의 SHA-256 과 같은지 보고, 다르면 멈춥니다.
-2. 검증기 버전 · 난도 규칙 · 검증기 프롬프트 SHA-256 · 모델 · 단가가 앞 기록과 다르면 호출 전에 바뀐 키를 밝히고 멈춥니다.
+2. 검증기 버전 · 난도 규칙 · 검증기 프롬프트 SHA-256 · 모델 · 추론 강도 · 단가가 앞 기록과 다르면 호출 전에 바뀐 키를 밝히고 멈춥니다.
    한 run 의 후보를 서로 다른 기준으로 판정하지 않기 위해서입니다. 바뀌는 것은 호출 수 한도와 예산뿐입니다.
 3. 중복 검사에 같은 run 에서 앞서 통과 · 보류된 항목도 넣습니다.
 4. 판정한 항목은 상태 파일 뒤에 붙이고, `validation-{n}.json` 에 이번 호출 · 비용 · 남은 `pending` 과
@@ -481,7 +483,7 @@ loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 |---|---|
 | `max_rounds` · `max_calls` | 최대 round 수, loop 전체(생성 + 검증)의 최대 호출 수 (1 이상의 정수) |
 | `budget_usd` | loop 전체 예산 (0 보다 큼) |
-| `generator` · `validator` | 각각 정확히 `model` · `usd_per_million_input_tokens` · `usd_per_million_output_tokens` |
+| `generator` · `validator` | 각각 정확히 `model` · `reasoning_effort` · `usd_per_million_input_tokens` · `usd_per_million_output_tokens` |
 
 round 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정(`loops/{loop_id}/r{n}-*.json`)으로 돕니다.
 쓴 호출 · 비용은 호출이 돌아올 때마다 `calls.jsonl` 에 남기므로, 생성 · 검증이 도중에 끊겨도 이어 돌 때 그만큼 한도에서 빠집니다.

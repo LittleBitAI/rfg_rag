@@ -10,7 +10,7 @@ from golden_pipeline.plan import load_plan, make_plan, topic_spec
 DOC_1 = "1" * 64
 REPORTED = "gpt-test-2026-10-01"
 CONFIG = {
-    "model": "gpt-test", "max_calls": 10, "budget_usd": 1.0,
+    "model": "gpt-test", "reasoning_effort": "low", "max_calls": 10, "budget_usd": 1.0,
     "usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0,
 }
 NUMERIC = {
@@ -26,8 +26,8 @@ class Client:
         self.replies = [json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else r for r in replies]
         self.requests = []
 
-    def __call__(self, model, messages):
-        self.requests.append({"model": model, "messages": messages})
+    def __call__(self, model, reasoning_effort, messages):
+        self.requests.append({"model": model, "reasoning_effort": reasoning_effort, "messages": messages})
         return {"model": REPORTED, "text": self.replies.pop(0), "input_tokens": 1000, "output_tokens": 200}
 
 
