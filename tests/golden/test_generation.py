@@ -1,6 +1,5 @@
 """후보 생성: A · B 는 가짜 클라이언트로, C 는 내보낸 파일로 같은 출력 계약 검사와 저장을 거친다. API 호출은 없다."""
 import json
-from pathlib import Path
 
 import pytest
 
@@ -179,28 +178,14 @@ def test_comparison_answer_is_the_text_built_from_its_structure(structure, answe
     assert (reason is None) == ok, reason
 
 
-def test_b_prompt_hash_is_constant_and_b_reads_no_failure_memory(planned, monkeypatch):
-    memory = storage.OUTPUTS / "goldens" / "numeric" / "failure_memory"
-    memory.mkdir(parents=True)
-    (memory / "A_old.jsonl").write_text('{"reason": "MEMORY-MARKER"}\n', encoding="utf-8")
-    reads = []
-    real_open = Path.open
-
-    def spy(path, mode="r", *args, **kwargs):
-        if "r" in mode:
-            reads.append(str(path))
-        return real_open(path, mode, *args, **kwargs)
-
+def test_b_prompt_hash_is_constant(planned):
+    # B 가 실패 기록을 읽지 않는 것은 test_improvement 의 B · C 경로 테스트가 지킨다.
     clients = [Client(NUMERIC), Client(NUMERIC)]
-    with monkeypatch.context() as patch:
-        patch.setattr(Path, "open", spy)
-        runs = [generate("B", "numeric", "p1", run_id, planned, c) for run_id, c in zip(("b1", "b2"), clients)]
+    runs = [generate("B", "numeric", "p1", run_id, planned, c) for run_id, c in zip(("b1", "b2"), clients)]
 
     infos = [manifest(run_dir)["generation"] for run_dir in runs]
     assert infos[0]["prompt_sha256"] == infos[1]["prompt_sha256"] == storage._sha256(storage.PROMPTS / "B.txt")
     assert clients[0].requests == clients[1].requests
-    assert "MEMORY-MARKER" not in json.dumps(clients[0].requests, ensure_ascii=False)
-    assert reads and not [path for path in reads if "failure_memory" in path]
 
     a = manifest(generate("A", "numeric", "p1", "a1", planned, Client(NUMERIC)))["generation"]
     for name in ("model_requested", "plan_sha256", "v11_manifest_sha256", "topic_spec_sha256", "bundle_ids"):

@@ -3,7 +3,6 @@
 A · B · C 는 같은 계획 파일을 읽으므로 같은 근거 묶음과 같은 컨텍스트를 받는다.
 근거 묶음은 근거 어댑터가 eligible 로 판정한 단위로만 만든다.
 """
-import argparse
 import hashlib
 import json
 import re
@@ -173,18 +172,3 @@ def _coverage(bundles):
     for bundle in bundles:
         coverage[bundle["topic"]][bundle["doc_sha"]] += 1
     return {topic: dict(docs) for topic, docs in coverage.items()}
-
-
-def main():
-    parser = argparse.ArgumentParser(description="주제별 분포 계획 (API 호출 없음)")
-    parser.add_argument("plan_id")
-    parser.add_argument("evidence_run", help="golden_pipeline/outputs/evidence 아래 근거 어댑터 run_id")
-    parser.add_argument("--count", nargs=2, action="append", metavar=("TOPIC", "N"), required=True)
-    parser.add_argument("--max-context-chars", type=int, required=True)
-    args = parser.parse_args()
-    counts = {topic: int(n) for topic, n in args.count}
-    print(make_plan(args.plan_id, args.evidence_run, counts, args.max_context_chars))
-
-
-if __name__ == "__main__":
-    main()

@@ -45,7 +45,6 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
         validate_item(item)
         if (item["primary_topic"], item["method"], item["run_id"]) != (topic, method, run_id):
             raise ValueError(f"{item['candidate_id']} 는 {topic}/{method}/{run_id} 의 항목이 아닙니다")
-    topic_dir = _topic_dir(topic)
     run_dir = new_run_dir(topic, method, run_id)
     entries = [_catalog_entry(item) for item in items]
     _check_catalog(entries)
@@ -55,10 +54,6 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
     for state, name in STATE_FILES.items():
         _write_jsonl(run_dir / name, [item for item in items if item["state"] == state])
     _append_jsonl(run_dir / "rejected.jsonl", rejects)
-    memory_dir = topic_dir / "failure_memory"
-    memory_dir.mkdir(exist_ok=True)
-    rejected = [item for item in items if item["state"] == "rejected"]
-    _write_jsonl(memory_dir / f"{method}_{run_id}.jsonl", [_failure(item) for item in rejected])
     _write_json(run_dir / "manifest.json", {
         "run_id": run_id,
         "topic": topic,
@@ -106,21 +101,58 @@ def write_validation(topic, method, run_id, items, info):
     항목은 candidates.jsonl 의 기록에서 상태만 나아간 것이어야 한다. 파일별 SHA-256 은 출시 때 다시 확인한다.
     """
     run_dir = unvalidated_run(topic, method, run_id)
-    originals = {record["candidate_id"]: record for record in _read_jsonl(run_dir / "candidates.jsonl")}
-    for item in items:
-        validate_item(item)
-        if item["state"] == "candidate" or item["candidate_id"] not in originals:
-            raise ValueError(f"{item['candidate_id']} 는 {topic}/{method}/{run_id} 의 검증한 항목이 아닙니다")
-        _require_same_record(originals[item["candidate_id"]], item)
     for name in ("accepted.jsonl", "review.jsonl"):
         if _count_lines(run_dir / name):
             raise FileExistsError(f"{name} 이 비어 있지 않습니다: {topic}/{method}/{run_id}")
+    candidates = {record["candidate_id"] for record in _read_jsonl(run_dir / "candidates.jsonl")}
+    return _record_validation(run_dir, items, candidates, run_dir / "validation.json", info)
+
+
+def continue_validation(topic, method, run_id, items, info):
+    """한도에 닿아 끝난 검증의 pending 후보만 검증한 항목을 상태 파일 뒤에 붙이고, 이어 쓴 검증 기록을 남긴다.
+
+    기록은 validation-2.json, validation-3.json ... 이고 앞 기록의 SHA-256 을 continues 에 남긴다.
+    이어 쓰기 전에 상태 파일이 마지막 기록과 같은지 본다. 그래야 출시 때 마지막 기록 하나로 앞의 검증까지 확인된다.
+    """
+    read_validated(topic, method, run_id)
+    run_dir = run_path(topic, method, run_id)
+    records = validation_records(run_dir)
+    last = records[-1]
+    pending = set(json.loads(last.read_text(encoding="utf-8"))["pending"])
+    info = {**info, "continues": {"file": last.name, "sha256": _sha256(last)}}
+    return _record_validation(run_dir, items, pending, run_dir / f"validation-{len(records) + 1}.json", info)
+
+
+def validation_records(run_dir):
+    """run 의 검증 기록을 쓴 차례로: validation.json, 이어서 검증한 validation-2.json, validation-3.json ...
+
+    이어 쓴 기록마다 continues 가 바로 앞 기록의 SHA-256 과 같은지 본다. 마지막 기록만 상태 파일과 대조하므로,
+    이 사슬이 없으면 앞 기록(비용 · 판정 수)이 바뀌어도 보고서 · 출시본이 그대로 읽는다.
+    """
+    records, path = [], Path(run_dir) / "validation.json"
+    while path.exists():
+        if records:
+            link = {"file": records[-1].name, "sha256": _sha256(records[-1])}
+            if json.loads(path.read_text(encoding="utf-8")).get("continues") != link:
+                raise CatalogError(f"{path.name} 이 이은 {records[-1].name} 가 바뀌었습니다: {Path(run_dir).name}")
+        records.append(path)
+        path = Path(run_dir) / f"validation-{len(records) + 1}.json"
+    return records
+
+
+def _record_validation(run_dir, items, allowed, record_path, info):
+    """allowed 후보를 검증한 항목을 상태별 파일 뒤에 붙이고 검증 기록을 쓴다."""
+    originals = {record["candidate_id"]: record for record in _read_jsonl(run_dir / "candidates.jsonl")}
+    for item in items:
+        validate_item(item)
+        if item["state"] == "candidate" or item["candidate_id"] not in allowed:
+            raise ValueError(f"{item['candidate_id']} 는 {run_dir.name} 에서 검증할 후보가 아닙니다")
+        _require_same_record(originals[item["candidate_id"]], item)
 
     for state, name in STATE_FILES.items():
-        mode = "a" if state == "rejected" else "w"
-        with guard(run_dir / name).open(mode, encoding="utf-8") as f:
+        with guard(run_dir / name).open("a", encoding="utf-8") as f:
             f.writelines(json.dumps(item, ensure_ascii=False) + "\n" for item in items if item["state"] == state)
-    with guard(run_dir / "validation.json").open("x", encoding="utf-8") as f:
+    with guard(record_path).open("x", encoding="utf-8") as f:
         f.write(json.dumps({
             **info,
             "counts": {state: sum(item["state"] == state for item in items) for state in STATE_FILES},
@@ -130,12 +162,15 @@ def write_validation(topic, method, run_id, items, info):
 
 
 def read_validated(topic, method, run_id):
-    """검증한 run 의 (auto_validated 항목, held 항목). 검증 뒤 상태 파일이 바뀌었으면 막는다."""
+    """검증한 run 의 (auto_validated 항목, held 항목). 상태 파일이 마지막 검증 기록과 다르면 막는다."""
     run_dir = run_path(topic, method, run_id)
-    record = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))
+    records = validation_records(run_dir)
+    if not records:
+        raise FileNotFoundError(f"검증하지 않은 run 입니다: {topic}/{method}/{run_id}")
+    record = json.loads(records[-1].read_text(encoding="utf-8"))
     changed = [name for name, sha in record["files"].items() if _sha256(run_dir / name) != sha]
     if changed:
-        raise CatalogError(f"{topic}/{method}/{run_id} 의 {changed} 가 검증 기록(validation.json)과 다릅니다")
+        raise CatalogError(f"{topic}/{method}/{run_id} 의 {changed} 가 검증 기록({records[-1].name})과 다릅니다")
     return _read_jsonl(run_dir / "accepted.jsonl"), _read_jsonl(run_dir / "review.jsonl")
 
 
@@ -243,10 +278,10 @@ def _require_same_record(original, item):
 
 
 def _run_hashes(topic, method, run_id):
-    """출시본의 원본 run 파일별 SHA-256. 검증 기록(validation.json)이 있으면 그것도 넣는다."""
+    """출시본의 원본 run 파일별 SHA-256. 검증 기록(validation.json 과 이어 쓴 기록)도 모두 넣는다."""
     run_dir = run_path(topic, method, run_id)
-    names = ("candidates.jsonl", *STATE_FILES.values(), "manifest.json", "validation.json")
-    return {name: _sha256(run_dir / name) for name in names if (run_dir / name).exists()}
+    names = ("candidates.jsonl", *STATE_FILES.values(), "manifest.json")
+    return {name: _sha256(run_dir / name) for name in (*names, *(path.name for path in validation_records(run_dir)))}
 
 
 def _catalog_entry(item):
@@ -256,18 +291,6 @@ def _catalog_entry(item):
         "evidence_group": evidence_group(item),
         "method": item["method"],
         "run_id": item["run_id"],
-    }
-
-
-def _failure(item):
-    return {
-        "candidate_id": item["candidate_id"],
-        "parent_candidate_id": item["parent_candidate_id"],
-        "run_id": item["run_id"],
-        "method": item["method"],
-        "question": item["question"],
-        "answer": item["answer"],
-        "reason": item["state_history"][-1]["reason"],
     }
 
 
