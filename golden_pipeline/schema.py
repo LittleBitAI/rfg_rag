@@ -6,7 +6,7 @@ from golden_pipeline.state import TRANSITIONS
 
 TOPICS = ("numeric", "table", "condition", "comparison", "multi_hop")
 METHODS = ("A", "B", "C")
-STATES = ("candidate", "auto_validated", "held", "rejected", "released")
+STATES = ("candidate", "auto_validated", "rejected", "released")
 # 표 위치가 원본 격자를 확인한 것인지, 검증되지 않은 원본 격자 참고 파일의 것인지,
 # 마크다운 논리 행으로 복원한 것인지 구분한다. 세 종류는 서로 섞지 않는다.
 GRIDS = ("logical_restored", "original_verified", "original_reference")

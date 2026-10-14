@@ -96,7 +96,7 @@ def read_jsonl(path):
 
 def validated(run_dir):
     """검증한 항목 전부 (rejected.jsonl 의 생성 거절 행은 뺀다)."""
-    rows = [row for name in ("accepted.jsonl", "review.jsonl", "rejected.jsonl") for row in read_jsonl(run_dir / name)]
+    rows = [row for name in ("accepted.jsonl", "rejected.jsonl") for row in read_jsonl(run_dir / name)]
     return {row["candidate_id"]: row for row in rows if "candidate_id" in row}
 
 

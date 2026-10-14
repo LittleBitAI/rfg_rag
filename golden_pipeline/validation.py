@@ -34,7 +34,7 @@ SUBJECT_TAGS = CONTENT_TAGS + ("NNB",)
 
 
 def validate(topic, method, run_id, config_path, client):
-    """run 의 후보마다 독립 검증기를 불러 auto_validated · held · rejected 로 나눠 쓴다. run 마다 한 번만 한다.
+    """run 의 후보마다 독립 검증기를 불러 auto_validated · rejected 로 나눠 쓴다. run 마다 한 번만 한다.
 
     client 는 생성과 같은 계약이다: client(model=..., reasoning_effort=..., messages=[...]) -> {"model", "text", "input_tokens", "output_tokens"}.
     """
@@ -50,11 +50,11 @@ def resume_validation(topic, method, run_id, config_path, client):
 
     A 의 검증은 자기 개선 loop 가 맡는다. loop 의 round 와 report 가 그 검증 기록을 읽기 때문이다.
     한 run 의 후보는 같은 기준으로 판정해야 하므로 검증기 버전 · 난도 규칙 · 프롬프트 · 모델 · 단가가
-    앞 기록과 다르면 호출 전에 멈춘다. 앞에서 통과 · 보류된 같은 run 의 항목도 중복 검사에 넣는다.
+    앞 기록과 다르면 호출 전에 멈춘다. 앞에서 통과한 같은 run 의 항목도 중복 검사에 넣는다.
     """
     if method == "A":
         raise ValueError("A 의 검증은 자기 개선 loop 가 이어 돕니다")
-    accepted, held = storage.read_validated(topic, method, run_id)
+    accepted = storage.read_validated(topic, method, run_id)
     run_dir = storage.run_path(topic, method, run_id)
     last = storage._read_json(storage.validation_records(run_dir)[-1])
     if not last["pending"]:
@@ -67,7 +67,7 @@ def resume_validation(topic, method, run_id, config_path, client):
         raise ValueError(f"{topic}/{method}/{run_id} 를 앞서 검증할 때와 기준이 다릅니다: {changed}")
 
     survivors = _survivors(topic, method, run_id)
-    for item in accepted + held:
+    for item in accepted:
         for key in _keys(item):
             survivors.setdefault(key, item["candidate_id"])
     pending = set(last["pending"])
@@ -146,8 +146,7 @@ def release(topic, version, runs):
     """
     items = []
     for method, run_id in runs:
-        accepted, _ = storage.read_validated(topic, method, run_id)
-        items += [transition(item, "released", "자동 검증 통과") for item in accepted]
+        items += [transition(item, "released", "자동 검증 통과") for item in storage.read_validated(topic, method, run_id)]
     _refuse_duplicates(items)
     return storage.write_release(topic, version, items)
 
@@ -542,7 +541,7 @@ def _refuse_duplicates(items):
 
 
 def _survivors(topic, method, run_id):
-    """카탈로그로 찾은 같은 주제 · 방식의 다른 run 에서 검증을 통과했거나 보류된 항목의 중복 키.
+    """카탈로그로 찾은 같은 주제 · 방식의 다른 run 에서 검증을 통과한 항목의 중복 키.
 
     거절된 항목은 넣지 않는다. 같은 근거로 다시 만든 항목(자기 개선)이 중복으로 막히지 않게 하기 위해서다.
     다른 방식(A · B · C)은 같은 계획을 받아 같은 근거 묶음을 쓰는 것이 비교의 전제라 중복으로 보지 않는다.
@@ -554,8 +553,7 @@ def _survivors(topic, method, run_id):
     survivors = {}
     for other in sorted(runs):
         if (storage.run_path(topic, method, other) / "validation.json").exists():
-            accepted, held = storage.read_validated(topic, method, other)
-            for item in accepted + held:
+            for item in storage.read_validated(topic, method, other):
                 for key in _keys(item):
                     survivors.setdefault(key, item["candidate_id"])
     return survivors

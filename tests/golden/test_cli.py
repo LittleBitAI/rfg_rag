@@ -130,7 +130,7 @@ def test_a_b_and_c_run_through_audit_release_and_report(planned, api, tmp_path, 
     a, b, c = (report["methods"][method] for method in "ABC")
     # A: round 1 예산 거절 · 보증금 통과 · 표 JSON 아님, round 2 예산 통과 · 표 JSON 아님, round 3 표 JSON 아님.
     assert (a["outputs"], a["validated"], a["pending"]) == (6, 3, 0)
-    assert (a["valid_rate"], a["hold_rate"]) == (ratio(2, 6), ratio(0, 6))
+    assert a["valid_rate"] == ratio(2, 6)
     assert (a["source_accuracy"], a["type_compliance"], a["duplicates"]) == (ratio(2, 3), ratio(3, 3), ratio(0, 3))
     assert a["coverage"] == ratio(2, 3) and a["difficulty"]["easy"] == ratio(2, 2)
     assert a["generation"] == {"input_tokens": 60, "output_tokens": 60, "cost_usd": pytest.approx(6 * CALL_USD)}

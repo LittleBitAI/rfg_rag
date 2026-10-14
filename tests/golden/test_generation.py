@@ -62,7 +62,7 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
     assert item["bundle_id"] == numeric["bundle_id"]
     assert item["context"] == client.requests[0]["messages"][1]["content"] == numeric["context"]
     assert item["evidence"] == [numeric["units"][0]["ref"]]
-    for name in ("accepted.jsonl", "review.jsonl", "rejected.jsonl"):
+    for name in ("accepted.jsonl", "rejected.jsonl"):
         assert read_jsonl(run_dir / name) == []
 
     info = manifest(run_dir)["generation"]

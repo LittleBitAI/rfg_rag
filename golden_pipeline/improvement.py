@@ -124,12 +124,11 @@ def related_failures(topic):
 
 
 def open_bundles(topic, plan_id, loop_id):
-    """loop 의 앞 round 에서 통과 · 보류되지 않은 묶음 → 그 묶음에서 마지막으로 거절된 후보 id (없으면 None)."""
+    """loop 의 앞 round 에서 통과하지 못한 묶음 → 그 묶음에서 마지막으로 거절된 후보 id (없으면 None)."""
     planned = plan.load_plan(plan_id)[0]
     parents = {bundle["bundle_id"]: None for bundle in planned["bundles"] if bundle["topic"] == topic}
     for run_dir in _rounds(topic, loop_id):
-        accepted, held = storage.read_validated(topic, "A", run_dir.name)
-        for item in accepted + held:
+        for item in storage.read_validated(topic, "A", run_dir.name):
             parents.pop(item["bundle_id"], None)
         for row in storage._read_jsonl(run_dir / "rejected.jsonl"):
             if "candidate_id" in row and row["bundle_id"] in parents:
@@ -253,7 +252,7 @@ def _spent(topic, loop_id):
 
 def _report(topic, plan_id, loop_id, stop):
     """멈춘 이유, round 별 상태 · policy, 쓴 호출 · 비용, 목표 개수 대비 통과 묶음과 모자란 수."""
-    rounds, accepted, held = [], set(), set()
+    rounds, accepted = [], set()
     for run_dir in _rounds(topic, loop_id):
         generated = storage._read_json(run_dir / "manifest.json")["generation"]
         record = storage._read_json(run_dir / "validation.json") if (run_dir / "validation.json").exists() else None
@@ -265,15 +264,13 @@ def _report(topic, plan_id, loop_id, stop):
             "policy": generated["policy"],
         })
         if record:
-            passed, kept = storage.read_validated(topic, "A", run_dir.name)
-            accepted.update(item["bundle_id"] for item in passed)
-            held.update(item["bundle_id"] for item in kept)
+            accepted.update(item["bundle_id"] for item in storage.read_validated(topic, "A", run_dir.name))
     calls, cost = _spent(topic, loop_id)
     target = plan.load_plan(plan_id)[0]["counts"][topic]
     return {
         "loop_id": loop_id, "topic": topic, "plan_id": plan_id, "stop_reason": stop, "rounds": rounds,
         "calls": calls, "cost_usd": cost, "target": target, "auto_validated": len(accepted),
-        "held": len(held - accepted), "shortfall": max(0, target - len(accepted)), "thresholds": thresholds(),
+        "shortfall": max(0, target - len(accepted)), "thresholds": thresholds(),
     }
 
 

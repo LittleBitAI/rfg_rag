@@ -296,7 +296,7 @@ def test_a_topic_short_of_its_target_is_reported_with_thresholds_unchanged(loope
     # 목표에 못 미쳤다고 기준을 낮추면 골든 데이터의 질이 목표 개수에 맞춰 떨어진다.
     report, before = looped
 
-    assert (report["target"], report["auto_validated"], report["held"], report["shortfall"]) == (3, 2, 0, 1)
+    assert (report["target"], report["auto_validated"], report["shortfall"]) == (3, 2, 1)
     assert report["thresholds"] == before == thresholds()
     for round_no in (1, 2, 3):
         record = json.loads((run_dir(round_no) / "validation.json").read_text(encoding="utf-8"))

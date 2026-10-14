@@ -15,7 +15,7 @@ SOURCE_MISMATCH = ("table_relation", "unanswerable", "answer_mismatch")
 SOURCE_UNCHECKED = ("type_mismatch", "missing_condition", "duplicate")
 # 주제 구조 검사까지 간 뒤 항목이 되지 못한 생성 출력의 실패 코드. 유형 준수의 분모에 든다.
 STRUCTURE_CHECKED = ("type_mismatch", "evidence_owned")
-VERDICTS = ("auto_validated", "held", "rejected")
+VERDICTS = ("auto_validated", "rejected")
 LEVELS = ("easy", "medium", "hard")
 
 
@@ -72,8 +72,7 @@ def _outputs(topic, method, run_id, run_dir):
     """
     verdicts = {}
     if storage.validation_records(run_dir):
-        accepted, held = storage.read_validated(topic, method, run_id)
-        verdicts = {item["candidate_id"]: item for item in accepted + held}
+        verdicts = {item["candidate_id"]: item for item in storage.read_validated(topic, method, run_id)}
     outputs = []
     for row in storage._read_jsonl(run_dir / "rejected.jsonl"):
         if "candidate_id" in row:
@@ -95,14 +94,14 @@ def _code(reason):
 
 
 def _quality(outputs, bundles):
-    """문항 품질 지표. 분모: 생성 출력 수(유효 · 보류), 검증한 항목 수(중복), 계획의 근거 묶음 수(커버리지),
+    """문항 품질 지표. 분모: 생성 출력 수(유효), 검증한 항목 수(중복), 계획의 근거 묶음 수(커버리지),
     유효 문항 수(난도). 출처 정확성 · 유형 준수의 분모는 그 검사까지 간 수다 (README 의 비교 보고서)."""
     states = Counter(output["state"] for output in outputs)
     validated = [output for output in outputs if output["state"] in VERDICTS]
     rejected = Counter(output["code"] for output in validated if output["state"] == "rejected")
     not_items = Counter(output["code"] for output in outputs if output["state"] == "not_item")
     valid = [output for output in outputs if output["state"] == "auto_validated"]
-    checked = len(validated) - states["held"] - sum(rejected[code] for code in SOURCE_UNCHECKED)
+    checked = len(validated) - sum(rejected[code] for code in SOURCE_UNCHECKED)
     mismatched = sum(rejected[code] for code in SOURCE_MISMATCH)
     structured = len(outputs) - states["not_item"] + sum(not_items[code] for code in STRUCTURE_CHECKED)
     return {
@@ -110,7 +109,6 @@ def _quality(outputs, bundles):
         "validated": len(validated),
         "pending": states["candidate"],
         "valid_rate": _ratio(len(valid), len(outputs)),
-        "hold_rate": _ratio(states["held"], len(outputs)),
         "source_accuracy": _ratio(checked - mismatched, checked),
         "type_compliance": _ratio(structured - rejected["type_mismatch"] - not_items["type_mismatch"], structured),
         "duplicates": _ratio(rejected["duplicate"], len(validated)),
@@ -150,7 +148,6 @@ ROWS = (
     ("생성 출력", lambda m: m["outputs"]),
     ("검증하지 않은 후보 (pending)", lambda m: m["pending"]),
     ("유효 문항률", lambda m: m["valid_rate"]),
-    ("보류율", lambda m: m["hold_rate"]),
     ("출처 정확성", lambda m: m["source_accuracy"]),
     ("유형 준수", lambda m: m["type_compliance"]),
     ("중복", lambda m: m["duplicates"]),
