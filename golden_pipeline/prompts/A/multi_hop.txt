@@ -10,6 +10,6 @@
 - evidence 에는 답에 실제로 쓴 근거 라벨을 둘 이상 넣는다.
 
 출력은 아래 JSON 객체 하나뿐이다. 다른 글은 쓰지 않는다.
-{"question": "...", "answer": "...", "evidence": ["E1", "E2"], "structure": {...}, "secondary_tags": []}
-structure 의 필드: $structure
+{"question": "...", "answer": "...", "evidence": ["E1", "E2"], "structure": {}, "secondary_tags": []}
+structure 는 필드가 없는 빈 객체 {} 그대로 둔다.
 secondary_tags 에는 multi_hop 을 뺀 numeric, table, condition, comparison 중 해당하는 것만 넣는다.
