@@ -5,7 +5,6 @@
 출시는 auto_validated 항목과 사람이 확인한 held 항목을 releases/{version}/ 로 모은다.
 """
 import json
-import re
 import unicodedata
 from decimal import Decimal
 from pathlib import Path
@@ -149,7 +148,13 @@ def facts(text):
     대상은 단위가 같은 앞 값 뒤부터 이 값 앞까지의 내용 형태소다. A안은 2억원, B안은 1억원 에서 2억원 의 대상은 {A, 안},
     1억원 의 대상은 {B, 안} 이다. 단위가 다른 값끼리는 바뀔 수 없어 경계로 삼지 않는다 (1차년도 1억원 의 대상은 {1, 차, 년도}).
     """
-    tokens = generation._kiwi().tokenize(unicodedata.normalize("NFC", text))
+    return [(pair, subject) for pair, subject, _ in _spans(text)]
+
+
+def _spans(text):
+    """facts 와 같고, 쌍마다 NFC 로 바꾼 text 에서 그 수 표현(부호부터 단위 끝까지)의 글자 범위 (시작, 끝) 를 더한다."""
+    text = unicodedata.normalize("NFC", text)
+    tokens = generation._kiwi().tokenize(text)
     found, carry, after = [], {}, {}
     for i, token in enumerate(tokens):
         if token.tag != "SN":
@@ -165,8 +170,9 @@ def facts(text):
             carry[end] = (sign, amount, start)
             continue
         subject = {_norm(t.form) for t in tokens[after.get(rest, 0):start] if t.tag in SUBJECT_TAGS}
-        found.append(((sign.replace("−", "-") + format(amount.normalize(), "f"), rest), subject))
         after[rest] = _unit_end(tokens, end, rest)
+        span = (tokens[start - 1 if sign else start].start, tokens[after[rest] - 1].end)
+        found.append(((sign.replace("−", "-") + format(amount.normalize(), "f"), rest), subject, span))
     return found
 
 
@@ -210,22 +216,33 @@ def _same_value(value, independent):
     그 밖(글이 다른 값)은 같은지 글자로 알 수 없어 None (held) 이다.
     수가 여럿이면 수를 쓴 차례로 견준다. 집합으로 견주면 구축 1억원, 운영 2억원 과 구축 2억원, 운영 1억원 이 같아진다.
     수 밖의 글이 같은데 차례대로 놓인 수가 다르면 다른 값이다.
+    수 밖의 글에는 수 · 단위 쌍으로 읽지 않은 수(제3회 의 3)가 그대로 남는다. 제3회 회의 1억원 과 제4회 회의 1억원 은 같지 않다.
     """
     if _norm(value) == _norm(independent):
         return True
-    mine, theirs = [pair for pair, _ in facts(value)], [pair for pair, _ in facts(independent)]
+    (mine, my_frame), (theirs, their_frame) = _layout(value), _layout(independent)
     if not (mine and theirs):
         return None
     if set(mine) != set(theirs):
         return False
-    if _without_numbers(value) != _without_numbers(independent):
+    if my_frame != their_frame:
         return None
     return mine == theirs
 
 
-def _without_numbers(text):
-    """수 표기(숫자 · 쉼표 · 소수점 · 천 · 만 · 억)와 공백을 지운 글. 1억원 과 100,000,000원 은 모두 원 이 된다."""
-    return re.sub(rf"[\d.,\s{''.join(SCALES)}]", "", unicodedata.normalize("NFC", text))
+def _layout(text):
+    """(차례대로 놓인 수 · 단위 쌍, 수 밖의 글). 수 밖의 글은 쌍으로 읽은 수 표현 자리만 # 로 바꾸고 공백 · 쉼표를 지운 것이다.
+
+    쌍으로 읽은 범위만 지운다. 숫자를 모두 지우면 쌍이 아닌 수(제3회, 2차년도)까지 사라져 다른 사실이 같아진다.
+    """
+    text = unicodedata.normalize("NFC", text)
+    pairs, frame, last = [], [], 0
+    for pair, _, (start, end) in _spans(text):
+        pairs.append(pair)
+        frame.append(text[last:start])
+        last = end
+    frame.append(text[last:])
+    return pairs, "#".join(_norm(part) for part in frame)
 
 
 def _combined(results):

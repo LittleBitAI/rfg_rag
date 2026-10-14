@@ -251,6 +251,8 @@ def test_comparison_compares_each_entity_value_and_the_chosen_entity_with_the_va
     ("1억원", "2억원", False),
     ("구축 2억원, 운영 1억원", "구축 1억원, 운영 2억원", False),
     ("구축 130,000,000원, 운영 2억원", "구축 1억 3천만원, 운영 200,000,000원", True),
+    ("제4회 회의 1억원", "제3회 회의 1억원", None),
+    ("- 2억원 감액", "-200,000,000원 감액", True),
 ])
 def test_structured_values_must_be_equal_not_just_contained(mine, theirs, same):
     # 값 필드는 담기가 아니라 같음을 본다. 미지원 은 지원 을 글자로 담지만 반대 뜻이다.
