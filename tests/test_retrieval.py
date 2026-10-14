@@ -145,7 +145,7 @@ def test_csv_full_organization_name_does_not_route_topic_words():
 @pytest.mark.parametrize("reverse", [False, True])
 def test_csv_symbol_collision_preserves_document_organization(reverse):
     docs = [{"doc_id": did, "source": source, "title": "사업", "cover_text": "", "head_text": ""}
-            for did, source in [("a", "사업-A.pdf"), ("b", "사업A.pdf")]]
+            for did, source in [("a", "사업-a.PDF"), ("b", "사업a.PDF")]]
     rows = [("사업-A.pdf", "기관가공사"), ("사업A.pdf", "기관나공사")]
     router = DocRouter(docs, dict(reversed(rows) if reverse else rows))
     assert router.route("기관가공사 요구사항") == {"기관가공사": {"a"}}
@@ -159,8 +159,22 @@ def test_csv_ambiguous_normalized_or_truncated_filename_does_not_route(source):
     assert router.route("기관가공사와 기관나공사 요구사항") == {}
 
 
-def test_csv_conflicting_duplicate_filename_is_rejected(tmp_path):
+@pytest.mark.parametrize("first,second", [("사업.pdf", "사업.pdf"), ("RFP_A.pdf", "rfp_a.pdf")])
+def test_csv_conflicting_duplicate_filename_is_rejected(tmp_path, first, second):
     path = tmp_path / "orgs.csv"
-    path.write_text("파일명,발주 기관\n사업.pdf,기관가공사\n사업.pdf,기관나공사\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="사업.pdf"):
+    path.write_text(f"파일명,발주 기관\n{first},기관가공사\n{second},기관나공사\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=second):
         read_csv_orgs(path)
+
+
+@pytest.mark.parametrize("source", ["RFP_A.pdf", "RFP-A.PDF", "RFP.pdf"])
+def test_csv_filename_case_is_ignored_for_exact_normalized_and_truncated_matches(source):
+    docs = [{"doc_id": "a", "source": source, "title": "사업", "cover_text": "", "head_text": ""}]
+    router = DocRouter(docs, {"rfp_a.pdf": "한국정보화진흥원"})
+    assert router.route("한국정보화진흥원 요구사항") == {"한국정보화진흥원": {"a"}}
+
+
+def test_csv_case_only_collision_does_not_choose_an_organization():
+    docs = [{"doc_id": "a", "source": "RFP_A.pdf", "title": "사업", "cover_text": "", "head_text": ""}]
+    router = DocRouter(docs, {"RFP_A.pdf": "기관가공사", "rfp_a.pdf": "기관나공사"})
+    assert router.route("기관가공사와 기관나공사 요구사항") == {}

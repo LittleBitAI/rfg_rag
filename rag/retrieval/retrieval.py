@@ -147,21 +147,27 @@ def _extract_orgs(texts) -> list[str]:
     return orgs
 
 
+def _source_key(name: str) -> str:
+    """전체 파일명 비교에는 NFC를 적용하고 대소문자 차이를 무시한다. 기호와 확장자는 보존한다."""
+    return unicodedata.normalize("NFC", name).lower()
+
+
 def read_csv_orgs(path: Path) -> dict[str, str]:
     """담당자가 제공한 CSV의 파일명 · 발주 기관 열을 읽는다"""
     orgs: dict[str, str] = {}
     with open(path, encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
             name, org = row["파일명"], row["발주 기관"]
-            if name in orgs and orgs[name] != org:
+            key = _source_key(name)
+            if key in orgs and orgs[key] != org:
                 raise ValueError(f"CSV 파일명에 서로 다른 발주 기관이 지정되었습니다: {name}")
-            orgs[name] = org
+            orgs[key] = org
     return orgs
 
 
 def _file_key(name: str) -> str:
-    """파일명 비교 키: NFC로 맞추고 확장자와 기호를 제거한다"""
-    stem = re.sub(r"\.(?:pdf|hwpx?)$", "", unicodedata.normalize("NFC", name), flags=re.IGNORECASE)
+    """대소문자를 무시한 NFC 파일명에서 확장자와 기호를 제거한 비교 키"""
+    stem = re.sub(r"\.(?:pdf|hwpx?)$", "", _source_key(name))
     return re.sub(r"[^0-9A-Za-z가-힣]", "", stem)
 
 
@@ -176,12 +182,12 @@ def _csv_org_docs(docs: list[dict], csv_orgs: dict[str, str]) -> dict[str, set]:
     by_source: dict[str, set[str]] = defaultdict(set)
     by_key: dict[str, set[str]] = defaultdict(set)
     for name, org in csv_orgs.items():
-        by_source[unicodedata.normalize("NFC", name)].add(org)
+        by_source[_source_key(name)].add(org)
         by_key[_file_key(name)].add(org)
     org_docs: dict[str, set] = defaultdict(set)
     for doc in docs:
         key = _file_key(doc["source"])
-        orgs = (by_source.get(unicodedata.normalize("NFC", doc["source"])) or by_key.get(key)
+        orgs = (by_source.get(_source_key(doc["source"])) or by_key.get(key)
                 or set().union(*(orgs for k, orgs in by_key.items() if k.startswith(key))))
         if len(orgs) == 1:
             for name in _org_names(next(iter(orgs))):
