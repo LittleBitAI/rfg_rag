@@ -5,7 +5,6 @@ C 는 사람이 웹에서 만들어 생성 토큰 · 비용을 관측할 수 없
 """
 import json
 from collections import Counter
-from pathlib import Path
 
 from golden_pipeline import improvement, plan, storage
 from golden_pipeline.generation import UNOBSERVED
@@ -58,10 +57,10 @@ def _collect(topic, method, run_ids):
     data = {"plans": set(), "outputs": [], "generation": [], "validation": []}
     for run_id in run_ids:
         run_dir = storage.run_path(topic, method, run_id)
-        generated = _read_json(run_dir / "manifest.json")["generation"]
+        generated = storage._read_json(run_dir / "manifest.json")["generation"]
         data["plans"].add((generated["plan_id"], generated["plan_sha256"]))
         data["generation"].append(generated)
-        data["validation"] += [_read_json(path) for path in storage.validation_records(run_dir)]
+        data["validation"] += [storage._read_json(path) for path in storage.validation_records(run_dir)]
         data["outputs"] += _outputs(topic, method, run_id, run_dir)
     return data
 
@@ -195,6 +194,3 @@ def _shown(ratio):
         return UNOBSERVED
     return f"{value:.1%}" if isinstance(ratio["numerator"], int) else f"{value:.6f}"
 
-
-def _read_json(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))

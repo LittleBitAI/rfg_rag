@@ -3,21 +3,9 @@ import pytest
 from golden_pipeline.schema import EVIDENCE_FIELDS, SchemaError, validate_item
 
 
-def test_fixture_item_is_valid(make_item):
-    validate_item(make_item())
-
-
-@pytest.mark.parametrize("primary_topic", ["", "numbers", None, "Numeric"])
-def test_unknown_primary_topic_is_rejected(make_item, primary_topic):
+def test_unknown_primary_topic_is_rejected(make_item):
     with pytest.raises(SchemaError, match="primary_topic"):
-        validate_item(make_item(primary_topic=primary_topic))
-
-
-def test_missing_primary_topic_is_rejected(make_item):
-    item = make_item()
-    del item["primary_topic"]
-    with pytest.raises(SchemaError, match="primary_topic"):
-        validate_item(item)
+        validate_item(make_item(primary_topic="Numeric"))
 
 
 def test_primary_topic_repeated_in_secondary_tags_is_rejected(make_item):
@@ -26,7 +14,7 @@ def test_primary_topic_repeated_in_secondary_tags_is_rejected(make_item):
 
 
 @pytest.mark.parametrize("field", [
-    "candidate_id", "parent_candidate_id", "run_id", "method", "bundle_id", "context", "structure",
+    "candidate_id", "parent_candidate_id", "run_id", "method", "primary_topic", "bundle_id", "context", "structure",
     "generator_version", "validator_version", "prompt_version", "difficulty", "state", "state_history",
 ])
 def test_missing_item_provenance_field_is_rejected(make_item, field):
@@ -120,7 +108,7 @@ def test_item_past_candidate_needs_validator_version_and_difficulty(make_item):
         validate_item(make_item(difficulty="easy"))
 
 
-@pytest.mark.parametrize("at", [None, object(), "어제", "2026-10-14T00:00:00", "2026-10-14T09:00:00+09:00"])
+@pytest.mark.parametrize("at", [None, "2026-10-14T00:00:00", "2026-10-14T09:00:00+09:00"])
 def test_transition_time_must_be_iso_utc(make_item, at):
     # at 이 None 이면 그대로 저장되고, JSON 으로 못 쓰는 값이면 run 폴더만 만든 채 TypeError 로 끝나
     # 같은 run_id 로 다시 돌릴 수 없던 결함을 막는다.

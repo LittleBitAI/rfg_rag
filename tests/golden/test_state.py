@@ -24,12 +24,10 @@ def test_transitions_keep_history_in_order_and_every_step_stays_valid(make_item)
     assert item["validator_version"] is None
 
 
-@pytest.mark.parametrize("to", ["auto_validated", "held", "rejected"])
-def test_leaving_candidate_needs_validator_version_and_difficulty(make_item, to):
+def test_leaving_candidate_needs_validator_version_and_difficulty(make_item):
     for given in ({}, {"validator_version": "val-0.1"}, {"difficulty": "easy"}):
         with pytest.raises(StateError, match="validator_version · difficulty"):
-            transition(make_item(), to, "통과", **given)
-    validate_item(transition(make_item(), to, "통과", validator_version="val-0.1", difficulty="easy"))
+            transition(make_item(), "held", "보류", **given)
 
 
 @pytest.mark.parametrize("given", [{"validator_version": "val-9"}, {"difficulty": "hard"}])

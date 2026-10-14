@@ -71,14 +71,14 @@ def _resume(args):
     if args.method == "A":
         if args.max_calls or args.budget:
             raise SystemExit("A 의 한도는 loop 를 시작할 때 고정됩니다. --max-calls · --budget 없이 이으세요")
-        start = json.loads((improvement._loop_path(args.topic, args.id) / "start.json").read_text(encoding="utf-8"))
+        start = storage._read_json(improvement._loop_path(args.topic, args.id) / "start.json")
         with _config_file(start["config"]) as path, api_client() as call:
             return _json(improvement.improve(args.topic, start["plan_id"], args.id, path, call, call))
     if not (args.max_calls and args.budget):
         raise SystemExit("B · C 의 검증을 이으려면 --max-calls · --budget 을 받아야 합니다")
     storage.read_validated(args.topic, args.method, args.id)
     run_dir = storage.run_path(args.topic, args.method, args.id)
-    last = json.loads(storage.validation_records(run_dir)[-1].read_text(encoding="utf-8"))
+    last = storage._read_json(storage.validation_records(run_dir)[-1])
     config = {**last["run_config"], "max_calls": args.max_calls, "budget_usd": args.budget}
     with _config_file(config) as path, api_client() as call:
         return validation.resume_validation(args.topic, args.method, args.id, path, call)

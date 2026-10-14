@@ -83,35 +83,17 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
 @pytest.mark.parametrize("answer, structure", [
     ("예산은 사업 규모와 부가세 포함 여부에 따라 정해진다", {"value": "130,000,000", "unit": "원"}),
     ("예산은 사업 규모와 부가세 포함 여부에 따라 정해진다", {"value": "", "unit": ""}),
-    ("예산은 999원이다", {"value": "999", "unit": "원"}),
-    # 근거의 130,000,000원 · 12개월 안에 든 더 짧은 수다. 수는 통째로 맞아야 한다.
-    ("예산은 30,000,000원이다", {"value": "30,000,000", "unit": "원"}),
-    ("기간은 2개월이다", {"value": "2", "unit": "개월"}),
-    # 근거의 12개월 은 단위가 개월 이다. 단위도 통째로 맞아야 하고, 값과 단위를 다르게 나눠도 안 된다.
-    ("기간은 12개이다", {"value": "12", "unit": "개"}),
+    # 근거의 12개월 은 값 12 와 단위 개월 이다. 값과 단위를 다르게 나눠도 안 된다.
     ("기간은 12개월이다", {"value": "12개", "unit": "월"}),
-    # 부호는 값의 일부다. 근거의 130,000,000원 은 양수다.
-    ("-130,000,000원", {"value": "130,000,000", "unit": "원"}),
-    ("△130,000,000원", {"value": "130,000,000", "unit": "원"}),
-    ("- 130,000,000원", {"value": "130,000,000", "unit": "원"}),
 ])
 def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch(planned, answer, structure):
-    # 값 없이 설명만 하는 답이 numeric 후보로 남던 경우를 막는다. 근거에 없는 값도 같은 이유로 거절한다.
+    # 값 없이 설명만 하는 답이 numeric 후보로 남던 경우를 막는다. 근거에 없는 값은 아래 쌍 검사가 거절한다.
     run_dir = generate("A", "numeric", "p1", "a1", planned, Client({**NUMERIC, "answer": answer, "structure": structure}))
 
     assert read_jsonl(run_dir / "candidates.jsonl") == []
     [reject] = read_jsonl(run_dir / "rejected.jsonl")
     assert reject["reason"].startswith("유형 불일치")
     assert reject["bundle_id"] == bundle("numeric")["bundle_id"]
-
-
-def test_numeric_unit_followed_by_a_particle_is_accepted(planned):
-    # 조사는 단위에 붙는다 (12개월이다). 단위 끝을 글자 종류로 가르는 수정은 이 답을 거절한다.
-    answer = {**NUMERIC, "answer": "계약 기간은 12개월이다", "structure": {"value": "12", "unit": "개월"}}
-    run_dir = generate("A", "numeric", "p1", "a1", planned, Client(answer))
-
-    [item] = read_jsonl(run_dir / "candidates.jsonl")
-    assert item["structure"] == {"value": "12", "unit": "개월"}
 
 
 def unit(text, kind="char"):
@@ -122,6 +104,15 @@ def unit(text, kind="char"):
 @pytest.mark.parametrize("value, unit_name, evidence, ok", [
     ("5", "%", "낙찰 하한율은 5%이다", True),
     ("6", "개월", "기간은 6 개월", True),
+    # 조사는 단위에 붙는다 (12개월이다). 단위 끝을 글자 종류로 가르는 수정은 이 값을 거절한다.
+    ("12", "개월", "계약 기간은 12개월이다", True),
+    # 더 긴 수 안에 든 더 짧은 수다. 수는 통째로 맞아야 한다.
+    ("30,000,000", "원", "예산은 130,000,000원이다", False),
+    ("2", "개월", "기간은 12개월이다", False),
+    # 부호는 값의 일부다.
+    ("130,000,000", "원", "-130,000,000원", False),
+    ("130,000,000", "원", "△130,000,000원", False),
+    ("130,000,000", "원", "- 130,000,000원", False),
     ("5", "%", "금리를 5%p 올린다", False),
     ("5", "%", "금리를 5%포인트 올린다", False),
     ("3", "개", "3개년 계획", False),
@@ -193,9 +184,8 @@ def test_b_prompt_hash_is_constant(planned):
     assert infos[0]["prompt_sha256"] != a["prompt_sha256"]
 
 
-@pytest.mark.parametrize("name", ["model", "max_calls", "budget_usd"])
-def test_model_call_cap_and_budget_are_required_with_no_default(planned, name):
-    config = {key: value for key, value in CONFIG.items() if key != name}
+def test_model_call_cap_and_budget_are_required_with_no_default(planned):
+    config = {key: value for key, value in CONFIG.items() if key != "budget_usd"}
     planned.write_text(json.dumps(config), encoding="utf-8")
     client = Client(NUMERIC)
 

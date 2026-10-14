@@ -118,7 +118,7 @@ def continue_validation(topic, method, run_id, items, info):
     run_dir = run_path(topic, method, run_id)
     records = validation_records(run_dir)
     last = records[-1]
-    pending = set(json.loads(last.read_text(encoding="utf-8"))["pending"])
+    pending = set(_read_json(last)["pending"])
     info = {**info, "continues": {"file": last.name, "sha256": _sha256(last)}}
     return _record_validation(run_dir, items, pending, run_dir / f"validation-{len(records) + 1}.json", info)
 
@@ -133,7 +133,7 @@ def validation_records(run_dir):
     while path.exists():
         if records:
             link = {"file": records[-1].name, "sha256": _sha256(records[-1])}
-            if json.loads(path.read_text(encoding="utf-8")).get("continues") != link:
+            if _read_json(path).get("continues") != link:
                 raise CatalogError(f"{path.name} 이 이은 {records[-1].name} 가 바뀌었습니다: {Path(run_dir).name}")
         records.append(path)
         path = Path(run_dir) / f"validation-{len(records) + 1}.json"
@@ -167,7 +167,7 @@ def read_validated(topic, method, run_id):
     records = validation_records(run_dir)
     if not records:
         raise FileNotFoundError(f"검증하지 않은 run 입니다: {topic}/{method}/{run_id}")
-    record = json.loads(records[-1].read_text(encoding="utf-8"))
+    record = _read_json(records[-1])
     changed = [name for name, sha in record["files"].items() if _sha256(run_dir / name) != sha]
     if changed:
         raise CatalogError(f"{topic}/{method}/{run_id} 의 {changed} 가 검증 기록({records[-1].name})과 다릅니다")
@@ -326,6 +326,10 @@ def _sha256(path):
 def _count_lines(path):
     with path.open(encoding="utf-8") as f:
         return sum(1 for _ in f)
+
+
+def _read_json(path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def _read_jsonl(path):
