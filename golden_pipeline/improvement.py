@@ -87,9 +87,7 @@ def record_failures(topic, run_id):
         raise ValueError(f"검증하지 않은 run 의 실패는 기록하지 않습니다: {topic}/A/{run_id}")
     entries = []
     for line, row in enumerate(storage._read_jsonl(run_dir / "rejected.jsonl"), 1):
-        # 항목이 된 거절은 마지막 전이에, 항목이 되지 못한 생성 출력은 행에 이유가 있다.
-        reason = row["state_history"][-1]["reason"] if "candidate_id" in row else row["reason"]
-        code = failure_code(reason)
+        code = failure_code(_reason(row))
         entries.append({
             "entry_id": f"{run_id}:{line}",
             "failure_code": code,
@@ -106,6 +104,11 @@ def failure_code(reason):
     if code is None:
         raise ValueError(f"실패 코드가 정해지지 않은 거절 이유입니다. FAILURE_CODES 에 더하세요: {reason!r}")
     return code
+
+
+def _reason(row):
+    # 항목이 된 거절은 마지막 전이에, 항목이 되지 못한 생성 출력은 행에 이유가 있다.
+    return row["state_history"][-1]["reason"] if "candidate_id" in row else row["reason"]
 
 
 def write_memory(topic, run_id, entries):
@@ -162,7 +165,7 @@ def _round(topic, plan_id, loop_id, n, config, clients):
     """round n 의 남은 단계를 한다. 다음 round 로 가면 None, 멈추면 멈춘 이유를 돌려준다."""
     run_id = f"{loop_id}-r{n}"
     run_dir = storage.run_path(topic, "A", run_id)
-    if not (run_dir / "manifest.json").exists():
+    if not _generated(topic, loop_id, n):
         stop = _generate(topic, plan_id, loop_id, n, config, clients[0])
         if stop:
             return stop
@@ -199,6 +202,7 @@ def _revision(topic, loop_id, n, parents):
         "version": PREVENTION_VERSION,
         "loop_id": loop_id,
         "round": n,
+        "start_sha256": storage._sha256(_loop_path(topic, loop_id) / "start.json"),
         "failures": related,
         "prevention_sha256": hashlib.sha256(prevention.encode("utf-8")).hexdigest(),
     }
@@ -269,9 +273,31 @@ def _report(topic, plan_id, loop_id, stop):
 def _rounds(topic, loop_id):
     """loop 의 생성이 끝난 round 디렉터리를 차례로."""
     n = 1
-    while (run_dir := storage.run_path(topic, "A", f"{loop_id}-r{n}")).joinpath("manifest.json").exists():
-        yield run_dir
+    while _generated(topic, loop_id, n):
+        yield storage.run_path(topic, "A", f"{loop_id}-r{n}")
         n += 1
+
+
+def _generated(topic, loop_id, n):
+    """round n 의 생성 run 이 있는지. 있으면 이 loop 가 start.json 의 계획으로 round n 에 만든 run 이어야 한다.
+
+    run 이름만 같다고 이어 쓰면, 따로 만든 run 이나 다른 계획 · 다른 시작 기록의 run 이 이 loop 의 round 로 검증 · 보고된다.
+    """
+    run_dir = storage.run_path(topic, "A", f"{loop_id}-r{n}")
+    if not (run_dir / "manifest.json").exists():
+        return False
+    generated = _read_json(run_dir / "manifest.json")["generation"]
+    policy = generated["policy"] or {}
+    start = _loop_path(topic, loop_id) / "start.json"
+    pinned = _read_json(start)
+    owner = {"loop_id": loop_id, "round": n, "start_sha256": storage._sha256(start),
+             "plan_id": pinned["plan_id"], "plan_sha256": pinned["plan_sha256"]}
+    found = {"loop_id": policy.get("loop_id"), "round": policy.get("round"), "start_sha256": policy.get("start_sha256"),
+             "plan_id": generated["plan_id"], "plan_sha256": generated["plan_sha256"]}
+    changed = sorted(key for key in owner if owner[key] != found[key])
+    if changed:
+        raise ValueError(f"{run_dir.name} 은 loop {loop_id} 가 round {n} 에 만든 run 이 아닙니다: {changed}")
+    return True
 
 
 def _loop_config(path):
@@ -333,20 +359,28 @@ def _check_shape(entry):
 
 
 def _check_rule(entry):
-    """예방 규칙은 실패 코드마다 정해 둔 글과 버전이어야 한다. 검증하지 않은 고친 답을 사실로 적어 넣지 못하게 한다."""
+    """예방 규칙은 실패 코드마다 정해 둔 글과 버전이어야 한다. 검증하지 않은 고친 답을 사실로 적어 넣지 못하게 한다.
+
+    정해 두지 않은 코드는 규칙이 없다. 막지 않으면 다음 loop 가 그 코드의 규칙을 찾다 멈춘다.
+    """
     code = entry["failure_code"]
-    if PREVENTION_RULES.get(code) != entry["prevention_rule"] or entry["rule_version"] != PREVENTION_VERSION:
+    known = code in PREVENTION_RULES and PREVENTION_RULES[code] == entry["prevention_rule"]
+    if not known or entry["rule_version"] != PREVENTION_VERSION:
         raise FailureMemoryError(f"{entry['entry_id']} 의 예방 규칙이 {PREVENTION_VERSION} 의 {code!r} 규칙과 다릅니다")
 
 
 def _check_reference(entry, run_id, rows):
-    """entry_id · evidence 는 이 run 의 rejected.jsonl 한 줄에서 나온 값과 꼭 같아야 한다. 참조 칸에 다른 글을 실어 보내지 못하게 한다."""
+    """entry_id · evidence · failure_code 는 이 run 의 rejected.jsonl 한 줄에서 나온 값과 꼭 같아야 한다.
+
+    참조 칸에 다른 글을 실어 보내지 못하고, 정해 둔 코드라도 그 줄의 거절 이유와 다른 규칙을 가르치지 못하게 한다.
+    """
     line = entry["evidence"]["line"]
     if type(line) is not int or not 1 <= line <= len(rows):
         raise FailureMemoryError(f"{entry['entry_id']} 의 evidence.line 이 A/{run_id} 의 rejected.jsonl 한 줄이 아닙니다")
     row = rows[line - 1]
     expected = {"run": f"A/{run_id}", "line": line, "candidate_id": row.get("candidate_id"), "bundle_id": row["bundle_id"]}
-    if entry["entry_id"] != f"{run_id}:{line}" or entry["evidence"] != expected:
+    derived = entry["entry_id"] == f"{run_id}:{line}" and entry["failure_code"] == failure_code(_reason(row))
+    if not derived or entry["evidence"] != expected:
         raise FailureMemoryError(f"{entry['entry_id']} 의 참조가 A/{run_id} 의 rejected.jsonl {line} 번째 줄과 다릅니다")
 
 

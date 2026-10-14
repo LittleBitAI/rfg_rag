@@ -150,6 +150,15 @@ def test_an_unverified_corrected_answer_cannot_be_written_as_a_fact(looped):
             write_memory("numeric", "l1-r1", [bad])
 
 
+def test_memory_takes_only_the_failure_code_its_rejected_row_gives(looped):
+    # 규칙이 없는 코드가 기록되면 다음 loop 가 그 규칙을 찾다 멈추고, 다른 코드는 그 줄과 무관한 규칙을 가르친다.
+    entry = memory(1)[1]
+    assert entry["failure_code"] == "answer_mismatch"
+    for code, rule in (("unknown", None), ("output_format", PREVENTION_RULES["output_format"])):
+        with pytest.raises(FailureMemoryError):
+            write_memory("numeric", "l1-r1", [{**entry, "failure_code": code, "prevention_rule": rule}])
+
+
 def test_next_round_gets_rules_for_the_topics_failure_codes_and_records_its_policy(loop_config):
     # 다른 주제의 실패 기록이 섞이면 주제와 무관한 규칙이 붙는다.
     other = storage.OUTPUTS / "goldens" / "table" / "failure_memory"
@@ -226,6 +235,36 @@ def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config
     with pytest.raises(ValueError, match=re.escape(f"시작할 때와 다릅니다: {changed}")):
         improve("numeric", plan_id, "l1", config, generator, validator)
     assert not generator.requests and not validator.calls
+
+
+@pytest.mark.parametrize("collision, run_id, changed", [
+    ("standalone_run_of_another_plan", "l1-r1", ["loop_id", "plan_id", "plan_sha256", "round", "start_sha256"]),
+    ("standalone_run_after_an_interruption", "l1-r3", ["loop_id", "round", "start_sha256"]),
+    ("recreated_loop_record", "l1-r1", ["start_sha256"]),
+])
+def test_a_loop_refuses_a_run_under_its_name_that_it_did_not_make(loop_config, evidence_run, tmp_path,
+                                                                   collision, run_id, changed):
+    # run 이름만 같다고 이어 쓰면 다른 계획이나 loop 밖에서 만든 run 이 이 loop 의 round 로 검증 · 보고된다.
+    run = tmp_path / "run.json"
+    run.write_text(json.dumps({**LOOP["generator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
+    if collision == "standalone_run_of_another_plan":
+        make_plan("p1", "ev1", {"numeric": 1}, 2000, package=evidence_run)
+        generate("A", "numeric", "p1", "l1-r1", run, Generator())
+    else:
+        with pytest.raises(ConnectionError):
+            improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=3))
+        if collision == "standalone_run_after_an_interruption":
+            generate("A", "numeric", "p3", "l1-r3", run, Generator())
+        else:
+            # 시작 기록을 지우고 다른 한도로 다시 만든다. 같은 바이트로 다시 만든 기록은 같은 loop 로 본다.
+            (storage.OUTPUTS / "goldens/numeric/loops/l1/start.json").unlink()
+
+    config = loop_config(max_calls=99) if collision == "recreated_loop_record" else loop_config()
+    generator = Generator()
+    with pytest.raises(ValueError, match=re.escape(f"{run_id} 은 loop l1 가 round {run_id[-1]} 에 만든 run 이 아닙니다: {changed}")):
+        improve("numeric", "p3", "l1", config, generator, Validator())
+    assert not generator.requests
+    assert not (storage.OUTPUTS / "goldens/numeric/loops/l1/report.json").exists()
 
 
 def test_calls_of_an_interrupted_validation_count_against_the_loop_limit(loop_config):

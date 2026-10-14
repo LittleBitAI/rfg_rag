@@ -380,7 +380,8 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 3. 생성: 그 묶음만 부릅니다. 같은 묶음에서 거절된 앞 후보가 있으면 새 후보의 `parent_candidate_id` 가 그 id 이고,
    새 후보는 새 `candidate_id` 를 받습니다. 앞 round 의 파일은 바꾸지 않습니다.
    run 매니페스트의 `generation.prompt_sha256` (프롬프트 파일)과 `generation.policy`
-   (`version`, `loop_id`, `round`, 코드별 기록 `failures`, 붙인 글의 `prevention_sha256`)로 무엇을 보냈는지 남깁니다.
+   (`version`, `loop_id`, `round`, `start.json` 의 `start_sha256`, 코드별 기록 `failures`, 붙인 글의 `prevention_sha256`)로
+   무엇을 보냈는지 남깁니다.
 4. 검증: 독립 검증과 같습니다. 기준은 바꾸지 않습니다.
 5. 실패 기록: `rejected.jsonl` 한 줄마다 항목 하나를 `failure_memory/A_{run_id}.jsonl` 에 씁니다 (`record_failures`).
 
@@ -402,7 +403,8 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
 
 실패 기록에 쓰는 곳은 `write_memory` 하나이고, 여기서 막습니다:
-필드가 다르거나, 규칙 글 · 버전이 그 코드의 것과 다르거나, `entry_id` · `evidence` 가 그 run 의 `rejected.jsonl` 한 줄에서 나온 값과 다른 항목.
+필드가 다르거나, `PREVENTION_RULES` 에 없는 코드이거나, 규칙 글 · 버전이 그 코드의 것과 다르거나,
+`entry_id` · `evidence` · `failure_code` 가 그 run 의 `rejected.jsonl` 한 줄(과 그 거절 이유)에서 나온 값과 다른 항목.
 그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유(사람 확인 이유 포함)가 들어올 자리가 없습니다.
 출시본 글을 부분 문자열로 찾지는 않습니다. `JSON` 같은 짧은 출시본 답이 정해 둔 규칙 글에 들어 있어도 그 규칙은 기록돼야 하기 때문입니다.
 
@@ -423,6 +425,9 @@ round 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 �
 끝난 round 를 다시 부르지 않고 같은 `candidate_id` 가 두 번 생기지 않습니다.
 loop 설정, 계획(id 와 SHA-256), 통과 기준(`thresholds`)은 처음 시작할 때 `start.json` 에 고정하고,
 round 마다와 `report.json` 을 쓰기 전에 지금 값과 맞춰 봅니다. 하나라도 다르면 바뀐 키를 밝히고 멈춥니다.
+이미 있는 `{loop_id}-r{n}` run 은 이 loop 가 만든 것일 때만 이어 씁니다: 매니페스트의 `generation.policy` 의 `loop_id` · `round` ·
+`start_sha256` 과 `generation.plan_id` · `plan_sha256` 이 이 loop 와 `start.json` 의 값과 같아야 합니다.
+따로 만든 run (`policy` 가 `null`)이나 다른 계획 · 다른 시작 기록의 run 이 그 이름에 있으면 다른 키를 밝히고 멈춥니다.
 `report.json` 이 있는 loop 는 다시 돌지 않습니다.
 
 `report.json` 은 목표(계획의 요청 개수)와 `auto_validated` 묶음 수, `held` 묶음 수, 모자란 수(`shortfall`)를 남깁니다.
