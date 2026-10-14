@@ -153,9 +153,11 @@ def chunk_units(chunk, pkg):
         record = pkg["records"].get(element["record_id"]) if element else None
         base = _chunk_base(chunk, span["element_id"], element, record)
         if "rows" in span:
+            # 행만의 텍스트는 따로 없으므로 OCR 범위는 요소 본문 전체로 확인한다 (행보다 넓어 보수적이다).
+            text = element["text"] if element else ""
             for row in span["rows"]:
                 location = {"kind": "table", "grid": "logical_restored", "row": row, "cell": None}
-                pairs.append(_chunk_unit(base, location, _row_error(row, element), "", pkg))
+                pairs.append(_chunk_unit(base, location, _row_error(row, element), text, pkg))
         else:
             location = {"kind": "char", "start": span["start"], "end": span["end"]}
             text = element["text"][span["start"]:span["end"]] if element else ""
@@ -172,6 +174,8 @@ def grid_units(grid, pkg):
     errors = [] if sha in pkg["docs"] else [f"문서 SHA {sha} 가 v11 레코드에 없습니다"]
     if element is None:
         errors.append("이 표를 가리키는 요소가 없습니다 (final_verified_native_table)")
+    else:
+        errors += _link_errors(element_id, element, record)
     base = {
         "doc_sha": sha,
         "chunk_id": None,

@@ -196,6 +196,15 @@ def test_broken_link_is_detected_and_held(package, break_link, message):
     assert any(message in reason for reason in judgment["reasons"])
 
 
+def test_grid_cell_of_an_element_with_a_missing_record_is_not_linked(package):
+    pkg = copy.deepcopy(BASE)
+    pkg["elements"][1]["location"]["record_id"] = "missing-record"
+    main, _, _ = package(pkg)
+    unit, judgment = next(pair for pair in units_of(main).values() if pair[0]["unit_id"].startswith("grid:"))
+    assert unit["ids_linked"] is False
+    assert any("레코드 missing-record 가 final_records.jsonl 에 없습니다" in r for r in judgment["reasons"])
+
+
 def test_raw_files_link_only_by_sha(package):
     main, _, raw = package()
     rows = {row["file"]: row for row in evidence.link_raw(raw, evidence.load(main)["records"])}
@@ -239,6 +248,17 @@ def test_image_evidence_carries_sha_and_scope_and_holds_content_outside_it(
     assert unit["ocr_scope"] == evidence.OCR_SCOPES.get(source.get("scope"), "hold")
     assert result["judgment"] == judgment
     assert reason is None or any(reason in r for r in result["reasons"])
+
+
+@pytest.mark.parametrize("row_text, judgment", [("접수\n심사", "eligible"), ("검증 전사에 없는 행", "held")])
+def test_ocr_table_row_is_checked_against_the_verified_transcription(package, row_text, judgment):
+    pkg = copy.deepcopy(BASE)
+    pkg["elements"][2].update(search_text=row_text, table={"rows": 1, "cols": 1, "cells": []})
+    pkg["chunks"][2].update(body=row_text, spans=[{"element_id": "e-image", "rows": [0]}])
+    main, _, _ = package(pkg)
+    unit, result = units_of(main)["chunk:c-image:e-image:row:0"]
+    assert unit["meaning_verified"] is (judgment == "eligible")
+    assert result["judgment"] == judgment
 
 
 def _unverified(pkg):
