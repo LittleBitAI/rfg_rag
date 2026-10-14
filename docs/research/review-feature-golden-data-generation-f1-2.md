@@ -142,7 +142,7 @@ Before the fix (red): add cases to `test_numeric_candidate_without_a_value_from_
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed in the commit that adds this Result (parent `4cf4036`, code as of `a82bdb0`). Before the fix, all seven mismatch cases failed: `-130,000,000원` and `△130,000,000원` in `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch` landed in `candidates.jsonl`, and `test_numeric_pair_must_be_the_whole_expression_in_evidence` returned no mismatch for 5/% against `5%p` and `5%포인트`, 3/개 against `3개년`, 12/개월 against `10~12개월`, and 123/개월 against `1, 2, 3개월`. The controls 5/% against `5%이다` and 6/개월 against `6 개월` passed before and after. The fix follows the hypothesis without touching `_contains` or numeric.json: `_pairs` wraps the spec pattern with `NUMBER_START` (an optional sign `[+\-−±△▲]` kept in the value, and no match right after `[\d.,~∼〜+\-−±△▲]`) and `UNIT_END` (no following Latin letter or `/`, `포인트`, `년` or `간`). It reads NFC text and applies `_norm` only to the captured value. The answer check and the evidence check both go through it. After the fix all seven cases are rejected, and the review-1 and review-2 cases, `test_numeric_unit_followed_by_a_particle_is_accepted` and the `130,000,000원(부가세 포함)` test pass unchanged. `ruff check .` is clean, and the full gate `.venv\Scripts\python -m pytest -q tests` gave 340 passed. The hypothesis was not refuted by these cases. The Hangul continuation list is still an enumeration, as Counterevidence says, and left-side Hangul prefixes (제3회) were not tested.
 
 ## Unresolved limits
 

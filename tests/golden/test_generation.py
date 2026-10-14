@@ -91,6 +91,9 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
     # 근거의 12개월 은 단위가 개월 이다. 단위도 통째로 맞아야 하고, 값과 단위를 다르게 나눠도 안 된다.
     ("기간은 12개이다", {"value": "12", "unit": "개"}),
     ("기간은 12개월이다", {"value": "12개", "unit": "월"}),
+    # 부호는 값의 일부다. 근거의 130,000,000원 은 양수다.
+    ("-130,000,000원", {"value": "130,000,000", "unit": "원"}),
+    ("△130,000,000원", {"value": "130,000,000", "unit": "원"}),
 ])
 def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch(planned, answer, structure):
     # 값 없이 설명만 하는 답이 numeric 후보로 남던 경우를 막는다. 근거에 없는 값도 같은 이유로 거절한다.
@@ -114,6 +117,22 @@ def test_numeric_unit_followed_by_a_particle_is_accepted(planned):
 def unit(text, kind="char"):
     location = {"kind": "table", "row": 0} if kind == "table" else {"kind": "char"}
     return {"text": text, "ref": {"location": location}}
+
+
+@pytest.mark.parametrize("value, unit_name, evidence, ok", [
+    ("5", "%", "낙찰 하한율은 5%이다", True),
+    ("6", "개월", "기간은 6 개월", True),
+    ("5", "%", "금리를 5%p 올린다", False),
+    ("5", "%", "금리를 5%포인트 올린다", False),
+    ("3", "개", "3개년 계획", False),
+    ("12", "개월", "기간은 10~12개월", False),
+    ("123", "개월", "1, 2, 3개월 차에 점검", False),
+])
+def test_numeric_pair_must_be_the_whole_expression_in_evidence(value, unit_name, evidence, ok):
+    # 근거에서 수의 앞(부호 · 범위)과 단위의 뒤(목록 밖의 더 긴 단위)를 버리고 맞추면 뜻이 다른 값이 근거가 된다.
+    row = {"answer": f"{value}{unit_name}", "structure": {"value": value, "unit": unit_name}}
+    reason = check_structure("numeric", topic_spec("numeric")[0], row, [unit(evidence)])
+    assert reason is None if ok else "근거에 없습니다" in reason, reason
 
 
 @pytest.mark.parametrize("topic, structure, cited, ok", [

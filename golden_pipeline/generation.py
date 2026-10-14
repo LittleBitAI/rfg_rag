@@ -20,6 +20,11 @@ RUN_CONFIG = ("model", "max_calls", "budget_usd", "usd_per_million_input_tokens"
 ROW_FIELDS = ("question", "answer", "evidence", "structure", "secondary_tags")
 SIDECAR = ("model_label", "run_date", "provided_files", "tool_use", "input_limits")
 UNOBSERVED = "unobserved"
+SIGNS = r"+\-−±△▲"
+# 수 앞: 부호는 값에 넣고, 다른 수 · 범위 표시 · 부호 바로 뒤에서는 쌍을 시작하지 않는다 (10~12개월, 10-12개월).
+NUMBER_START = rf"(?<![\d.,~∼〜{SIGNS}])[{SIGNS}]?"
+# 단위 뒤: 목록 밖의 더 긴 단위로 이어지면 쌍이 아니다 (5%p, 5%포인트, MB/s, 3개년, 12개월간). 조사는 막지 않는다.
+UNIT_END = r"(?![A-Za-z/]|포인트|년|간)"
 
 
 def generate(method, topic, plan_id, run_id, config_path, client):
@@ -113,20 +118,24 @@ def _numeric(spec, structure, answer, cited, texts):
     if not (_is_text(value) and _is_text(unit) and re.search(r"\d", value)):
         return "숫자가 든 값과 단위가 있어야 합니다"
     pair = (_norm(value), _norm(unit))
-    if pair not in _pairs(spec, _norm(answer)):
+    if pair not in _pairs(spec, answer):
         return f"답에 값과 단위({value}{unit})가 없습니다"
-    if not any(pair in _pairs(spec, text) for text in texts):
+    if not any(pair in _pairs(spec, source["text"]) for source in cited):
         return f"값과 단위({value}{unit})가 근거에 없습니다"
     return None
 
 
 def _pairs(spec, text):
-    """text 에 적힌 (수, 단위) 쌍들. 단위는 numeric 명세 pattern 의 단위 목록으로 끊는다.
+    """text 에 적힌 (부호 포함 수, 단위) 쌍들. 단위는 numeric 명세 pattern 의 단위 목록으로 끊는다.
 
     한국어는 단위가 수에, 조사가 단위에 붙어 써서 (12개월이다) 글자 종류로는 단위 끝을 가를 수 없다.
     그래서 12개 는 12개월 의 일부로 맞지 않고, 12개월이다 는 (12, 개월) 로 읽힌다.
+    공백 · 쉼표가 수를 가르므로 (1, 2, 3개월) 원문에서 읽고, 읽은 값에만 _norm 을 쓴다.
+    ponytail: 단위 뒤에 붙는 한글 단위는 목록이다. 년차 · 개소처럼 목록 밖의 것이 문제 되면 형태소 분석으로 바꾼다.
     """
-    return {(match[0][:match.start(1) - match.start()], match[1]) for match in re.finditer(spec["pattern"], text)}
+    token = NUMBER_START + "(?:" + spec["pattern"] + ")" + UNIT_END
+    text = unicodedata.normalize("NFC", text)
+    return {(_norm(match[0][:match.start(1) - match.start()]), match[1]) for match in re.finditer(token, text)}
 
 
 def _table(spec, structure, answer, cited, texts):
