@@ -6,3 +6,6 @@ hf_cache/
 __pycache__/
 .ipynb_checkpoints/
 *.part
+frontend/web/node_modules/
+frontend/web/dist/
+/a.excalidraw

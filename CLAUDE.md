@@ -63,7 +63,8 @@ This table overrides any outside rule that asks for a different language, includ
 
 ## 4. Pipelines and ownership
 
-The work is split into five pipelines, listed in data-flow order. Each pipeline has exactly one owner.
+The work is split into five pipelines, listed in data-flow order, plus the frontend that sits on top of them.
+Each has exactly one owner.
 
 | # | Pipeline | Covers | Hands on |
 |---|---|---|---|
@@ -72,6 +73,7 @@ The work is split into five pipelines, listed in data-flow order. Each pipeline 
 | 3 | Validation | Building and checking the evaluation dataset | Evaluation dataset |
 | 4 | Generation | Answering questions from retrieved chunks | Answers |
 | 5 | Evaluation | Four evaluations of one answers file: Retrieval, Generation, Grounding, End-to-End | Four score tables and CSV files |
+| 6 | Frontend | `frontend/`: the question screen and its launchers; wraps `answer_question` and holds no RAG logic | Answers on screen |
 
 | # | Notebook | Modules |
 |---|---|---|
@@ -84,7 +86,13 @@ The work is split into five pipelines, listed in data-flow order. Each pipeline 
 `rag/config.py` holds the shared config and `.env` loading.
 Each notebook reads the previous notebook's outputs from `artifacts/`.
 Notebooks hold only configuration, function calls and display of results.
-All logic lives in modules under `rag/`.
+All logic lives in modules under `rag/`, with one exception: `golden_pipeline/`.
+
+`golden_pipeline/` belongs to pipeline 3, Validation, and has the same owner.
+It builds, validates and releases per-topic golden datasets,
+kept apart from `rag/validation/validation.py` on purpose.
+It imports nothing from `rag/` and writes only under `golden_pipeline/outputs/`.
+Its tests live in `tests/golden/`, so the gate runs them.
 
 Images in documents become text only through the OpenAI API (LangChain's `LLMImageBlobParser`),
 and only when `OCR = True` in `01_preprocessing.ipynb`; it is `False` by default.
@@ -112,6 +120,7 @@ Team members have no Langfuse keys, so every code path must run without them.
 ## 6. Before every commit
 
 1. `ruff check .` reports nothing new (section 1.3).
-2. The gate passes: `.venv/bin/python -m pytest -q tests`.
-   `.venv` is the environment `setup_vm.sh` sets up on the GCP L4 VM, as `README.md` describes.
+2. The gate passes: `.venv\Scripts\python -m pytest -q tests` on Windows,
+   `.venv/bin/python -m pytest -q tests` on Linux (the team VM `codeit`).
+   `.venv` is the Python 3.10 environment set up as `README.md` describes.
 3. `git diff --no-index CLAUDE.md AGENTS.md` prints nothing.

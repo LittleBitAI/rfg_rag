@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "requires": "근거 둘 이상을 이어야만 풀리는 질문. evidence 에 근거 라벨을 둘 이상 넣는다. 한 근거만으로 답할 수 있으면 multi_hop 이 아니다.",
+  "structure": {},
+  "pattern": null,
+  "table_only": false,
+  "bundle_units": 3
+}

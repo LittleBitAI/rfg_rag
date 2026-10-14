@@ -19,8 +19,9 @@ import hanja
 import numpy as np
 import pandas as pd
 
+from ..usage import UsageCallback
+
 SUPPORTED = (".pdf", ".hwp", ".hwpx")
-OCR_MODEL = "gpt-5-mini"
 
 
 # ====================================================================================================
@@ -424,7 +425,7 @@ TAB_GARBAGE = re.compile(r"(?<=[\t ])[^\s가-힣A-Za-z0-9|]{0,2}[Ā-˿](?=[\s|]|
 TOC_MARK = re.compile(r"(?:^|\|)[\s\-–•·\[\(<【]*(?:목\s*차|차\s*례|CONTENTS|Contents)[\s\-–•·\]\)>】]*(?:\||$)")
 TOC_LINE = re.compile(r"(?:\.{3,}|·{3,}|…{2,}|\s\d{1,3})\s*\|?\s*$")
 MULTI_ENTRY = re.compile(r"\s\d{1,3}(?=\s|$)")
-NEUTRAL  = re.compile(r"^\s*$|^[\s|:\-•·]+$|^(?:\|\s*)+\|?\s*$")      # 빈 줄, |---|, 빈 셀 행
+NEUTRAL = re.compile(r"^\s*$|^[\s|:\-•·]+$|^(?:\|\s*)+\|?\s*$")      # 빈 줄, |---|, 빈 셀 행
 BODY_START = re.compile(r"^\s*(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ][.\s]|제\s*1\s*[장편]|1\.\s|<[^>]{2,20}>|□|❏)")
 
 
@@ -502,11 +503,12 @@ def repair_md_tables(text: str) -> str:
 # ====================================================================================================
 # OCR (OCR=True 일 때만): 그림 → 글자. LangChain LLMImageBlobParser + OpenAI 비전 모델 (OPENAI_API_KEY)
 # ====================================================================================================
-def _ocr_parser():
+def _ocr_parser(ocr_cfg: dict, callback: UsageCallback):
     from langchain_community.document_loaders.parsers.images import LLMImageBlobParser
     from langchain_openai import ChatOpenAI
 
-    return LLMImageBlobParser(model=ChatOpenAI(model=OCR_MODEL, max_tokens=2048, reasoning_effort="low"))
+    return LLMImageBlobParser(model=ChatOpenAI(model=ocr_cfg["model"], max_tokens=int(ocr_cfg["max_tokens"]),
+                                            reasoning_effort=ocr_cfg["reasoning_effort"], callbacks=[callback]))
 
 
 def _ocr_image_file(path: str, image_parser) -> str:
@@ -561,12 +563,15 @@ def _patch_pymupdf_image_extraction():
 # ====================================================================================================
 # 문서 → 레코드
 # ====================================================================================================
-def parse_documents(files: list[str], pcfg: dict, ocr: bool) -> list[dict]:
+def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict) -> list[dict]:
     """문서마다 {doc_id, source, title, doc_type, cover_text, head_text, records}.
     ocr=False 면 그림을 API 로 보내지 않는다. True 면 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다."""
-    image_parser = _ocr_parser() if ocr else None
+    callback = UsageCallback("ocr", ocr_cfg["usd_per_1m_tokens"]) if ocr else None
+    image_parser = _ocr_parser(ocr_cfg, callback) if ocr else None
     docs = []
     for i, path in enumerate(files, 1):
+        if callback is not None:
+            callback.subject = os.path.basename(path)
         try:
             docs.append(_parse_file(path, pcfg, image_parser))
         except Exception as e:  # noqa: BLE001  손상된 문서 하나 때문에 나머지 문서 파싱을 버리지 않는다

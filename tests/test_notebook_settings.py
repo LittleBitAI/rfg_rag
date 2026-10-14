@@ -64,8 +64,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
     namespace = {"cfg": deepcopy(defaults), "ARTIFACTS": tmp_path, "write_jsonl": write_jsonl}
     _run_cell("02_retrieval.ipynb", "REWRITE_MODEL =", namespace,
               REWRITE_MODEL="selected-rewrite-model", REWRITE_REASONING_EFFORT="high",
-              REWRITE_MAX_TOKENS=1234, REWRITE_PRICES=[1.0, 0.1, 4.0], DENSE_WEIGHT=0.25,
-              TOKEN_BUDGET=4000)
+              REWRITE_MAX_TOKENS=1234, REWRITE_PRICES=[1.0, 0.1, 4.0], DENSE_WEIGHT=0.25)
     namespace.update(load_config=lambda: deepcopy(defaults), read_jsonl=read_jsonl)
     _run_cell("04_generation.ipynb", "import pandas", namespace)
     _run_cell("04_generation.ipynb", "LLM_MODEL =", namespace,
@@ -80,7 +79,6 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
 
     used_cfg = namespace["HybridIndex"].call_args.args[1]
     assert used_cfg["retrieval"]["dense_weight"] == 0.25
-    assert used_cfg["retrieval"]["token_budget"] == 4000
     assert used_cfg["rewrite"] == {**defaults["rewrite"], "model": "selected-rewrite-model",
                                    "reasoning_effort": "high", "max_tokens": 1234,
                                    "usd_per_1m_tokens": [1.0, 0.1, 4.0]}
@@ -89,3 +87,34 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
         {**defaults["llm"], "model": "selected-answer-model", "reasoning_effort": "medium", "max_tokens": 2345,
          "usd_per_1m_tokens": [2.0, 0.2, 8.0]},
         used_cfg["rewrite"])
+
+
+@pytest.mark.parametrize("package", [None, "data/RFP_Preprocessing_Final_v11_Team"])
+def test_preprocessing_notebook_selects_input(tmp_path, package):
+    docs, chunks = [{"doc_id": "d1"}], [{"chunk_id": "c1"}]
+    defaults = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    namespace = {"cfg": defaults, "ROOT": tmp_path, "ARTIFACTS": tmp_path / "artifacts",
+                 "collect_inputs": MagicMock(return_value=["test.pdf"]),
+                 "parse_documents": MagicMock(return_value=docs),
+                 "chunk_documents": MagicMock(return_value=chunks),
+                 "load_v11_package": MagicMock(return_value=(docs, chunks)),
+                 "save_chunks": MagicMock(), "parsing_summary": MagicMock(),
+                 "chunk_summary": MagicMock(), "display": MagicMock()}
+    _run_cell("01_preprocessing.ipynb", "PREPROCESSED =", namespace, PREPROCESSED=package)
+    notebook = json.loads((ROOT / "01_preprocessing.ipynb").read_text(encoding="utf-8"))
+    for cell in notebook["cells"]:
+        source = "".join(cell["source"])
+        if cell["cell_type"] == "code" and source.startswith("if PREPROCESSED is None:"):
+            exec(source, namespace)
+
+    namespace["save_chunks"].assert_called_once_with(docs, chunks, tmp_path / "artifacts")
+    if package is None:
+        namespace["collect_inputs"].assert_called_once()
+        namespace["parse_documents"].assert_called_once_with(
+            ["test.pdf"], defaults["parsing"], ocr=False, ocr_cfg=defaults["ocr"])
+        namespace["chunk_documents"].assert_called_once_with(docs, defaults["chunking"])
+        namespace["load_v11_package"].assert_not_called()
+    else:
+        namespace["load_v11_package"].assert_called_once_with(tmp_path / package)
+        for name in ["collect_inputs", "parse_documents", "chunk_documents", "parsing_summary"]:
+            namespace[name].assert_not_called()
