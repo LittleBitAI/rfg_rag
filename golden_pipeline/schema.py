@@ -16,6 +16,7 @@ OCR_SCOPES = ("full_visible_text", "partial_region", "hold")
 ITEM_FIELDS = (
     "candidate_id", "parent_candidate_id", "run_id", "method",
     "primary_topic", "secondary_tags", "question", "answer", "evidence",
+    "bundle_id", "context", "structure",
     "generator_version", "validator_version", "prompt_version",
     "state", "state_history",
 )
@@ -34,8 +35,11 @@ class SchemaError(ValueError):
 def validate_item(item):
     """항목이 스키마를 어기면 SchemaError 를 낸다."""
     _require_fields(item, ITEM_FIELDS, "item")
-    for name in ("candidate_id", "run_id", "question", "answer", "generator_version", "prompt_version"):
+    for name in ("candidate_id", "run_id", "question", "answer", "bundle_id", "context",
+                 "generator_version", "prompt_version"):
         _require_text(item[name], name)
+    if not isinstance(item["structure"], dict):
+        raise SchemaError("structure 는 객체여야 합니다")
     for name in ("parent_candidate_id", "validator_version"):
         if item[name] is not None:
             _require_text(item[name], name)

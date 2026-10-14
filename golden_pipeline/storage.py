@@ -33,8 +33,12 @@ def guard(path):
     return resolved
 
 
-def write_run(topic, method, run_id, items):
-    """한 run 의 항목을 상태별 파일로 나눠 쓰고 카탈로그에 등록한다."""
+def write_run(topic, method, run_id, items, rejects=(), info=None):
+    """한 run 의 항목을 상태별 파일로 나눠 쓰고 카탈로그에 등록한다.
+
+    rejects 는 스키마나 주제 구조를 어겨 항목이 되지 못한 생성 출력({bundle_id, reason, raw})이며 rejected.jsonl 에 함께 쓴다.
+    info 는 생성 방식이 남기는 실행 정보(모델, 해시, 근거 묶음 등)로 매니페스트의 generation 에 들어간다.
+    """
     if method not in METHODS:
         raise ValueError(f"method 는 {METHODS} 중 하나여야 합니다: {method!r}")
     for item in items:
@@ -42,7 +46,7 @@ def write_run(topic, method, run_id, items):
         if (item["primary_topic"], item["method"], item["run_id"]) != (topic, method, run_id):
             raise ValueError(f"{item['candidate_id']} 는 {topic}/{method}/{run_id} 의 항목이 아닙니다")
     topic_dir = _topic_dir(topic)
-    run_dir = _child(topic_dir / "runs" / method, run_id)
+    run_dir = new_run_dir(topic, method, run_id)
     entries = [_catalog_entry(item) for item in items]
     _check_catalog(entries)
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -50,6 +54,7 @@ def write_run(topic, method, run_id, items):
     _write_jsonl(run_dir / "candidates.jsonl", items)
     for state, name in STATE_FILES.items():
         _write_jsonl(run_dir / name, [item for item in items if item["state"] == state])
+    _append_jsonl(run_dir / "rejected.jsonl", rejects)
     memory_dir = topic_dir / "failure_memory"
     memory_dir.mkdir(exist_ok=True)
     rejected = [item for item in items if item["state"] == "rejected"]
@@ -63,8 +68,20 @@ def write_run(topic, method, run_id, items):
         "config_snapshot": snapshot(CONFIGS),
         "prompt_snapshot": snapshot(PROMPTS),
         "counts": {name: _count_lines(run_dir / name) for name in ("candidates.jsonl", *STATE_FILES.values())},
+        "generation": info,
     })
     _append_jsonl(OUTPUTS / "catalog.jsonl", entries)
+    return run_dir
+
+
+def new_run_dir(topic, method, run_id):
+    """새 run 이 쓸 디렉터리. run_id 가 경로 한 칸 이름이 아니거나 이미 쓴 run 이면 막는다."""
+    run_dir = _child(_topic_dir(topic) / "runs" / method, run_id)
+    used = run_dir.exists() or any(
+        (entry["topic"], entry["method"], entry["run_id"]) == (topic, method, run_id) for entry in read_catalog()
+    )
+    if used:
+        raise FileExistsError(f"이미 있는 run 입니다: {topic}/{method}/{run_id}")
     return run_dir
 
 

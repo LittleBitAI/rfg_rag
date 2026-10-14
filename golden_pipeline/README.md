@@ -3,11 +3,13 @@
 평가용 골든 질문·답변을 주제별로 만들고 검증해 출시하기 위한 패키지입니다.
 ③ 검증 파이프라인에 속하고 담당자도 같지만, `rag/validation/validation.py` 와는 일부러 분리했습니다
 (`CLAUDE.md` · `AGENTS.md` 4절).
-지금은 항목 스키마, 주제별 저장 규약, run·버전·상태 모델, 출력 경로 보호와
-v11 패키지를 읽기만 하는 근거 어댑터를 담습니다. 생성, 검증, 자기 개선, 실행기는 이후 단계에서 붙습니다.
+지금은 항목 스키마, 주제별 저장 규약, run·버전·상태 모델, 출력 경로 보호,
+v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C 후보 생성을 담습니다.
+검증, 자기 개선, 실행기는 이후 단계에서 붙습니다.
 
 - `rag/` 에서 아무것도 import 하지 않고, `rag/`·`artifacts/`·`data/`·`eval/` 에 쓰지 않습니다.
-- 표준 라이브러리만 씁니다 (`requirements.txt` 변경 없음). API 호출이 없습니다.
+- 표준 라이브러리와, numeric 검사의 형태소 분석에 `kiwipiepy` 를 씁니다 (이미 `requirements.txt` 에 있어 변경 없음).
+- API 를 부르는 코드가 없습니다. 생성은 호출 함수(`client`)를 인자로 받고, 테스트는 가짜 클라이언트만 씁니다.
 
 ## 구성
 
@@ -17,8 +19,10 @@ v11 패키지를 읽기만 하는 근거 어댑터를 담습니다. 생성, 검�
 | `state.py` | 상태 전이와 전이 기록 (`transition`) |
 | `storage.py` | run · release 저장, 공유 카탈로그, 출력 경로 보호 (`write_run`, `write_release`, `guard`) |
 | `evidence.py` | v11 근거 어댑터: 패키지 SHA 고정, 청크 → 요소 → 레코드 → 원문 단위 연결, 근거 단위별 eligible / held 판정 (`run`) |
-| `configs/` | run 설정 파일. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
-| `prompts/` | 생성·검증 프롬프트 파일. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
+| `plan.py` | 분포 계획: 주제별 개수 · 문서 범위 · 근거 묶음을 고정한 파일 (`make_plan`, `load_plan`) |
+| `generation.py` | 후보 생성: A · B (`generate`), C 가져오기 (`import_c`), 주제 구조 검사 (`check_structure`) |
+| `configs/` | 설정 파일. `topics/{topic}.json` 은 주제 명세입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
+| `prompts/` | 생성 프롬프트. `A/{topic}.txt` 는 A 의 주제 전용, `B.txt` 는 B 의 고정 프롬프트입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
 | `outputs/` | 모든 출력 (git 에서 제외, `.gitignore`) |
 
 ## 항목 스키마
@@ -35,7 +39,9 @@ v11 패키지를 읽기만 하는 근거 어댑터를 담습니다. 생성, 검�
 | `secondary_tags` | 위 주제 중 0개 이상. `primary_topic` 은 다시 넣을 수 없습니다 |
 | `question` · `answer` | 비어 있지 않은 문자열 |
 | `evidence` | 근거 참조 1개 이상 (아래 표) |
-| `generator_version` · `prompt_version` | 문자열 |
+| `bundle_id` · `context` | 생성에 준 근거 묶음 id 와 생성기에 보낸 컨텍스트 원문 (비어 있지 않은 문자열) |
+| `structure` | 주제가 요구하는 구조 (객체, 아래 주제 명세) |
+| `generator_version` · `prompt_version` | 문자열. A · B 의 `prompt_version` 은 프롬프트 파일 SHA-256, C 는 `unobserved` |
 | `validator_version` | `candidate` 일 때만 `null` 일 수 있음 |
 | `state` · `state_history` | 상태와 전이 기록 (아래 상태 모델) |
 
@@ -73,13 +79,14 @@ v11 패키지를 읽기만 하는 근거 어댑터를 담습니다. 생성, 검�
 ```
 golden_pipeline/outputs/
   catalog.jsonl                         모든 주제가 함께 쓰는 카탈로그
+  plans/{plan_id}.json                  분포 계획 (A · B · C 가 함께 읽음)
   goldens/{topic}/
     runs/{A|B|C}/{run_id}/
       candidates.jsonl                  run 의 모든 항목
       accepted.jsonl                    auto_validated
       review.jsonl                      held (사람 검토 대상)
-      rejected.jsonl                    rejected
-      manifest.json                     설정·프롬프트 파일별 SHA-256, 코드 커밋, 개수
+      rejected.jsonl                    rejected 항목, 그리고 항목이 되지 못한 생성 출력 {bundle_id, reason, raw}
+      manifest.json                     설정·프롬프트 파일별 SHA-256, 코드 커밋, 개수, 생성 정보(generation)
     failure_memory/{method}_{run_id}.jsonl   거절된 항목과 거절 이유
     releases/{version}/
       golden.jsonl                      released 항목
@@ -163,6 +170,107 @@ python -m golden_pipeline.evidence <run_id> "<내려받은 압축>/RFP_Preproces
 | `artifacts/raw` | 100개 모두 SHA 로 연결 (문서 98개, 두 파일은 다른 파일과 바이트가 같음), 이름만 같은 파일 0 |
 | 근거 단위 | 136,581 (청크 86,995 · 그리드 셀 49,586), `eligible` 64,904 · `held` 71,677 |
 | 이미지 | v11 검증 OCR 12개는 범위 안이라 검증, 범위 선언이 없는 7개(v10 OCR 1 · 이미지 패널 6)는 `hold` |
+
+## 분포 계획
+
+A · B · C 를 같은 조건에서 비교하려고, 주제별 개수 · 문서 범위 · 근거 묶음을 한 파일로 먼저 고정합니다.
+API 를 부르지 않습니다.
+
+```
+python -m golden_pipeline.plan <plan_id> <근거 어댑터 run_id> --count numeric 20 --count table 20 --max-context-chars 4000
+```
+
+1. 근거 어댑터 run 의 `manifest.json` 에 고정된 파일 SHA-256 과 지금 패키지 파일이 같은지 확인하고, 다르면 멈춥니다.
+2. `judgments.jsonl` 에서 `eligible` 인 단위만 씁니다. `held` 단위는 어떤 묶음에도 들어가지 않습니다.
+   단위 본문은 패키지 `final_elements.jsonl` 에서 읽습니다 (글자 span 은 그 구간, 표 행은 칸을 ` | ` 로 이은 것).
+3. 주제 순서(`numeric` → `table` → `condition` → `comparison` → `multi_hop`)대로, 주제 명세의 `pattern` · `table_only` 에 맞는 단위를
+   문서마다 패키지 순서로 `bundle_units` 개씩 묶습니다. 컨텍스트가 `--max-context-chars` 를 넘는 묶음은 버립니다.
+   한 단위는 한 주제의 묶음에만 들어갑니다 (카탈로그가 같은 근거를 두 주제에 두지 않기 때문).
+   표 행이 든 묶음에는 그 표의 머리글 행(논리 표 0행)을 맨 앞에 붙입니다. 열 이름 없이는 칸을 가리킬 수 없기 때문입니다.
+   머리글 행이 `eligible` 이 아니거나 앞 주제의 묶음이 이미 가졌으면 그 묶음을 버립니다.
+4. 문서를 돌아가며 하나씩 골라 개수를 채웁니다. 모자라면 기준을 낮추지 않고 `planned` 에 실제 개수를 남깁니다.
+
+계획 파일(`outputs/plans/{plan_id}.json`)은 덮어쓰지 않으며, run 은 이 파일의 SHA-256 을 남깁니다.
+
+| 필드 | 값 |
+|---|---|
+| `evidence_run` · `v11_manifest_sha256` | 근거 어댑터 run 과 v11 `manifest.json` SHA-256 |
+| `topic_specs` | 주제 명세 파일별 SHA-256. 생성 때 명세가 바뀌었으면 멈춥니다 |
+| `max_context_chars` | 묶음 컨텍스트 글자 수 한도 (A · B 의 입력 한도) |
+| `counts` · `planned` · `coverage` | 요청 개수, 실제 묶음 수, 주제별 문서 SHA → 묶음 수 |
+| `bundles[]` | `bundle_id`, `topic`, `doc_sha`, `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
+
+`context` 는 `[E1]\n본문\n\n[E2]\n본문` 형식이며 생성기에 이 문자열을 그대로 보냅니다.
+
+2026-10-14 실제 v11 근거 run(`v11-20261014`)으로 주제마다 20개를 요청한 계획은 약 8초에 만들어졌고,
+다섯 주제 모두 20개 묶음을 서로 다른 문서 20개에서 골랐습니다.
+
+## 주제 명세
+
+`configs/topics/{topic}.json` 은 `version`, `requires` (프롬프트에 넣는 요구 설명), `structure` (출력 구조 필드와 설명),
+묶음 선택 규칙 `pattern` · `table_only` · `bundle_units` 를 가집니다.
+출력의 `structure` 는 명세의 필드를 정확히 가져야 하고, 주제마다 아래를 지켜야 후보가 됩니다.
+값은 근거에 적힌 그대로여야 합니다 (공백 · 쉼표 차이만 허용).
+수로 시작하거나 끝나는 값은 수 전체가 맞아야 합니다. 예를 들어 조건 `1년 이내` 는 `11년 이내` 에 맞지 않습니다.
+
+| 주제 | `structure` | 후보가 되는 조건 |
+|---|---|---|
+| `numeric` | `value` · `unit` | 값에 숫자가 있고, (`value`, `unit`) 이 답과 인용한 근거에 모두 수 · 단위 쌍으로 있음. 쌍은 Kiwi 형태소 분석으로 읽습니다. 수(SN) 앞의 부호는 띄어 써도 값에 들고, 수 뒤에 붙어 이어지는 단위 형태소는 끝까지 한 단위가 되며 더 짧은 단위로 물러나지 않습니다. 단위는 조사 · 어미 · 문장부호 · 띄어쓰기에서 끝납니다. 그래서 부호 · 수 · 단위가 통째로 맞아야 합니다 (`30,000,000원` ≠ `130,000,000원`, `-130,000,000원` · `- 130,000,000원` ≠ `130,000,000원`, `12개` ≠ `12개월` · `12개월간`, `5%` ≠ `5%p` · `5%포인트`, `5MB` ≠ `5MB/s`, `12개월이다` 는 `12` · `개월`, `5만원` 은 `5` · `만원`). 범위 표시 · 다른 수 · 쉼표 · 접두사에 붙은 수(`10~12개월`, `2024년-2025년`, `1,2,3개월`, `제3회`)는 쌍이 아닙니다. 한글로만 쓴 수(`삼천만원`)는 쌍이 없어 거절됩니다. 줄머리 기호 `- 12개월` 도 음수로 읽혀 거절됩니다. 값 없이 설명만 하는 답은 `유형 불일치` 로 거절 |
+| `table` | `row` · `column` | 인용한 근거에 표 행이 있고, 행 · 열 이름이 근거에 있음 |
+| `condition` | `condition` | 조건 · 예외 문구가 근거에 있음 |
+| `comparison` | `entities` | 서로 다른 대상 2개 이상, 각각 근거에 있음 |
+| `multi_hop` | 없음 (`{}`) | 인용한 근거 단위가 2개 이상 |
+
+## 후보 생성
+
+A · B · C 는 같은 출력 계약과 같은 검사를 거쳐 같은 `write_run` 으로 저장됩니다.
+모든 출력은 `candidate` 상태이고, 이 단계의 어떤 코드도 `auto_validated` · `released` 로 옮기지 않습니다.
+`accepted.jsonl` · `review.jsonl` 은 비어 있습니다.
+
+출력 한 행은 정확히 `question`, `answer`, `evidence` (묶음의 근거 라벨 리스트), `structure`, `secondary_tags` 를 가집니다 (C 는 `bundle_id` 도).
+아래 중 하나라도 어기면 항목이 되지 않고 원문 · 이유와 함께 `rejected.jsonl` 로 갑니다:
+JSON 아님, 필드 불일치, 계획에 없는 묶음(C), 묶음에 없는 · 겹치는 라벨, 항목 스키마 위반 (`스키마: ...`), 주제 구조 위반 (`유형 불일치: ...`),
+카탈로그에서 다른 주제가 이미 가진 근거 묶음 인용 (`근거 묶음이 이미 ... 주제 소유입니다`).
+항목은 인용한 단위의 근거 참조, `bundle_id`, 보낸 컨텍스트 원문(`context`)을 가집니다.
+
+| 방식 | 입력 | 프롬프트 | 기록 |
+|---|---|---|---|
+| A (첫 생성) | `generate("A", topic, plan_id, run_id, config, client)` | `prompts/A/{topic}.txt` | 실패 기록을 읽지 않습니다 (자기 개선은 다음 단계) |
+| B (고정 프롬프트) | `generate("B", ...)` | `prompts/B.txt` 하나 | 실패 기록을 읽지 않습니다. 같은 모델 · 계획 · 주제 명세를 받고 프롬프트만 고정 |
+| C (가져오기) | `import_c(topic, plan_id, run_id, exports, sidecar)` | 관측 불가 → `unobserved` | 사람이 웹 환경에서 받아 내보낸 JSONL 파일들과 관측 기록 |
+
+A · B 는 묶음마다 한 번 `client(model=..., messages=[system: 프롬프트, user: context])` 를 부릅니다.
+`client` 는 `{"model", "text", "input_tokens", "output_tokens"}` 를 돌려주며, `model` 은 API 응답이 알려 준 이름이어야 합니다.
+
+`run_id` 가 경로 한 칸 이름이 아니거나 이미 쓴 run 이면 호출 전에 멈춥니다.
+run 설정(JSON 파일)은 아래 다섯 값을 모두 가져야 하고, 빠지면 호출 전에 멈춥니다. 기본값이 없으므로 설정 없이 유료 호출이 나가지 않습니다.
+
+| 키 | 값 |
+|---|---|
+| `model` | 요청할 모델 이름 |
+| `max_calls` | 최대 호출 수 (1 이상의 정수) |
+| `budget_usd` | 총예산 (0 보다 큼) |
+| `usd_per_million_input_tokens` · `usd_per_million_output_tokens` | 단가. 응답 토큰 수로 비용을 계산합니다 |
+
+호출 수가 `max_calls` 에 닿거나 누적 비용이 `budget_usd` 에 닿으면 남은 묶음을 부르지 않고 `status` 에 `call_cap` · `budget` 을 남깁니다.
+예산은 호출 사이에만 보므로 마지막 호출 하나만큼 넘을 수 있습니다.
+
+C 의 sidecar(JSON)는 `model_label` (화면에 보인 모델 표시), `run_date`, `provided_files`, `tool_use`, `input_limits` 만 받습니다.
+없거나 비어 있는 값은 `unobserved` 로 남기고, API 모델과 같다고 추정하지 않습니다. 다른 필드가 있으면 멈춥니다.
+
+run 매니페스트의 `generation`:
+
+| 필드 | A · B | C |
+|---|---|---|
+| `plan_id` · `plan_sha256` · `evidence_run` · `v11_manifest_sha256` · `topic_spec_sha256` | 같음 | 같음 |
+| `bundle_ids` · `document_scope` | 실제로 보낸 묶음과 그 문서 SHA | 행이 가리킨 묶음과 그 문서 SHA |
+| 모델 | `model_requested` (설정), `model_reported` (응답) | `model.observed_label` (관측값 또는 `unobserved`) |
+| 프롬프트 · 설정 | `prompt_file`, `prompt_sha256`, `run_config`, `run_config_sha256` | `observed`, `sidecar_sha256`, `exports` (파일별 SHA-256) |
+| `input_limits` | `{"max_context_chars": ...}` | sidecar 의 관측값 또는 `unobserved` |
+| 호출 | `status`, `cost_usd`, `calls[]` (묶음, 응답 모델, 토큰) | 없음 (토큰 · 비용을 0 으로 채우지 않음) |
+
+LLM 출력은 같은 입력에도 달라질 수 있어 결정성을 주장하지 않습니다.
+대신 보낸 컨텍스트, 프롬프트 · 설정 · 계획 해시, 응답 모델을 남겨 무엇을 넣어 무엇이 나왔는지 추적합니다.
 
 ## 테스트
 

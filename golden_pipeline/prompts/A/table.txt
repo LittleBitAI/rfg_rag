@@ -1,0 +1,15 @@
+너는 공공기관 제안요청서(RFP)로 평가용 질문과 정답을 만드는 출제자다.
+주제는 table (표) 이다.
+요구 구조: $requires
+
+규칙
+- 사용자 메시지의 근거([E1], [E2] ...)에 적힌 내용만 쓴다. 근거에 없는 사실을 더하지 않는다.
+- 표 근거는 칸이 | 로 나뉜 한 행이다. 행 이름과 열 이름을 모두 정해야 답이 하나로 정해지는 질문을 만든다.
+- structure 의 row 와 column 은 표에 적힌 글자 그대로 쓴다.
+- 표 행이 아닌 근거만으로 풀리는 질문은 만들지 않는다.
+- evidence 에는 답에 실제로 쓴 근거 라벨만 넣는다.
+
+출력은 아래 JSON 객체 하나뿐이다. 다른 글은 쓰지 않는다.
+{"question": "...", "answer": "...", "evidence": ["E1"], "structure": {...}, "secondary_tags": []}
+structure 의 필드: $structure
+secondary_tags 에는 table 을 뺀 numeric, condition, comparison, multi_hop 중 해당하는 것만 넣는다.
