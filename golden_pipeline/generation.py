@@ -256,12 +256,14 @@ def _contains(text, quote):
 
     쉼표를 지우고 견주므로 그냥 부분 문자열이면 30,000,000원 이 130,000,000원 안에서, 2개월 이 12개월 안에서 맞는다.
     수의 경계는 공백을 지우기 전의 글에서 본다. 띄어 쓴 두 수(목차의 13\\n 1.)를 지운 뒤 보면 131 로 이어져 맞지 않는다.
+    다만 줄바꿈 등으로 쉼표 앞뒤가 벌어진 세 자리 묶음(1,\\n300,000)은 먼저 붙여 한 수로 본다. 그러지 않으면 300,000 이 그 안에서 맞는다.
     """
     quote = _norm(quote)
     head = r"(?<!\d)(?<!\d,)(?<!\d\.)" if quote[:1].isdigit() else ""
     tail = r"(?!,?\.?\d)" if quote[-1:].isdigit() else ""
     body = r"[\s,]*".join(map(re.escape, quote))
-    return re.search(head + body + tail, unicodedata.normalize("NFC", text)) is not None
+    text = re.sub(r"(?<=\d)\s*,\s*(?=\d{3}(?!\d))", ",", unicodedata.normalize("NFC", text))
+    return re.search(head + body + tail, text) is not None
 
 
 def _candidate(run, candidate_id, row, bundle, spec, parent=None):
