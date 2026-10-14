@@ -7,9 +7,11 @@ from golden_pipeline.state import TRANSITIONS
 TOPICS = ("numeric", "table", "condition", "comparison", "multi_hop")
 METHODS = ("A", "B", "C")
 STATES = ("candidate", "auto_validated", "held", "rejected", "released")
-# 표 위치가 원본 격자를 확인한 것인지, 마크다운 논리 행으로 복원한 것인지 구분한다.
-GRIDS = ("logical_restored", "original_verified")
-OCR_SCOPES = ("human_verified", "unverified")
+# 표 위치가 원본 격자를 확인한 것인지, 검증되지 않은 원본 격자 참고 파일의 것인지,
+# 마크다운 논리 행으로 복원한 것인지 구분한다. 세 종류는 서로 섞지 않는다.
+GRIDS = ("logical_restored", "original_verified", "original_reference")
+# 이미지 OCR 이 검증한 범위: 보이는 글자 전체, 선언한 일부 영역, 검증 범위 없음(보류).
+OCR_SCOPES = ("full_visible_text", "partial_region", "hold")
 
 ITEM_FIELDS = (
     "candidate_id", "parent_candidate_id", "run_id", "method",

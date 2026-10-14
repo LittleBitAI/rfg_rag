@@ -51,6 +51,7 @@ def test_item_without_evidence_is_rejected(make_item):
 
 @pytest.mark.parametrize("location, valid", [
     ({"kind": "table", "grid": "original_verified", "row": 0, "cell": None}, True),
+    ({"kind": "table", "grid": "original_reference", "row": 0, "cell": 2}, True),
     ({"kind": "table", "grid": "markdown", "row": 0, "cell": 0}, False),
     ({"kind": "table", "row": 0, "cell": 0}, False),
     ({"kind": "char", "start": 5, "end": 5}, False),
@@ -69,8 +70,8 @@ def test_location_is_char_span_or_table_cell_with_grid_kind(make_item, location,
 @pytest.mark.parametrize("image_sha, ocr_scope", [
     ("b" * 64, None),
     ("b" * 64, "easyocr"),
-    (None, "human_verified"),
-    ("not-a-sha", "unverified"),
+    (None, "full_visible_text"),
+    ("not-a-sha", "partial_region"),
 ])
 def test_image_needs_sha_and_known_ocr_scope_together(make_item, image_sha, ocr_scope):
     item = make_item()
