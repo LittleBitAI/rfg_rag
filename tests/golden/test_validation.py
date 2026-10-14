@@ -216,7 +216,7 @@ def test_each_check_sends_the_candidate_to_its_state(config, topic, row, verdict
     assert item in read_jsonl(run_dir / file)
     assert item["validator_version"] == VALIDATOR_VERSION and item["difficulty"] in DIFFICULTIES
     record = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))
-    assert record["validator_version"] == VALIDATOR_VERSION and record["difficulty_rule"].startswith("difficulty-1")
+    assert record["validator_version"] == VALIDATOR_VERSION and record["difficulty_rule"].startswith("difficulty-2")
 
 
 BUDGETS = {"A안": "1억원", "B안": "2억원"}

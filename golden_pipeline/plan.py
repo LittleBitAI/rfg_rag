@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import re
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -91,11 +92,12 @@ def doc_names(package, docs):
     한 기관에 문서가 여럿이라 기관 이름만으로는 문서를 가리지 못한다.
     """
     with (package.parent / "data_list.csv").open(encoding="utf-8-sig") as f:
-        agencies = {row["파일명"]: row["발주 기관"] for row in csv.DictReader(f)}
+        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주 기관"] for row in csv.DictReader(f)}
     names = {}
     for record in evidence._iter_jsonl(package / evidence.RECORDS):
         if record["doc_id"] in docs and record["doc_id"] not in names:
-            file = Path(record["source_paths"][0])
+            # 원본 파일 이름 일부는 한글이 자모로 풀린 NFD 라 csv 의 NFC 이름과 맞지 않는다.
+            file = Path(unicodedata.normalize("NFC", record["source_paths"][0]))
             title = re.sub(r"^(\[[^\]]*\])+", "", file.stem.split("_", 1)[-1]).strip()
             names[record["doc_id"]] = {"agency": agencies[file.name], "title": title}
     return names

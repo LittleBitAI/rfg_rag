@@ -17,8 +17,9 @@ from golden_pipeline.state import transition
 
 VALIDATOR_VERSION = "validation-3"
 DIFFICULTY_RULE = (
-    "difficulty-1: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
-    "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외)가 모두 근거 본문에 그대로 있음. medium = 나머지"
+    "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
+    "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
+    "medium = 나머지"
 )
 # Kiwi 는 얼마 를 일반 명사(NNG)로 단다. 의문사는 근거에 있을 수 없으므로 내용 형태소에서 뺀다.
 INTERROGATIVES = ("얼마", "몇", "무엇", "어디", "언제", "누구", "어느")

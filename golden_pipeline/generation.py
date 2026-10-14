@@ -230,6 +230,8 @@ def _comparison(structure, answer, cited, texts):
         return "견주는 대상이 둘 이상이어야 합니다"
     if not isinstance(values, dict) or set(values) != set(entities):
         return "values 는 entities 마다 값을 담은 객체여야 합니다"
+    if any(_norm(str(values[entity])) == _norm(entity) for entity in entities):
+        return "대상의 값이 대상 이름과 같아 견줄 값이 없습니다"
     if choice is not None and choice not in entities:
         return "choice 는 entities 중 하나이거나 null 이어야 합니다"
     reason = _quoted(entities, texts, "비교 대상") or _quoted(list(values.values()), texts, "대상의 값")

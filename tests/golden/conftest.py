@@ -2,6 +2,7 @@
 import copy
 import json
 import shutil
+import unicodedata
 
 import pytest
 
@@ -133,7 +134,8 @@ def evidence_run(outputs, tmp_path):
     _write_jsonl(package / "final_elements.jsonl", elements)
     _write_jsonl(package / "final_records.jsonl", [
         {"doc_id": DOC_1, "source_paths": ["원본 데이터/files/사단법인가기관_가사업 구축.hwp"]},
-        {"doc_id": DOC_2, "source_paths": ["원본 데이터/files/나기관_[재공고]나사업 운영.hwp"]},
+        # 실제 원본처럼 한 파일 이름은 NFD 로 둔다.
+        {"doc_id": DOC_2, "source_paths": [unicodedata.normalize("NFD", "원본 데이터/files/나기관_[재공고]나사업 운영.hwp")]},
     ])
     (tmp_path / "data_list.csv").write_text(
         "파일명,발주 기관\n사단법인가기관_가사업 구축.hwp,가기관\n나기관_[재공고]나사업 운영.hwp,나기관\n", encoding="utf-8")
