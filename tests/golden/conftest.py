@@ -2,10 +2,11 @@
 import copy
 import json
 import shutil
+import unicodedata
 
 import pytest
 
-from golden_pipeline import storage
+from golden_pipeline import generation, storage
 
 DOC_SHA = "a" * 64
 IMAGE_SHA = "b" * 64
@@ -53,6 +54,12 @@ ITEM = {
     "state": "candidate",
     "state_history": [],
 }
+
+
+@pytest.fixture(autouse=True)
+def one_worker(monkeypatch):
+    """가짜 생성기 · 검증기는 받은 차례대로 답한다. 호출 차례가 정해지도록 테스트에서는 한 번에 하나씩 보낸다."""
+    monkeypatch.setattr(generation, "WORKERS", 1)
 
 
 @pytest.fixture
@@ -125,6 +132,13 @@ def evidence_run(outputs, tmp_path):
                   "location": {"span_text_field": "search_text"}}
                  for unit_id, _, body, _ in UNITS if isinstance(body, str)]
     _write_jsonl(package / "final_elements.jsonl", elements)
+    _write_jsonl(package / "final_records.jsonl", [
+        {"doc_id": DOC_1, "source_paths": ["원본 데이터/files/사단법인가기관_가사업 구축.hwp"]},
+        # 실제 원본처럼 한 파일 이름은 NFD 로 둔다.
+        {"doc_id": DOC_2, "source_paths": [unicodedata.normalize("NFD", "원본 데이터/files/나기관_[재공고]나사업 운영.hwp")]},
+    ])
+    (tmp_path / "data_list.csv").write_text(
+        "파일명,발주 기관\n사단법인가기관_가사업 구축.hwp,가기관\n나기관_[재공고]나사업 운영.hwp,나기관\n", encoding="utf-8")
     (package / "manifest.json").write_text('{"package": "fake v11"}', encoding="utf-8")
 
     run_dir = outputs / "outputs" / "evidence" / "ev1"

@@ -14,7 +14,7 @@ PACKAGE = Path(__file__).resolve().parent
 OUTPUTS = PACKAGE / "outputs"
 CONFIGS = PACKAGE / "configs"
 PROMPTS = PACKAGE / "prompts"
-STATE_FILES = {"auto_validated": "accepted.jsonl", "rejected": "rejected.jsonl", "held": "review.jsonl"}
+STATE_FILES = {"auto_validated": "accepted.jsonl", "rejected": "rejected.jsonl"}
 
 
 class OutputPathError(ValueError):
@@ -97,13 +97,12 @@ def unvalidated_run(topic, method, run_id):
 def write_validation(topic, method, run_id, items, info):
     """검증한 항목을 run 의 상태 파일에 쓰고 검증 기록(validation.json)을 남긴다.
 
-    생성 때 비워 둔 accepted.jsonl · review.jsonl 을 채우고, 거절 항목은 rejected.jsonl 뒤에 붙인다.
+    생성 때 비워 둔 accepted.jsonl 을 채우고, 거절 항목은 rejected.jsonl 뒤에 붙인다.
     항목은 candidates.jsonl 의 기록에서 상태만 나아간 것이어야 한다. 파일별 SHA-256 은 출시 때 다시 확인한다.
     """
     run_dir = unvalidated_run(topic, method, run_id)
-    for name in ("accepted.jsonl", "review.jsonl"):
-        if _count_lines(run_dir / name):
-            raise FileExistsError(f"{name} 이 비어 있지 않습니다: {topic}/{method}/{run_id}")
+    if _count_lines(run_dir / "accepted.jsonl"):
+        raise FileExistsError(f"accepted.jsonl 이 비어 있지 않습니다: {topic}/{method}/{run_id}")
     candidates = {record["candidate_id"] for record in _read_jsonl(run_dir / "candidates.jsonl")}
     return _record_validation(run_dir, items, candidates, run_dir / "validation.json", info)
 
@@ -162,7 +161,7 @@ def _record_validation(run_dir, items, allowed, record_path, info):
 
 
 def read_validated(topic, method, run_id):
-    """검증한 run 의 (auto_validated 항목, held 항목). 상태 파일이 마지막 검증 기록과 다르면 막는다."""
+    """검증한 run 의 auto_validated 항목. 상태 파일이 마지막 검증 기록과 다르면 막는다."""
     run_dir = run_path(topic, method, run_id)
     records = validation_records(run_dir)
     if not records:
@@ -171,7 +170,7 @@ def read_validated(topic, method, run_id):
     changed = [name for name, sha in record["files"].items() if _sha256(run_dir / name) != sha]
     if changed:
         raise CatalogError(f"{topic}/{method}/{run_id} 의 {changed} 가 검증 기록({records[-1].name})과 다릅니다")
-    return _read_jsonl(run_dir / "accepted.jsonl"), _read_jsonl(run_dir / "review.jsonl")
+    return _read_jsonl(run_dir / "accepted.jsonl")
 
 
 def write_release(topic, version, items, info=None):

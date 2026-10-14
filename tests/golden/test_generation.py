@@ -62,7 +62,7 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
     assert item["bundle_id"] == numeric["bundle_id"]
     assert item["context"] == client.requests[0]["messages"][1]["content"] == numeric["context"]
     assert item["evidence"] == [numeric["units"][0]["ref"]]
-    for name in ("accepted.jsonl", "review.jsonl", "rejected.jsonl"):
+    for name in ("accepted.jsonl", "rejected.jsonl"):
         assert read_jsonl(run_dir / name) == []
 
     info = manifest(run_dir)["generation"]
@@ -94,6 +94,23 @@ def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mis
     [reject] = read_jsonl(run_dir / "rejected.jsonl")
     assert reject["reason"].startswith("유형 불일치")
     assert reject["bundle_id"] == bundle("numeric")["bundle_id"]
+
+
+def test_a_table_row_cited_without_its_header_row_gets_the_header_row_as_evidence(planned):
+    # 생성기는 답에 쓴 행만 인용하곤 해, 열 이름이 근거에 없다며 표 후보 대부분이 거절됐다.
+    output = {"question": "예산의 A안 값은?", "answer": "1억원", "evidence": ["E2"],
+              "structure": {"row": "예산", "column": "A안"}, "secondary_tags": []}
+    run_dir = generate("A", "table", "p1", "a1", planned, Client(output))
+
+    [item] = read_jsonl(run_dir / "candidates.jsonl")
+    units = bundle("table")["units"]
+    assert item["evidence"] == [units[0]["ref"], units[1]["ref"]]
+
+
+def test_multi_hop_structure_with_fields_is_told_to_be_an_empty_object():
+    # 이 이유 글이 실패 기록 · 묶음별 지난 실패로 다음 round 에 간다. "필드는 [] 여야" 로는 생성기가 필드를 채운 채 120 묶음이 거듭 거절됐다.
+    row = {"answer": "5, 8", "structure": {"PER": "5", "DAR": "8"}}
+    assert check_structure("multi_hop", topic_spec("multi_hop")[0], row, []) == "structure 는 빈 객체 {} 여야 합니다"
 
 
 def unit(text, kind="char"):
@@ -167,6 +184,9 @@ BUDGETS = {"A안": "1억원", "B안": "2억원"}
     ({"entities": ["A안", "B안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
     ({"entities": ["A안", "B안"], "values": {"A안": "3억원", "B안": "2억원"}, "choice": None}, "A안 3억원, B안 2억원", False),
     ({"entities": ["A안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
+    # 값이 대상 이름이면 견줄 값이 없다.
+    ({"entities": ["A안", "B안"], "values": {"A안": "A안", "B안": "B안"}, "choice": "B안"}, "A안 A안, B안 B안. 답: B안", False),
+    ({"entities": ["A안", "B안"], "values": {"A안": "B안", "B안": "A안"}, "choice": "B안"}, "A안 B안, B안 A안. 답: B안", False),
     ({"entities": [{"name": "A안"}, {"name": "B안"}], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", False),
 ])
 def test_comparison_answer_is_the_text_built_from_its_structure(structure, answer, ok):

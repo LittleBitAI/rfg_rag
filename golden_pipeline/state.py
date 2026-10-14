@@ -1,11 +1,10 @@
 """항목 상태 전이. 허용된 전이만 받고, 지나온 전이를 state_history 에 남긴다."""
 from datetime import datetime, timezone
 
-# 보류(held)는 사람이 검토해 출시하거나 거절한다. 출시·거절은 끝 상태다.
+# 검증은 통과(auto_validated)나 거절로만 끝난다. 애매한 항목을 사람이 볼 보류 상태는 두지 않는다. 출시·거절은 끝 상태다.
 TRANSITIONS = {
-    "candidate": ("auto_validated", "held", "rejected"),
-    "auto_validated": ("held", "rejected", "released"),
-    "held": ("released", "rejected"),
+    "candidate": ("auto_validated", "rejected"),
+    "auto_validated": ("rejected", "released"),
     "rejected": (),
     "released": (),
 }

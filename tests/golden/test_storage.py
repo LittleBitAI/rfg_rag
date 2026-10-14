@@ -20,9 +20,8 @@ def validated(make_item, candidate_id, question, to, reason):
 def run_items(make_item):
     candidate = make_item(candidate_id="n-1")
     accepted = validated(make_item, "n-2", "계약 기간은?", "auto_validated", "통과")
-    held = validated(make_item, "n-3", "하자 보수 기간은?", "held", "격자 미확인")
     rejected = validated(make_item, "n-4", "입찰 마감은?", "rejected", "근거와 답 불일치")
-    return [candidate, accepted, held, rejected]
+    return [candidate, accepted, rejected]
 
 
 def ids(path):
@@ -36,9 +35,8 @@ def test_run_writes_state_files_and_manifest_but_no_failure_memory(outputs, make
     run_dir = storage.write_run("numeric", "A", "r1", run_items(make_item))
 
     assert run_dir == (outputs / "outputs/goldens/numeric/runs/A/r1").resolve()
-    assert ids(run_dir / "candidates.jsonl") == ["n-1", "n-2", "n-3", "n-4"]
+    assert ids(run_dir / "candidates.jsonl") == ["n-1", "n-2", "n-4"]
     assert ids(run_dir / "accepted.jsonl") == ["n-2"]
-    assert ids(run_dir / "review.jsonl") == ["n-3"]
     assert ids(run_dir / "rejected.jsonl") == ["n-4"]
     # 실패 기록은 자기 개선(improvement.record_failures)만 쓴다. 여기서 쓰면 거절 항목의 질문 · 답이 그대로 들어갔다.
     assert not (outputs / "outputs/goldens/numeric/failure_memory").exists()
@@ -49,7 +47,7 @@ def test_run_writes_state_files_and_manifest_but_no_failure_memory(outputs, make
     assert manifest["config_snapshot"] == {"run.yaml": storage._sha256(outputs / "configs" / "run.yaml")}
     assert manifest["prompt_snapshot"] == {"numeric.txt": storage._sha256(outputs / "prompts" / "numeric.txt")}
     assert manifest["counts"] == {
-        "candidates.jsonl": 4, "accepted.jsonl": 1, "rejected.jsonl": 1, "review.jsonl": 1,
+        "candidates.jsonl": 3, "accepted.jsonl": 1, "rejected.jsonl": 1,
     }
 
 
