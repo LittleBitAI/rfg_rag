@@ -12,12 +12,14 @@ STATES = ("candidate", "auto_validated", "held", "rejected", "released")
 GRIDS = ("logical_restored", "original_verified", "original_reference")
 # 이미지 OCR 이 검증한 범위: 보이는 글자 전체, 선언한 일부 영역, 검증 범위 없음(보류).
 OCR_SCOPES = ("full_visible_text", "partial_region", "hold")
+# 검증기가 기록된 규칙(validation.DIFFICULTY_RULE)으로 정하는 난도.
+DIFFICULTIES = ("easy", "medium", "hard")
 
 ITEM_FIELDS = (
     "candidate_id", "parent_candidate_id", "run_id", "method",
     "primary_topic", "secondary_tags", "question", "answer", "evidence",
     "bundle_id", "context", "structure",
-    "generator_version", "validator_version", "prompt_version",
+    "generator_version", "validator_version", "prompt_version", "difficulty",
     "state", "state_history",
 )
 EVIDENCE_FIELDS = (
@@ -47,12 +49,21 @@ def validate_item(item):
     _require_choice(item["state"], STATES, "state")
     _validate_topics(item["primary_topic"], item["secondary_tags"])
     _validate_history(item["state"], item["state_history"])
-    if item["state"] != "candidate" and item["validator_version"] is None:
-        raise SchemaError("candidate 를 지난 항목은 validator_version 이 있어야 합니다")
+    _validate_verdict(item)
     if not isinstance(item["evidence"], list) or not item["evidence"]:
         raise SchemaError("evidence 는 비어 있지 않은 리스트여야 합니다")
     for ref in item["evidence"]:
         _validate_evidence(ref)
+
+
+def _validate_verdict(item):
+    """candidate 를 지난 항목은 검증기 버전과 그 검증기가 정한 난도를 함께 가진다."""
+    if item["state"] != "candidate" and item["validator_version"] is None:
+        raise SchemaError("candidate 를 지난 항목은 validator_version 이 있어야 합니다")
+    if item["difficulty"] is not None:
+        _require_choice(item["difficulty"], DIFFICULTIES, "difficulty")
+    if (item["difficulty"] is None) != (item["validator_version"] is None):
+        raise SchemaError("difficulty 는 validator_version 과 함께 남아야 합니다")
 
 
 def _validate_history(state, history):

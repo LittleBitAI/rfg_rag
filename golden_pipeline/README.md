@@ -4,12 +4,12 @@
 ③ 검증 파이프라인에 속하고 담당자도 같지만, `rag/validation/validation.py` 와는 일부러 분리했습니다
 (`CLAUDE.md` · `AGENTS.md` 4절).
 지금은 항목 스키마, 주제별 저장 규약, run·버전·상태 모델, 출력 경로 보호,
-v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C 후보 생성을 담습니다.
-검증, 자기 개선, 실행기는 이후 단계에서 붙습니다.
+v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C 후보 생성, 독립 검증 · 난도 판정 · 출시를 담습니다.
+자기 개선(실패 기록)과 실행기는 이후 단계에서 붙습니다.
 
 - `rag/` 에서 아무것도 import 하지 않고, `rag/`·`artifacts/`·`data/`·`eval/` 에 쓰지 않습니다.
 - 표준 라이브러리와, numeric 검사의 형태소 분석에 `kiwipiepy` 를 씁니다 (이미 `requirements.txt` 에 있어 변경 없음).
-- API 를 부르는 코드가 없습니다. 생성은 호출 함수(`client`)를 인자로 받고, 테스트는 가짜 클라이언트만 씁니다.
+- API 를 부르는 코드가 없습니다. 생성 · 검증은 호출 함수(`client`)를 인자로 받고, 테스트는 가짜 생성기 · 검증기만 씁니다.
 
 ## 구성
 
@@ -21,6 +21,7 @@ v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C
 | `evidence.py` | v11 근거 어댑터: 패키지 SHA 고정, 청크 → 요소 → 레코드 → 원문 단위 연결, 근거 단위별 eligible / held 판정 (`run`) |
 | `plan.py` | 분포 계획: 주제별 개수 · 문서 범위 · 근거 묶음을 고정한 파일 (`make_plan`, `load_plan`) |
 | `generation.py` | 후보 생성: A · B (`generate`), C 가져오기 (`import_c`), 주제 구조 검사 (`check_structure`) |
+| `validation.py` | 독립 검증 (`validate`), 난도 판정 (`difficulty`), 출시 (`release`) |
 | `configs/` | 설정 파일. `topics/{topic}.json` 은 주제 명세입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
 | `prompts/` | 생성 프롬프트. `A/{topic}.txt` 는 A 의 주제 전용, `B.txt` 는 B 의 고정 프롬프트입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
 | `outputs/` | 모든 출력 (git 에서 제외, `.gitignore`) |
@@ -43,6 +44,7 @@ v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C
 | `structure` | 주제가 요구하는 구조 (객체, 아래 주제 명세) |
 | `generator_version` · `prompt_version` | 문자열. A · B 의 `prompt_version` 은 프롬프트 파일 SHA-256, C 는 `unobserved` |
 | `validator_version` | `candidate` 일 때만 `null` 일 수 있음 |
+| `difficulty` | `easy` · `medium` · `hard`. 검증기가 `validator_version` 과 함께 남기며, 둘은 함께 있거나 함께 `null` 입니다 |
 | `state` · `state_history` | 상태와 전이 기록 (아래 상태 모델) |
 
 근거 참조(`evidence[]`)의 필드는 모두 있어야 합니다. 해당 없으면 `null` 이나 빈 리스트로 둡니다.
@@ -69,8 +71,8 @@ v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C
 
 `rejected` 와 `released` 는 끝 상태입니다. 허용되지 않은 전이는 `StateError` 로 막고,
 허용된 전이는 `{from, to, reason, at}` 을 `state_history` 에 덧붙인 새 항목을 돌려줍니다.
-`candidate` 를 떠나는 전이는 검증기가 하므로 `transition(item, to, reason, validator_version="...")` 처럼
-검증기 버전을 반드시 받아 `validator_version` 에 남기고, 그 뒤의 전이는 이 값을 받지 않습니다.
+`candidate` 를 떠나는 전이는 검증기가 하므로 `transition(item, to, reason, validator_version="...", difficulty="...")` 처럼
+검증기 버전과 난도를 반드시 받아 남기고, 그 뒤의 전이는 이 값들을 받지 않습니다.
 `validate_item` 은 `state_history` 가 `candidate` 에서 시작해 허용된 전이만 거쳐 지금 `state` 에 닿는지,
 전이마다 이유와 ISO-8601 UTC 시각(`at`)이 있는지 확인합니다. 그래서 `state` 만 고쳐 검증이나 사람 검토를 건너뛸 수 없습니다.
 
@@ -87,10 +89,11 @@ golden_pipeline/outputs/
       review.jsonl                      held (사람 검토 대상)
       rejected.jsonl                    rejected 항목, 그리고 항목이 되지 못한 생성 출력 {bundle_id, reason, raw}
       manifest.json                     설정·프롬프트 파일별 SHA-256, 코드 커밋, 개수, 생성 정보(generation)
+      validation.json                   검증 기록: 검증기 버전, 난도 규칙, 호출, 상태 파일별 SHA-256 (run 마다 한 번)
     failure_memory/{method}_{run_id}.jsonl   거절된 항목과 거절 이유
     releases/{version}/
       golden.jsonl                      released 항목
-      manifest.json                     개수, golden.jsonl SHA-256, 원본 run, 코드 커밋
+      manifest.json                     개수, golden.jsonl SHA-256, 원본 run 과 그 파일별 SHA-256, 사람 확인 기록 SHA-256, 코드 커밋
 ```
 
 - 이미 있는 `run_id` 나 `version` 은 덮어쓰지 않고 `FileExistsError` 로 거절합니다.
@@ -99,7 +102,7 @@ golden_pipeline/outputs/
   근거 묶음 키는 근거 참조들의 SHA-256 이라 순서와 무관합니다.
 - 출시본에는 같은 주제로 카탈로그에 등록된 `released` 항목만 들어갑니다.
   출시 항목은 카탈로그가 가리키는 run 의 `candidates.jsonl` 기록과 같아야 하고, 상태만 더 나아갈 수 있습니다
-  (`state_history` 는 그 기록에 이어 붙인 것, `validator_version` 은 비어 있던 경우에만 새로 채움).
+  (`state_history` 는 그 기록에 이어 붙인 것, `validator_version` · `difficulty` 는 비어 있던 경우에만 새로 채움).
   질문·답·근거·방법·run 을 바꿔 끼우면 `CatalogError` 로 거절합니다.
 - `golden_pipeline/outputs` 밖(`data/`, `artifacts/`, `eval/` 포함)으로 가는 경로는 `OutputPathError` 로 거절합니다.
 
@@ -218,7 +221,7 @@ python -m golden_pipeline.plan <plan_id> <근거 어댑터 run_id> --count numer
 | `numeric` | `value` · `unit` | 값에 숫자가 있고, (`value`, `unit`) 이 답과 인용한 근거에 모두 수 · 단위 쌍으로 있음. 쌍은 Kiwi 형태소 분석으로 읽습니다. 수(SN) 앞의 부호는 띄어 써도 값에 들고, 수 뒤에 붙어 이어지는 단위 형태소는 끝까지 한 단위가 되며 더 짧은 단위로 물러나지 않습니다. 단위는 조사 · 어미 · 문장부호 · 띄어쓰기에서 끝납니다. 그래서 부호 · 수 · 단위가 통째로 맞아야 합니다 (`30,000,000원` ≠ `130,000,000원`, `-130,000,000원` · `- 130,000,000원` ≠ `130,000,000원`, `12개` ≠ `12개월` · `12개월간`, `5%` ≠ `5%p` · `5%포인트`, `5MB` ≠ `5MB/s`, `12개월이다` 는 `12` · `개월`, `5만원` 은 `5` · `만원`). 범위 표시 · 다른 수 · 쉼표 · 접두사에 붙은 수(`10~12개월`, `2024년-2025년`, `1,2,3개월`, `제3회`)는 쌍이 아닙니다. 한글로만 쓴 수(`삼천만원`)는 쌍이 없어 거절됩니다. 줄머리 기호 `- 12개월` 도 음수로 읽혀 거절됩니다. 값 없이 설명만 하는 답은 `유형 불일치` 로 거절 |
 | `table` | `row` · `column` | 인용한 근거에 표 행이 있고, 행 · 열 이름이 근거에 있음 |
 | `condition` | `condition` | 조건 · 예외 문구가 근거에 있음 |
-| `comparison` | `entities` | 서로 다른 대상 2개 이상, 각각 근거에 있음 |
+| `comparison` | `entities` · `values` · `choice` | 서로 다른 대상 2개 이상, 각각 근거에 있음. `values` 는 대상마다 값이고 값도 근거에 있음. `choice` 는 대상 중 하나이거나 `null`. 답은 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같음 (공백 · 쉼표 차이만 허용) |
 | `multi_hop` | 없음 (`{}`) | 인용한 근거 단위가 2개 이상 |
 
 ## 후보 생성
@@ -271,6 +274,108 @@ run 매니페스트의 `generation`:
 
 LLM 출력은 같은 입력에도 달라질 수 있어 결정성을 주장하지 않습니다.
 대신 보낸 컨텍스트, 프롬프트 · 설정 · 계획 해시, 응답 모델을 남겨 무엇을 넣어 무엇이 나왔는지 추적합니다.
+
+## 독립 검증
+
+```python
+validate(topic, method, run_id, config_path, client)
+```
+
+검증기는 생성기와 같은 `client` 계약으로 부르며, run 설정도 생성과 같은 다섯 값을 기본값 없이 받습니다.
+검증기가 받는 것은 system 메시지 `prompts/validator.txt` 와 user 메시지 `{"question", "evidence": [{"label", "text"}]}` 뿐입니다.
+근거 단위는 후보가 인용한 단위를 계획의 근거 묶음에서 찾은 것이고, 표 행에는 그 표의 머리글 행을 붙입니다.
+계획 파일의 SHA-256 이 생성 run `manifest.json` 의 `generation.plan_sha256` 과 다르면 검증기를 부르기 전에 멈춥니다.
+생성기의 답 · 구조 · 프롬프트 · 보낸 컨텍스트 전체 · 자기 평가는 보내지 않습니다.
+검증기는 `{"answerable", "answer", "conditions", "conflict", "comparison"}` 를 돌려줍니다
+(독립 답, 답을 제한하는 조건 · 예외, 근거끼리의 값 충돌, 견주는 질문이면 `{"values": {이름: 값}, "choice": 이름 또는 null}` 아니면 `null`).
+검증기는 주제를 모르므로 견주는 질문인지도 질문과 근거만 보고 스스로 정합니다.
+
+후보마다 아래 순서로 보고, 처음 걸린 곳에서 멈춥니다. 돈이 들지 않는 검사를 먼저 합니다.
+
+| 순서 | 검사 | 걸리면 |
+|---|---|---|
+| 1 | 주제 구조 (`check_structure`, 생성과 같은 검사) | `rejected` `유형 불일치` |
+| 2 | 표: 인용한 표에서 행 이름 · 열 이름이 만나는 칸의 값이 답에 있음 | `rejected` `표 관계` |
+| 2 | 조건: 구조의 조건 · 예외 문구가 답에 있음 | `rejected` `조건 · 예외 누락` |
+| 3 | 같은 주제 · 같은 방식에서 이미 통과 · 보류된 항목과 근거 묶음이나 질문(공백 · 쉼표 무시)이 같음 | `rejected` `중복` |
+| 4 | 검증기 출력이 계약에 맞음 | `held` `검증기 출력 오류` |
+| 5 | 검증기가 근거 충돌을 알림 | `held` `근거 충돌` |
+| 6 | 검증기가 근거만으로 답할 수 있음 | `rejected` |
+| 7 | numeric: 독립 답에 수 · 단위가 있고, 후보 구조의 값 · 단위가 독립 답에 있음 | `rejected` `유형 불일치` · `독립 답과 다릅니다` |
+| 8 | 독립 답이 후보 답에 있음 (아래 정규화). 비교는 대상별 값 · 고른 대상이 같음 | `rejected` `독립 답과 다릅니다` |
+| 9 | 독립 답이 단 조건 · 예외가 모두 후보 답에 있음 | `rejected` `조건 · 예외 누락` |
+| 10 | 질문에 독립 답이 이미 들어 있지 않음. 비교 질문이 선택지로 든 대상 이름 하나를 답하는 것은 예외 | `rejected` `복사형` |
+| 11 | 독립 답의 값마다 후보 답에서 대상을 확인함 (아래 정규화) | `held` `대상 확인 불가` |
+| 12 | multi_hop: 근거 단위를 하나씩만 준 검증기 답이 어느 것도 독립 답을 다 담지 않음 (대상을 확인하지 못하면 `held`) | `rejected` `multi_hop 아님` |
+
+나머지는 `auto_validated` 입니다. 비교의 정규화:
+
+- 독립 답에 수가 있으면 (부호 포함 값, 단위) 쌍으로 맞춥니다. 쌍은 numeric 검사와 같이 Kiwi 형태소로 읽고,
+  쉼표를 지운 십진수로 바꾸며 천 · 만 · 억 · 조는 값에 곱합니다. `1억 3천만원` = `130,000,000원`, `5만원` = `50,000원`,
+  `12개` ≠ `12개월`, `5%` ≠ `5%p`. 독립 답의 쌍이 모두 후보 답에 있어야 같은 답입니다.
+- 비교(`comparison`) 항목은 답 글을 견주지 않고 필드를 견줍니다. 결론(어느 대상을 골랐는지)은 글자로 읽을 수 없기 때문입니다
+  (`A안 1억원, B안 2억원으로 A안이 더 많다` 는 값이 모두 맞아도 결론이 틀립니다).
+  후보 `structure` 의 `values` (대상마다 값) · `choice` (고른 대상 또는 `null`) 를 검증기의 `comparison` 과 맞춥니다.
+  대상마다 값은 담기가 아니라 같음을 봅니다 (`미지원` 은 `지원` 을 담지만 반대 뜻).
+  글이 같으면(공백 · 쉼표 차이만) 같고, 수 · 단위 값이 다르면 다르며, 수 표기만 다르면 같습니다 (`1억원` = `100,000,000원`).
+  수가 여럿이면 쓴 차례로 견줍니다. 수 밖의 글이 같은데 자리마다 수가 다르면 다른 값입니다
+  (`구축 2억원, 운영 1억원` ≠ `구축 1억원, 운영 2억원`).
+  수 밖의 글은 수 · 단위 쌍으로 읽은 자리만 지우고 견주므로, 쌍이 아닌 수는 남습니다
+  (`제3회 회의 1억원` 과 `제4회 회의 1억원` 은 수 밖의 글이 달라 `held`).
+  그 밖에 글이 다른 값(`지원 가능` · `지원`, `1억원 이상` · `1억원`)은 `held` 입니다. `choice` 는 같은 대상이어야 합니다 (둘 다 `null` 도 같음).
+  값이나 `choice` 가 다르면 `rejected` `독립 답과 다릅니다`, 검증기가 `comparison` 을 주지 않았거나
+  대상 이름이 `entities` 와 꼭 같지 않으면 `held` `대상 확인 불가` 입니다.
+  답 글은 생성 검사에서 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같아야 하므로 필드와 다른 결론을 쓸 수 없습니다.
+- 그 밖의 주제는 독립 답에 단위가 같은 값이 여럿일 때 값마다 그 대상(단위가 같은 앞 값 뒤부터 이 값 앞까지의 내용 형태소)도 맞춥니다.
+  그 값의 대상에만 있는 낱말이 후보 답의 같은 값 앞에 모두 있어야 같은 답입니다.
+  다른 값의 대상 낱말 뒤에 쓰면 다른 답(`A안 1억원, B안 2억원` ≠ `A안 2억원, B안 1억원`)이고,
+  대상이 없거나 다른 이름이면(`1억원, 2억원`, `C안 2억원, D안 1억원`) 확인하지 못한 답이라 `held` `대상 확인 불가` 로 갑니다.
+  이 보류는 다른 거절 검사를 모두 마친 뒤에 합니다.
+  대상은 값 앞에서만 읽으므로 `validator.txt` 는 대상을 값 앞에 쓰라고 합니다.
+- 수가 없는 답은 공백 · 쉼표만 지우고 글자로 맞춥니다. 조건 · 예외 문구 비교도 같습니다.
+
+거절은 끝 상태라 사람이 되돌릴 수 없습니다. 판단을 사람에게 넘길 경우(근거 충돌, 검증기 출력 오류, 대상 확인 불가)만 `held` 입니다.
+
+중복은 카탈로그로 같은 주제 · 같은 방식의 다른 run 을 찾아, 그 run 의 `accepted.jsonl` · `review.jsonl` 과 맞춥니다.
+거절된 항목은 맞추지 않습니다 (같은 근거로 다시 만든 항목이 막히지 않도록).
+다른 방식(A · B · C)은 같은 계획의 같은 근거 묶음을 받는 것이 비교의 전제라 중복으로 보지 않고, 대신 출시본 하나에 함께 들어가지 못합니다.
+
+난도는 `DIFFICULTY_RULE` (`difficulty-1`) 대로 정하고 모든 검증 항목에 `validator_version` 과 함께 남깁니다.
+
+| 난도 | 규칙 |
+|---|---|
+| `hard` | multi_hop 이고 11번 검사를 통과함 (근거 둘 이상이 필요함이 확인됨) |
+| `easy` | 그 밖에, 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외)가 모두 근거 본문에 그대로 있음 |
+| `medium` | 나머지 (질문이 근거와 다른 말로 물음) |
+
+결과는 run 의 `accepted.jsonl` (`auto_validated`) · `review.jsonl` (`held`, 사람 검토 대상)을 채우고,
+거절 항목은 `rejected.jsonl` 뒤에 붙입니다. `validation.json` 에는 검증기 버전, 난도 규칙, 모델(요청 · 응답),
+설정 · 프롬프트 해시, 호출, 비용, 상태별 개수, 세 상태 파일의 SHA-256 을 남깁니다.
+run 마다 한 번만 검증하며, 이미 검증한 run 은 호출 전에 막습니다.
+호출 수 한도와 예산은 후보를 시작하기 전에 보고, 닿으면 남은 후보를 검증하지 않은 채 `pending` 에 남깁니다
+(한 후보의 multi_hop 검사를 도중에 끊지 않음). 남은 후보를 이어서 검증하는 일은 실행기 단계에서 붙습니다.
+실패 기록(`failure_memory`)은 자기 개선 단계에서 채웁니다.
+
+## 출시
+
+```python
+release(topic, version, [(method, run_id), ...], confirmations=None)
+```
+
+고른 run 들의 `auto_validated` 항목과, 사람이 확인한 `held` 항목만 `released` 로 옮겨 `releases/{version}/golden.jsonl` 에 씁니다.
+사람 확인 기록은 JSONL 파일이고 한 줄이 정확히 `{"candidate_id", "reason"}` 입니다. 이유는 전이 기록에 `사람 확인: ...` 으로 남습니다.
+확인하지 않은 `held` 항목은 빠집니다.
+
+| 거절 | 이유 |
+|---|---|
+| 이미 있는 `version` | 출시본을 덮어쓰지 않음 (`FileExistsError`) |
+| 고른 run 의 `held` 항목이 아닌 확인 | 오타나 다른 run 의 확인이 조용히 무시되지 않도록 |
+| 검증 뒤 바뀐 상태 파일 | `validation.json` 의 SHA-256 과 다르면 막음. `held` 를 `accepted.jsonl` 로 옮겨 사람 확인을 건너뛰지 못하게 |
+| 같은 근거 묶음이나 같은 질문의 항목 둘 | 방식을 섞어 낼 때도 |
+| run 에 등록된 기록과 다른 내용 | 위 저장 규약 |
+
+출시 매니페스트의 `sources` 에는 원본 run 마다 `candidates.jsonl` · 상태 파일 · `manifest.json` · `validation.json` 의 SHA-256 을,
+`release.confirmations` 에는 사람 확인 기록 파일 이름과 SHA-256 을 남깁니다.
 
 ## 테스트
 

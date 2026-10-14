@@ -149,8 +149,6 @@ def test_numeric_pair_must_be_the_whole_expression_in_evidence(value, unit_name,
     ("condition", {"condition": "우편 접수는 받지 않는다"}, [unit("단, 우편 접수는 받지 않는다.")], True),
     ("condition", {"condition": "방문 접수만 받는다"}, [unit("단, 우편 접수는 받지 않는다.")], False),
     ("condition", {"condition": "1년 이내"}, [unit("계약 종료 후 11년 이내로 한다.")], False),
-    ("comparison", {"entities": ["A안", "B안"]}, [unit("구분 | A안 | B안")], True),
-    ("comparison", {"entities": ["A안"]}, [unit("구분 | A안 | B안")], False),
     ("multi_hop", {}, [unit("가"), unit("나")], True),
     ("multi_hop", {}, [unit("가")], False),
     ("numeric", {"value": "5"}, [unit("5%")], False),
@@ -158,6 +156,26 @@ def test_numeric_pair_must_be_the_whole_expression_in_evidence(value, unit_name,
 def test_each_topic_requires_its_structure(topic, structure, cited, ok):
     row = {"answer": "A안은 1억원, 5% 이고 우편 접수는 받지 않는다", "structure": structure}
     reason = check_structure(topic, topic_spec(topic)[0], row, cited)
+    assert (reason is None) == ok, reason
+
+
+BUDGETS = {"A안": "1억원", "B안": "2억원"}
+
+
+@pytest.mark.parametrize("structure, answer, ok", [
+    ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "B안"}, "A안 1억원, B안 2억원. 답: B안", True),
+    ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", True),
+    ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "B안"}, "A안 1억원, B안 2억원으로 A안이 더 많다", False),
+    ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "C안"}, "A안 1억원, B안 2억원. 답: C안", False),
+    ({"entities": ["A안", "B안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
+    ({"entities": ["A안", "B안"], "values": {"A안": "3억원", "B안": "2억원"}, "choice": None}, "A안 3억원, B안 2억원", False),
+    ({"entities": ["A안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
+    ({"entities": [{"name": "A안"}, {"name": "B안"}], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", False),
+])
+def test_comparison_answer_is_the_text_built_from_its_structure(structure, answer, ok):
+    # 결론은 structure 의 choice 로 검증한다. 답 글이 structure 와 다른 결론을 쓰면 검증을 비켜 가므로 생성에서 막는다.
+    cited = [unit("구분 | A안 | B안", "table"), unit("예산 | 1억원 | 2억원", "table")]
+    reason = check_structure("comparison", topic_spec("comparison")[0], {"answer": answer, "structure": structure}, cited)
     assert (reason is None) == ok, reason
 
 
