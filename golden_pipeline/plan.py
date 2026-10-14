@@ -109,6 +109,7 @@ def _unit_text(ref, element):
 
 def _groups(topic, spec, units, used, max_context_chars):
     """문서마다 주제에 맞는 단위를 패키지 순서대로 bundle_units 개씩 묶는다. 컨텍스트가 한도를 넘는 묶음은 버린다."""
+    headers = {unit["ref"]["element_id"]: unit for unit in units if _table_row(unit) == 0}
     pattern = re.compile(spec["pattern"]) if spec["pattern"] else None
     by_doc = defaultdict(list)
     for unit in units:
@@ -120,9 +121,27 @@ def _groups(topic, spec, units, used, max_context_chars):
     size = spec["bundle_units"]
     groups = {}
     for doc, doc_units in sorted(by_doc.items()):
-        bundles = [_bundle(topic, doc_units[i:i + size]) for i in range(0, len(doc_units) - size + 1, size)]
+        chunks = [_with_headers(doc_units[i:i + size], headers) for i in range(0, len(doc_units) - size + 1, size)]
+        bundles = [_bundle(topic, chunk) for chunk in chunks if chunk]
         groups[doc] = [b for b in bundles if len(b["context"]) <= max_context_chars]
     return groups
+
+
+def _with_headers(chunk, headers):
+    """표 행이 든 묶음 앞에 그 표의 머리글 행(논리 표 0행)을 붙인다. 열 이름 없이는 칸을 가리킬 수 없기 때문이다.
+
+    머리글 행이 eligible 이 아니면 None 을 돌려 그 묶음을 버린다.
+    """
+    have = {unit["ref"]["element_id"] for unit in chunk if _table_row(unit) == 0}
+    need = sorted({unit["ref"]["element_id"] for unit in chunk if _table_row(unit)} - have)
+    if not all(element_id in headers for element_id in need):
+        return None
+    return [headers[element_id] for element_id in need] + chunk
+
+
+def _table_row(unit):
+    location = unit["ref"]["location"]
+    return location["row"] if location["kind"] == "table" else None
 
 
 def _pick(groups, count):

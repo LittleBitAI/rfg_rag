@@ -32,6 +32,8 @@ def generate(method, topic, plan_id, run_id, config_path, client):
         raise ValueError(f"generate 는 A · B 만 받습니다. C 는 import_c 를 씁니다: {method!r}")
     config, config_sha = _run_config(config_path)
     plan, plan_sha, spec = _plan_for(plan_id, topic)
+    # 저장할 수 없는 run 이면 돈을 쓰기 전에 멈춘다.
+    storage.new_run_dir(topic, method, run_id)
     # A 는 주제 전용 프롬프트, B 는 모든 주제가 같은 파일 하나를 쓴다. 둘 다 같은 주제 명세를 받는다.
     prompt_path = storage.PROMPTS / "A" / f"{topic}.txt" if method == "A" else storage.PROMPTS / "B.txt"
     instructions = Template(prompt_path.read_text(encoding="utf-8")).substitute(
@@ -111,9 +113,9 @@ def _numeric(structure, answer, cited, texts):
     if not (_is_text(value) and _is_text(unit) and re.search(r"\d", value)):
         return "숫자가 든 값과 단위가 있어야 합니다"
     quote = _norm(value + unit)
-    if quote not in _norm(answer):
+    if not _contains(_norm(answer), quote):
         return f"답에 값과 단위({value}{unit})가 없습니다"
-    if not any(quote in text for text in texts):
+    if not any(_contains(text, quote) for text in texts):
         return f"값과 단위({value}{unit})가 근거에 없습니다"
     return None
 
@@ -149,8 +151,18 @@ def _quoted(values, texts, label):
     """구조의 값은 근거에 적힌 그대로여야 한다 (공백·쉼표 차이만 허용)."""
     if not all(_is_text(value) for value in values):
         return f"{label}은 비어 있지 않은 문자열이어야 합니다"
-    missing = [value for value in values if not any(_norm(value) in text for text in texts)]
+    missing = [value for value in values if not any(_contains(text, _norm(value)) for text in texts)]
     return f"{label}이 근거에 없습니다: {missing}" if missing else None
+
+
+def _contains(text, quote):
+    """quote 가 text 에 있는지 본다. 숫자로 시작하거나 끝나는 quote 는 더 긴 수의 일부와 맞추지 않는다.
+
+    쉼표를 지우고 견주므로 그냥 부분 문자열이면 30000000원 이 130000000원 안에서, 2개월 이 12개월 안에서 맞는다.
+    """
+    head = r"(?<!\d)(?<!\d\.)" if quote[:1].isdigit() else ""
+    tail = r"(?!\.?\d)" if quote[-1:].isdigit() else ""
+    return re.search(head + re.escape(quote) + tail, text) is not None
 
 
 def _candidate(run, candidate_id, row, bundle, spec):
@@ -189,9 +201,18 @@ def _candidate(run, candidate_id, row, bundle, spec):
 
 
 def _write(topic, method, run_id, inputs, results, info):
-    """항목이 된 행은 candidates.jsonl 로, 못 된 행은 원문과 이유를 rejected.jsonl 로 보낸다."""
+    """항목이 된 행은 candidates.jsonl 로, 못 된 행은 원문과 이유를 rejected.jsonl 로 보낸다.
+
+    카탈로그에서 다른 주제가 가진 근거 묶음을 인용한 행도 거절 행으로 남긴다. 예외로 멈추면 이미 낸 호출 기록이 사라진다.
+    """
+    owners = {}
+    for entry in storage.read_catalog():
+        owners.setdefault(entry["evidence_group"], entry["topic"])
     items, rejects = [], []
     for (bundle, raw), (item, reason) in zip(inputs, results):
+        owner = owners.get(storage.evidence_group(item), topic) if item else topic
+        if owner != topic:
+            item, reason = None, f"근거 묶음이 이미 {owner} 주제 소유입니다"
         if item is None:
             rejects.append({"bundle_id": bundle["bundle_id"] if bundle else None, "reason": reason, "raw": raw})
         else:

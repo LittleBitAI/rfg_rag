@@ -2,7 +2,7 @@
 import pytest
 
 from golden_pipeline import evidence, storage
-from golden_pipeline.plan import load_plan, make_plan
+from golden_pipeline.plan import _groups, load_plan, make_plan, topic_spec
 
 DOC_1, DOC_2 = "1" * 64, "2" * 64
 COUNTS = {"numeric": 1, "table": 1, "condition": 1, "comparison": 1}
@@ -50,7 +50,26 @@ def test_documents_are_taken_in_turn_and_long_contexts_are_left_out(evidence_run
     make_plan("p2", "ev1", {"numeric": 2}, 60, package=evidence_run)
     plan = load_plan("p2")[0]
     assert all(len(b["context"]) <= 60 for b in plan["bundles"])
-    assert unit_ids(plan) == ["u4", "u5"]
+    assert unit_ids(plan) == ["u3", "u4", "u5"]  # 표 행 u4 · u5 에 머리글 행 u3 이 붙는다
+
+
+def table_row(row, text):
+    location = {"kind": "table", "grid": "logical_restored", "row": row, "cell": None}
+    return {"unit_id": f"r{row}", "ref": {"doc_sha": DOC_1, "element_id": "e-table", "location": location}, "text": text}
+
+
+@pytest.mark.parametrize("header_eligible", [True, False])
+def test_table_rows_are_bundled_with_their_header_row_or_left_out(header_eligible):
+    rows = [table_row(0, "구분 | A안 | B안")] + [table_row(n, f"항목{n} | {n}억원 | {n + 1}억원") for n in range(1, 6)]
+    units = rows if header_eligible else rows[1:]
+
+    bundles = _groups("table", topic_spec("table")[0], units, set(), 2000)[DOC_1]
+
+    if header_eligible:
+        assert [[u["unit_id"] for u in b["units"]] for b in bundles] == [["r0", "r1", "r2"], ["r0", "r3", "r4", "r5"]]
+        assert bundles[1]["context"].startswith("[E1]\n구분 | A안 | B안")
+    else:
+        assert bundles == []
 
 
 def test_package_that_differs_from_the_judged_one_stops_the_plan(evidence_run):

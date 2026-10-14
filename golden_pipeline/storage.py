@@ -46,7 +46,7 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
         if (item["primary_topic"], item["method"], item["run_id"]) != (topic, method, run_id):
             raise ValueError(f"{item['candidate_id']} 는 {topic}/{method}/{run_id} 의 항목이 아닙니다")
     topic_dir = _topic_dir(topic)
-    run_dir = _child(topic_dir / "runs" / method, run_id)
+    run_dir = new_run_dir(topic, method, run_id)
     entries = [_catalog_entry(item) for item in items]
     _check_catalog(entries)
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -71,6 +71,17 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
         "generation": info,
     })
     _append_jsonl(OUTPUTS / "catalog.jsonl", entries)
+    return run_dir
+
+
+def new_run_dir(topic, method, run_id):
+    """새 run 이 쓸 디렉터리. run_id 가 경로 한 칸 이름이 아니거나 이미 쓴 run 이면 막는다."""
+    run_dir = _child(_topic_dir(topic) / "runs" / method, run_id)
+    used = run_dir.exists() or any(
+        (entry["topic"], entry["method"], entry["run_id"]) == (topic, method, run_id) for entry in read_catalog()
+    )
+    if used:
+        raise FileExistsError(f"이미 있는 run 입니다: {topic}/{method}/{run_id}")
     return run_dir
 
 

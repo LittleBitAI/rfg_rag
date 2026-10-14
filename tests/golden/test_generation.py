@@ -85,6 +85,9 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
     ("예산은 사업 규모와 부가세 포함 여부에 따라 정해진다", {"value": "130,000,000", "unit": "원"}),
     ("예산은 사업 규모와 부가세 포함 여부에 따라 정해진다", {"value": "", "unit": ""}),
     ("예산은 999원이다", {"value": "999", "unit": "원"}),
+    # 근거의 130,000,000원 · 12개월 안에 든 더 짧은 수다. 수는 통째로 맞아야 한다.
+    ("예산은 30,000,000원이다", {"value": "30,000,000", "unit": "원"}),
+    ("기간은 2개월이다", {"value": "2", "unit": "개월"}),
 ])
 def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch(planned, answer, structure):
     # 값 없이 설명만 하는 답이 numeric 후보로 남던 경우를 막는다. 근거에 없는 값도 같은 이유로 거절한다.
@@ -107,6 +110,7 @@ def unit(text, kind="char"):
     ("table", {"row": "인력", "column": "A안"}, [unit("구분 | A안", "table")], False),
     ("condition", {"condition": "우편 접수는 받지 않는다"}, [unit("단, 우편 접수는 받지 않는다.")], True),
     ("condition", {"condition": "방문 접수만 받는다"}, [unit("단, 우편 접수는 받지 않는다.")], False),
+    ("condition", {"condition": "1년 이내"}, [unit("계약 종료 후 11년 이내로 한다.")], False),
     ("comparison", {"entities": ["A안", "B안"]}, [unit("구분 | A안 | B안")], True),
     ("comparison", {"entities": ["A안"]}, [unit("구분 | A안 | B안")], False),
     ("multi_hop", {}, [unit("가"), unit("나")], True),
@@ -171,6 +175,30 @@ def test_call_cap_and_budget_stop_the_run(evidence_run, tmp_path, limit, status)
     assert len(client.requests) == 1
     assert info["status"] == status
     assert len(info["bundle_ids"]) == len(info["calls"]) == 1
+
+
+@pytest.mark.parametrize("run_id", ["a1", "a/b"])
+def test_unwritable_run_id_stops_before_any_call(planned, run_id):
+    generate("A", "numeric", "p1", "a1", planned, Client(NUMERIC))
+    client = Client(NUMERIC)
+
+    with pytest.raises((FileExistsError, storage.OutputPathError)):
+        generate("A", "numeric", "p1", run_id, planned, client)
+    assert client.requests == []
+
+
+def test_output_citing_evidence_another_topic_owns_is_rejected_not_lost(planned, evidence_run):
+    # p1 의 numeric 묶음(u1, u2)이 p2 에서는 multi_hop 묶음의 E1 · E2 다.
+    two = {**NUMERIC, "evidence": ["E1", "E2"]}
+    generate("A", "numeric", "p1", "a1", planned, Client(two))
+    make_plan("p2", "ev1", {"multi_hop": 1}, 2000, package=evidence_run)
+
+    run_dir = generate("A", "multi_hop", "p2", "a1", planned, Client({**two, "structure": {}}))
+
+    assert read_jsonl(run_dir / "candidates.jsonl") == []
+    [reject] = read_jsonl(run_dir / "rejected.jsonl")
+    assert reject["reason"] == "근거 묶음이 이미 numeric 주제 소유입니다"
+    assert len(manifest(run_dir)["generation"]["calls"]) == 1
 
 
 def test_topic_spec_changed_after_planning_stops_before_any_call(planned):
