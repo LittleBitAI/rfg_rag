@@ -83,8 +83,16 @@ def test_pack_removes_near_duplicates_and_repeated_candidates():
     assert hits[0]["score"] == 0.9123
 
 
+@pytest.mark.parametrize("order", [[0, 1], [1, 0]])
+def test_pack_keeps_richer_evidence_when_another_chunk_only_contains_its_code(order):
+    index = make_index(["SFR-001", "SFR-001 응답시간은 2초 이내여야 한다"], [1, 5], budget=6)
+    hits = index._pack([(i, 1.0 - rank * 0.1) for rank, i in enumerate(order)])
+    assert [hit["chunk_id"] for hit in hits] == [f"c{i}" for i in order]
+    assert any("2초" in hit["body"] for hit in hits)
+
+
 def test_comparison_interleaves_and_skips_long_chunk_without_stopping():
-    index = make_index(["기관 가 첫 근거", "기관 가 두번째 내용", "기관 나 첫 자료", "기관 나 나중 항목"],
+    index = make_index(["SFR-001", "기관 가 두번째 내용", "SFR-001 응답시간은 2초 이내여야 한다", "기관 나 나중 항목"],
                        [3, 8, 3, 2], budget=8, doc_ids=["a", "a", "b", "b"])
     index.router.route.return_value = {"기관 가": {"a"}, "기관 나": {"b"}}
     index._rank = MagicMock(side_effect=[[(0, 1.0), (1, 0.9)], [(2, 0.8), (3, 0.7)]])

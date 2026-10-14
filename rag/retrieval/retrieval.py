@@ -23,7 +23,8 @@ _DUP_RATIO = 0.8
 
 
 def _is_dup(a: set[str], b: set[str]) -> bool:
-    return len(a & b) >= _DUP_RATIO * min(len(a), len(b))
+    """큰 낱말 집합의 80%가 겹쳐야 중복이다. 짧은 코드만 겹치는 상세 근거는 남긴다."""
+    return len(a & b) >= _DUP_RATIO * max(len(a), len(b))
 
 
 def _minmax(d: dict[int, float]) -> dict[int, float]:
