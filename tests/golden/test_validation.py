@@ -4,7 +4,7 @@ import json
 import pytest
 
 from golden_pipeline import storage
-from golden_pipeline.generation import generate, import_c
+from golden_pipeline.generation import comparison_answer, generate, import_c
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.schema import DIFFICULTIES
 from golden_pipeline.validation import VALIDATOR_VERSION, difficulty, quantities, release, same_answer, validate
@@ -23,8 +23,9 @@ MULTI_HOP = {
 }
 
 
-def verdict(answer, conditions=(), answerable=True, conflict=False):
-    return {"answerable": answerable, "answer": answer, "conditions": list(conditions), "conflict": conflict}
+def verdict(answer, conditions=(), answerable=True, conflict=False, comparison=None):
+    return {"answerable": answerable, "answer": answer, "conditions": list(conditions), "conflict": conflict,
+            "comparison": comparison}
 
 
 class Generator:
@@ -142,16 +143,6 @@ def test_same_answer_compares_after_value_and_unit_normalization(candidate, inde
     assert same_answer(candidate, independent) is same
 
 
-@pytest.mark.parametrize("candidate, same", [
-    ("A안 1억원, B안 12개월", True),
-    ("B안은 1억원, A안은 12개월", False),
-    ("C안은 1억원, D안은 12개월", None),
-])
-def test_comparison_attribution_is_read_from_the_entity_names_for_every_value(candidate, same):
-    # 단위가 다른 값끼리 바뀌어도 대상이 달라진다. 비교 항목은 값마다 entities 이름으로 대상을 맞춘다.
-    assert same_answer(candidate, "A안은 1억원, B안은 12개월", ["A안", "B안"]) is same
-
-
 @pytest.mark.parametrize("independent, state", [
     ("1억 3천만원", "auto_validated"),
     ("13,000,000원", "rejected"),
@@ -227,25 +218,26 @@ def test_each_check_sends_the_candidate_to_its_state(config, topic, row, verdict
     assert record["validator_version"] == VALIDATOR_VERSION and record["difficulty_rule"].startswith("difficulty-1")
 
 
-@pytest.mark.parametrize("answer, independent, state", [
-    ("A안은 1억원, B안은 2억원으로 B안이 더 많다", "A안 1억원, B안 2억원", "auto_validated"),
-    ("A안은 2억원, B안은 1억원으로 A안이 더 많다", "A안 1억원, B안 2억원", "rejected"),
-    ("1억원, 2억원", "A안 1억원, B안 2억원", "held"),
-    ("A안이 2억원으로 더 많다", "B안이 2억원으로 더 많다", "rejected"),
-    ("B안이 2억원으로 더 적다", "B안이 2억원으로 더 많다", "held"),
-    ("A안이 B안보다 예산이 많다", "B안", "held"),
-    ("B안", "B안", "auto_validated"),
+BUDGETS = {"A안": "1억원", "B안": "2억원"}
+
+
+@pytest.mark.parametrize("values, choice, independent, state", [
+    (BUDGETS, "B안", {"values": {"A안": "100,000,000원", "B안": "2억원"}, "choice": "B안"}, "auto_validated"),
+    (BUDGETS, "A안", {"values": BUDGETS, "choice": "B안"}, "rejected"),
+    ({"A안": "2억원", "B안": "1억원"}, "B안", {"values": BUDGETS, "choice": "B안"}, "rejected"),
+    (BUDGETS, "B안", None, "held"),
+    (BUDGETS, "B안", {"values": {"A안": "1억원", "C안": "2억원"}, "choice": "B안"}, "held"),
 ])
-def test_comparison_values_must_belong_to_the_same_entity_as_in_the_independent_answer(config, answer, independent,
-                                                                                       state):
-    # 비교 후보는 값이 맞아도 그 값을 다른 대상에 붙이면 틀린 답이다. 대상은 구조의 entities 이름으로 읽는다.
-    # 같은 답은 독립 답이 대상마다 값을 밝혔을 때만 확인되고, 그 밖(글만 든 답, 한 대상만 밝힌 답)은 사람이 본다.
-    make_plan("p3", "ev1", {"comparison": 1}, 2000, package=config.parent / "v11")
-    row = {"question": "A안과 B안 중 예산이 더 많은 안은?", "answer": answer, "evidence": ["E3"],
-           "structure": {"entities": ["A안", "B안"]}, "secondary_tags": []}
+def test_comparison_compares_each_entity_value_and_the_chosen_entity_with_the_validator(config, values, choice,
+                                                                                        independent, state):
+    # 비교 답의 결론(어느 대상을 골랐는지)은 글에서 읽을 수 없다. 후보 structure 와 검증기 comparison 을 필드로 맞춘다.
+    make_plan("p3", "ev1", {"numeric": 1, "comparison": 1}, 2000, package=config.parent / "v11")
+    structure = {"entities": ["A안", "B안"], "values": values, "choice": choice}
+    row = {"question": "A안과 B안 중 예산이 더 많은 안은?", "answer": comparison_answer(structure),
+           "evidence": ["E1", "E2"], "structure": structure, "secondary_tags": []}
     generate("A", "comparison", "p3", "a1", config, Generator(row))
 
-    run_dir = validate("comparison", "A", "a1", config, Validator({"*": verdict(independent)}))
+    run_dir = validate("comparison", "A", "a1", config, Validator({"*": verdict("B안", comparison=independent)}))
 
     [item] = validated(run_dir).values()
     assert item["state"] == state

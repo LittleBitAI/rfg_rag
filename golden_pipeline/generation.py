@@ -195,10 +195,28 @@ def _condition(structure, answer, cited, texts):
 
 
 def _comparison(structure, answer, cited, texts):
-    entities = structure["entities"]
+    """대상마다 값과 고른 대상을 structure 에 두고, 답은 그 structure 로 만든 글이어야 한다.
+
+    결론(어느 대상을 골랐는지)을 글에서 읽을 수 없으므로, 검증은 structure 를 견주고 답 글은 structure 와 같게 묶는다.
+    """
+    entities, values, choice = structure["entities"], structure["values"], structure["choice"]
     if not isinstance(entities, list) or len(set(map(str, entities))) < 2:
         return "견주는 대상이 둘 이상이어야 합니다"
-    return _quoted(entities, texts, "비교 대상")
+    if not isinstance(values, dict) or set(values) != set(entities):
+        return "values 는 entities 마다 값을 담은 객체여야 합니다"
+    if choice is not None and choice not in entities:
+        return "choice 는 entities 중 하나이거나 null 이어야 합니다"
+    reason = _quoted(entities, texts, "비교 대상") or _quoted(list(values.values()), texts, "대상의 값")
+    if reason:
+        return reason
+    expected = comparison_answer(structure)
+    return None if _norm(answer) == _norm(expected) else f"답은 structure 로 만든 글 {expected!r} 이어야 합니다"
+
+
+def comparison_answer(structure):
+    """비교 structure 로 만든 답 글: A안 1억원, B안 2억원. 답: B안"""
+    text = ", ".join(f"{entity} {structure['values'][entity]}" for entity in structure["entities"])
+    return f"{text}. 답: {structure['choice']}" if structure["choice"] else text
 
 
 def _multi_hop(structure, answer, cited, texts):

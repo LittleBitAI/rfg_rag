@@ -13,14 +13,14 @@ from golden_pipeline import generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-1"
+VALIDATOR_VERSION = "validation-2"
 DIFFICULTY_RULE = (
     "difficulty-1: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외)가 모두 근거 본문에 그대로 있음. medium = 나머지"
 )
 # Kiwi 는 얼마 를 일반 명사(NNG)로 단다. 의문사는 근거에 있을 수 없으므로 내용 형태소에서 뺀다.
 INTERROGATIVES = ("얼마", "몇", "무엇", "어디", "언제", "누구", "어느")
-VERDICT_FIELDS = ("answerable", "answer", "conditions", "conflict")
+VERDICT_FIELDS = ("answerable", "answer", "conditions", "conflict", "comparison")
 CONFIRMATION_FIELDS = ("candidate_id", "reason")
 # 값은 독립 답과 같지만 어느 값이 어느 대상의 것인지 글로 확인하지 못한 답. 맞을 수도 있어 거절하지 않고 사람에게 넘긴다.
 UNATTRIBUTED = "대상 확인 불가: 값은 같지만 값마다 대상이 독립 답과 같은지 확인하지 못했습니다"
@@ -139,19 +139,17 @@ def quantities(text):
     1억 3천만원 처럼 수 단위로 끝난 수 뒤에 이어 쓴 수는 하나로 더한다. 그래서 1억 3천만원 = 130,000,000원 이다.
     수와 단위를 읽는 법(부호, 단위 끝)은 생성의 numeric 검사와 같다.
     """
-    return {pair for pair, _, _ in facts(text)}
+    return {pair for pair, _ in facts(text)}
 
 
 def facts(text):
-    """text 의 (값, 단위) 쌍마다 그 대상을 함께 돌려준다: [((값, 단위), 대상 낱말 집합, 앞 글)].
+    """text 의 (값, 단위) 쌍마다 그 대상을 함께 돌려준다: [((값, 단위), 대상 낱말 집합)].
 
     대상은 단위가 같은 앞 값 뒤부터 이 값 앞까지의 내용 형태소다. A안은 2억원, B안은 1억원 에서 2억원 의 대상은 {A, 안},
     1억원 의 대상은 {B, 안} 이다. 단위가 다른 값끼리는 바뀔 수 없어 경계로 삼지 않는다 (1차년도 1억원 의 대상은 {1, 차, 년도}).
-    앞 글은 단위와 상관없이 바로 앞 값 뒤부터 이 값 앞까지의 글(공백 · 쉼표 제거)이다. 비교 항목의 대상 이름은 여기서 찾는다.
     """
-    text = unicodedata.normalize("NFC", text)
-    tokens = generation._kiwi().tokenize(text)
-    found, carry, after, last = [], {}, {}, 0
+    tokens = generation._kiwi().tokenize(unicodedata.normalize("NFC", text))
+    found, carry, after = [], {}, {}
     for i, token in enumerate(tokens):
         if token.tag != "SN":
             continue
@@ -166,22 +164,17 @@ def facts(text):
             carry[end] = (sign, amount, start)
             continue
         subject = {_norm(t.form) for t in tokens[after.get(rest, 0):start] if t.tag in SUBJECT_TAGS}
-        window = _norm(text[last:tokens[start].start])
-        found.append(((sign.replace("−", "-") + format(amount.normalize(), "f"), rest), subject, window))
+        found.append(((sign.replace("−", "-") + format(amount.normalize(), "f"), rest), subject))
         after[rest] = _unit_end(tokens, end, rest)
-        last = tokens[after[rest] - 1].end
     return found
 
 
-def same_answer(text, independent, entities=None):
+def same_answer(text, independent):
     """독립 답이 text 에 들어 있는지. 수 · 단위는 값과 그 대상으로 맞추고, 수가 없는 답은 글자로 맞춘다 (공백 · 쉼표 차이만 허용).
 
     True · False 이고, 값은 모두 있지만 어느 값이 어느 대상의 것인지 확인하지 못하면 None 이다 (사람이 볼 일).
     그래서 A안 1억원, B안 2억원 은 A안 2억원, B안 1억원 과 값은 같아도 다른 답이고, 1억원, 2억원 은 확인하지 못한 답이다.
-    entities (비교 항목의 대상 이름) 가 있으면 _comparison_same 으로 맞춘다.
     """
-    if entities:
-        return _comparison_same(text, independent, entities)
     expected = facts(independent)
     if not expected:
         return _contains(_norm(text), _norm(independent))
@@ -189,24 +182,23 @@ def same_answer(text, independent, entities=None):
     return _combined([_attributed(fact, expected, found) for fact in expected])
 
 
-def _comparison_same(text, independent, entities):
-    """비교 항목의 같은 답. True 는 주제 명세(대상마다 값을 밝힘)를 보였을 때만 준다.
+def same_comparison(structure, independent):
+    """비교 항목: 후보 structure 의 대상별 값과 고른 대상을 검증기의 comparison 과 맞춘다. True · False · None.
 
-    글이 같거나, 독립 답이 entities 마다 꼭 한 번 그 이름 뒤에 값을 쓰고 그 값들이 모두 후보 답에서 같은 이름 뒤에 있을 때다.
-    값이 다른 이름 뒤에만 있거나 아예 없으면, 또는 글만 든 답이 독립 답을 담지도 않으면 False 다.
-    나머지(글만 든 답이 독립 답을 담기만 함, 독립 답이 한 대상만 밝힘)는 결론 방향을 글자로 알 수 없어 None (held) 이다.
-    A안이 B안보다 예산이 많다 는 B안 을 담지만 B안 을 고르지 않았다.
+    결론(어느 대상을 골랐는지)은 글에서 읽을 수 없어 둘 다 필드로 받는다. 후보의 답 글은 생성 검사에서 structure 와 같게 묶였다.
+    검증기가 comparison 을 주지 않았거나, 대상 이름이 entities 와 꼭 같지 않으면 맞출 기준이 없어 None (held) 이다.
+    대상마다 값은 same_answer 로 맞추고 (1억원 = 100,000,000원), 고른 대상은 이름이 같아야 한다 (둘 다 null 도 같다).
     """
-    if _norm(text) == _norm(independent):
-        return True
-    expected = facts(independent)
-    if not expected:
-        return None if _contains(_norm(text), _norm(independent)) else False
-    found = facts(text)
-    results = [_anchored(fact, found, entities) for fact in expected]
-    owners = sorted(name for _, _, window in expected for name in _named(window, entities))
-    covered = owners == sorted(set(entities))
-    return _combined(results if covered else [*results, None])
+    if independent is None:
+        return None
+    names = {_norm(entity): entity for entity in structure["entities"]}
+    values = {names.get(_norm(name)): value for name, value in independent["values"].items()}
+    choice = independent["choice"]
+    if set(values) != set(structure["entities"]) or (choice is not None and _norm(choice) not in names):
+        return None
+    results = [same_answer(structure["values"][entity], values[entity]) for entity in structure["entities"]]
+    chosen = names[_norm(choice)] if choice is not None else None
+    return _combined([*results, chosen == structure["choice"]])
 
 
 def _combined(results):
@@ -216,30 +208,6 @@ def _combined(results):
     return None if None in results else True
 
 
-def _anchored(fact, found, entities):
-    """비교 항목의 값 하나: 독립 답이 그 값 앞에 쓴 대상 이름이 text 의 같은 값 앞에도 있는지. True · False · None.
-
-    값이 하나뿐이거나 단위가 달라도 늘 본다. 대상이 확인될 때만 같은 답이고, 확인할 수 없으면 None (held) 이다.
-    독립 답이 값 앞에 대상 이름을 꼭 하나 쓰지 않았으면 맞출 기준이 없어 None 이다.
-    text 의 같은 값 앞이 모두 다른 대상 이름뿐이면 False, 이름이 없거나 여럿이면 None 이다.
-    ponytail: 이름은 부분 문자열로 찾는다. B안 이 AB안 안에서도 잡히니, 서로를 품는 이름이 생기면 가장 긴 일치로 바꾼다.
-    """
-    pair, _, window = fact
-    owner = _named(window, entities)
-    named = [_named(other_window, entities) for other, _, other_window in found if other == pair]
-    if not named:
-        return False
-    if len(owner) != 1:
-        return None
-    if owner in named:
-        return True
-    return False if all(names and not names & owner for names in named) else None
-
-
-def _named(window, entities):
-    return {entity for entity in entities if _contains(window, _norm(entity))}
-
-
 def _attributed(fact, expected, found):
     """독립 답의 값 하나가 text 에서 같은 대상에 붙어 있는지: True · False · None (확인하지 못함).
 
@@ -247,15 +215,15 @@ def _attributed(fact, expected, found):
     text 의 대상에 모두 있어야 하고, 다른 값의 대상에 있는 낱말(foreign)이 있으면 다른 대상의 값이다.
     ponytail: 대상은 값 앞에서만 읽는다. 2억원(A안) 처럼 대상을 값 뒤에 쓴 답은 확인하지 못하거나 바뀐 답으로 읽힌다.
     """
-    pair, subject, _ = fact
-    subjects = [other_subject for other, other_subject, _ in found if other == pair]
+    pair, subject = fact
+    subjects = [other_subject for other, other_subject in found if other == pair]
     if not subjects:
         return False
     rivals = [other for other in expected if other is not fact and other[0][1] == pair[1]]
     if not rivals:
         return True
-    own = subject - set().union(*(other_subject for _, other_subject, _ in rivals))
-    foreign = set().union(*(other_subject for other, other_subject, _ in rivals if other != pair)) - subject
+    own = subject - set().union(*(other_subject for _, other_subject in rivals))
+    foreign = set().union(*(other_subject for other, other_subject in rivals if other != pair)) - subject
     if own and any(own <= other_subject and not other_subject & foreign for other_subject in subjects):
         return True
     return False if all(other_subject & foreign for other_subject in subjects) else None
@@ -284,7 +252,7 @@ def _verdict(item, spec, units, ask, survivors):
     reason = next((reason for check in ANSWER_CHECKS if (reason := check(item, full))), None)
     if reason:
         return "rejected", reason
-    if same_answer(item["answer"], full["answer"], _entities(item)) is None:
+    if _agreement(item, full) is None:
         return "held", f"{UNATTRIBUTED}: 독립 답 {full['answer']!r}"
     if item["primary_topic"] == "multi_hop":
         return _single_unit_verdict(item, units, full, ask)
@@ -338,9 +306,17 @@ def _numeric_answer(item, full):
 
 def _same_as_independent(item, full):
     # 대상을 확인하지 못한 답(None)은 여기서 거절하지 않고, 다른 거절 검사를 마친 뒤 held 로 보낸다.
-    if same_answer(item["answer"], full["answer"], _entities(item)) is False:
-        return f"독립 답과 다릅니다: 독립 답 {full['answer']!r}"
+    if _agreement(item, full) is False:
+        independent = full["comparison"] if item["primary_topic"] == "comparison" else full["answer"]
+        return f"독립 답과 다릅니다: 독립 답 {independent!r}"
     return None
+
+
+def _agreement(item, full):
+    """후보 답이 독립 답과 같은지: True · False · None. 비교 항목은 글 대신 대상별 값과 고른 대상을 맞춘다."""
+    if item["primary_topic"] == "comparison":
+        return same_comparison(item["structure"], full["comparison"])
+    return same_answer(item["answer"], full["answer"])
 
 
 def _conditions_stated(item, full):
@@ -485,10 +461,25 @@ def _parse_verdict(text):
         isinstance(row["answerable"], bool) and isinstance(row["conflict"], bool)
         and isinstance(row["answer"], str) and (bool(row["answer"].strip()) or not row["answerable"])
         and isinstance(row["conditions"], list) and all(generation._is_text(c) for c in row["conditions"])
+        and _valid_comparison(row["comparison"])
     )
     if not valid:
-        return None, "answerable · conflict 는 참거짓, 답할 수 있으면 answer 는 문자열, conditions 는 문자열 리스트여야 합니다"
+        return None, ("answerable · conflict 는 참거짓, 답할 수 있으면 answer 는 문자열, conditions 는 문자열 리스트, "
+                      "comparison 은 null 이거나 {values: {이름: 값}, choice: 이름 또는 null} 이어야 합니다")
     return row, None
+
+
+def _valid_comparison(comparison):
+    if comparison is None:
+        return True
+    if not isinstance(comparison, dict) or set(comparison) != {"values", "choice"}:
+        return False
+    values, choice = comparison["values"], comparison["choice"]
+    return (
+        isinstance(values, dict) and len(values) >= 2
+        and all(generation._is_text(name) and generation._is_text(value) for name, value in values.items())
+        and (choice is None or generation._is_text(choice))
+    )
 
 
 def _calls_needed(item, units):
