@@ -5,6 +5,7 @@ RFP 문서(PDF · HWP · HWPX)를 파싱해 청크로 나누고, BM25 + 임베�
 
 작업은 다섯 파이프라인으로 나뉘고, 파이프라인마다 담당자 한 명 · 노트북 하나 · `rag/` 아래 폴더 하나가 있습니다.
 노트북은 설정 · 함수 호출 · 결과 표시만 하고, 로직은 모두 `rag/` 모듈에 있습니다.
+예외는 ③ 검증에 속한 `golden_pipeline/`(주제별 골든 데이터) 하나입니다 — [golden_pipeline/README.md](golden_pipeline/README.md).
 
 ## 설치 — Python 3.10 (Windows, NVIDIA GPU)
 PyTorch 를 **먼저** CUDA 빌드로 설치한 뒤 `requirements.txt` 를 설치합니다.
@@ -286,6 +287,7 @@ rag/
   validation/              ③ validation.py
   generation/              ④ generation.py
   evaluation/              ⑤ evaluation.py
+golden_pipeline/           ③ 주제별 골든 데이터 스키마 · 상태 · 저장 규약 · v11 근거 어댑터 (테스트는 tests/golden/)
 frontend/                  ⑥ 질문 화면
   server.py                POST /api/ask — answer_question 을 감싸는 FastAPI
   web/                     React + Vite 화면 (/api 는 server.py 로 프록시)

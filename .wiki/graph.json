@@ -34,14 +34,19 @@
    "kind": "link"
   }
  ],
- "orphans": [],
+ "orphans": [
+  "docs/research/review-feature-golden-data-generation-f1-1.md",
+  "docs/research/review-feature-golden-data-generation-f1-2.md",
+  "docs/research/review-feature-golden-data-validation-f1-1.md",
+  "docs/research/review-feature-golden-data-validation-f1-2.md"
+ ],
  "counts": {
-  "docs": 3,
+  "docs": 7,
   "linked": 3,
   "read": 0,
-  "orphans": 0,
+  "orphans": 4,
   "pages": 1,
-  "decisions": 15,
+  "decisions": 18,
   "injectable_decisions": 5
  }
 }

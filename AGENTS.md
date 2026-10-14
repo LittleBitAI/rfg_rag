@@ -86,7 +86,13 @@ Each has exactly one owner.
 `rag/config.py` holds the shared config and `.env` loading.
 Each notebook reads the previous notebook's outputs from `artifacts/`.
 Notebooks hold only configuration, function calls and display of results.
-All logic lives in modules under `rag/`.
+All logic lives in modules under `rag/`, with one exception: `golden_pipeline/`.
+
+`golden_pipeline/` belongs to pipeline 3, Validation, and has the same owner.
+It builds, validates and releases per-topic golden datasets,
+kept apart from `rag/validation/validation.py` on purpose.
+It imports nothing from `rag/` and writes only under `golden_pipeline/outputs/`.
+Its tests live in `tests/golden/`, so the gate runs them.
 
 Images in documents become text only through the OpenAI API (LangChain's `LLMImageBlobParser`),
 and only when `OCR = True` in `01_preprocessing.ipynb`; it is `False` by default.
