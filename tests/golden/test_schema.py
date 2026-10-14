@@ -1,6 +1,6 @@
 import pytest
 
-from golden_pipeline.schema import SchemaError, validate_item
+from golden_pipeline.schema import EVIDENCE_FIELDS, SchemaError, validate_item
 
 
 def test_unknown_primary_topic_is_rejected(make_item):
@@ -20,6 +20,14 @@ def test_primary_topic_repeated_in_secondary_tags_is_rejected(make_item):
 def test_missing_item_provenance_field_is_rejected(make_item, field):
     item = make_item()
     del item[field]
+    with pytest.raises(SchemaError, match=field):
+        validate_item(item)
+
+
+@pytest.mark.parametrize("field", EVIDENCE_FIELDS)
+def test_missing_evidence_provenance_field_is_rejected(make_item, field):
+    item = make_item()
+    del item["evidence"][1][field]
     with pytest.raises(SchemaError, match=field):
         validate_item(item)
 
