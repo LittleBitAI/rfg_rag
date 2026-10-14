@@ -11,7 +11,7 @@ import threading
 
 from golden_pipeline import generation, plan, storage, validation
 
-PREVENTION_VERSION = "prevention-2"
+PREVENTION_VERSION = "prevention-3"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
 FAILURE_CODES = (
     ("JSON 이 아닙니다", "output_format"),
@@ -38,7 +38,7 @@ PREVENTION_RULES = {
     "type_mismatch": "structure 는 주제가 요구하는 필드를 모두 갖고, 값은 근거에 적힌 그대로 쓴다.",
     "evidence_owned": "다른 주제의 질문이 되는 근거 조합은 피하고, 이 주제가 요구하는 근거로만 묻는다.",
     "table_relation": "답에는 행 이름과 열 이름이 만나는 칸의 값을 근거에 적힌 그대로 넣는다.",
-    "missing_condition": "답에는 그 답을 제한하는 조건 · 예외 문구를 근거에 적힌 그대로 함께 쓴다.",
+    "missing_condition": "답 글에는 그 답을 제한하는 조건 · 예외 문구를 근거에 적힌 그대로 함께 쓴다. structure 의 값 · 단위에는 넣지 않는다.",
     "duplicate": "이미 통과한 질문과 같은 질문을 다시 만들지 않는다.",
     "unanswerable": "근거만 읽고 답할 수 있는 질문만 만든다.",
     "answer_mismatch": "답은 근거에서 바로 읽히는 값과 단위를 그대로 쓰고, 계산하거나 바꿔 쓰지 않는다.",

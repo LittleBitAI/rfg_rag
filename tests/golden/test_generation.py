@@ -167,8 +167,9 @@ BUDGETS = {"A안": "1억원", "B안": "2억원"}
     ({"entities": ["A안", "B안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
     ({"entities": ["A안", "B안"], "values": {"A안": "3억원", "B안": "2억원"}, "choice": None}, "A안 3억원, B안 2억원", False),
     ({"entities": ["A안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
-    # 값이 이름 그대로면 견줄 값이 없다.
+    # 값이 대상 이름이면 견줄 값이 없다.
     ({"entities": ["A안", "B안"], "values": {"A안": "A안", "B안": "B안"}, "choice": "B안"}, "A안 A안, B안 B안. 답: B안", False),
+    ({"entities": ["A안", "B안"], "values": {"A안": "B안", "B안": "A안"}, "choice": "B안"}, "A안 B안, B안 A안. 답: B안", False),
     ({"entities": [{"name": "A안"}, {"name": "B안"}], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", False),
 ])
 def test_comparison_answer_is_the_text_built_from_its_structure(structure, answer, ok):
