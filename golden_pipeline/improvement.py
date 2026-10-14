@@ -12,7 +12,7 @@ import threading
 
 from golden_pipeline import generation, plan, storage, validation
 
-PREVENTION_VERSION = "prevention-5"
+PREVENTION_VERSION = "prevention-6"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
 FAILURE_CODES = (
     ("JSON 이 아닙니다", "output_format"),
@@ -58,6 +58,7 @@ PREVENTION_RULES = {
     "personal_info": "사람 이름 · 연락처 · 결재란을 묻지 않는다.",
     "partial_all": "근거에 보이는 범위만으로 문서의 '모든 · 전체' 를 세거나 나열하지 않는다.",
     "structure_question": "목차 번호 · 항목 위치 · 표 형식을 묻지 말고 내용을 묻는다.",
+    "evidence_reference": "질문자는 근거를 보지 못하므로 'E1 · E2' · '근거들' · '이 요구사항' 처럼 근거를 가리키지 말고 이름으로 묻는다.",
 }
 LOOP_CONFIG = ("max_rounds", "max_calls", "budget_usd", "generator", "validator")
 # 생성기 · 검증기마다 모델 · 추론 강도 · 단가. 호출 수 한도와 예산은 loop 전체의 값에서 남은 만큼을 round 마다 넘긴다.

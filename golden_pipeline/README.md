@@ -491,7 +491,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `entry_id` | `{run_id}:{rejected.jsonl 줄 번호}` |
 | `failure_code` | 거절 이유의 앞부분으로 정한 코드 (`FAILURE_CODES`). 코드가 없는 이유는 기록하지 않고 멈춥니다 |
 | `evidence` | 보존된 실패를 가리킴: `run` (`A/{run_id}`), `line`, `candidate_id` (항목이 되지 못한 출력이면 `null`), `bundle_id` |
-| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-5`). 글을 바꾸면 버전을 올립니다 |
+| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-6`). 글을 바꾸면 버전을 올립니다 |
 
 | 실패 코드 | 거절 이유 |
 |---|---|
@@ -515,6 +515,7 @@ A run 의 실패 기록은 `record_failures` 가 그 run 의 `rejected.jsonl` �
 | `useless_answer` · `answer_dump` | 답이 안내 문구 · 빈 값, 답에 근거 원문 · 덧붙임이 붙음 |
 | `ordinal_reference` · `malformed_question` · `structure_question` | 순번 · '둘 중' 으로 가리킴, 끊긴 질문, 목차 · 위치 · 형식을 물음 |
 | `invalid_comparison` · `partial_all` · `personal_info` | 다른 종류 · 머리글 · 합계와 부분을 비교함, 근거 범위만으로 '모든' 을 셈, 사람 이름 · 결재란 |
+| `evidence_reference` | 질문자가 볼 수 없는 근거를 'E1 · E2' · '근거들' · '이 요구사항' 으로 가리킴 |
 
 loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 
