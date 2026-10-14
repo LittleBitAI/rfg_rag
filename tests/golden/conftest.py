@@ -38,7 +38,7 @@ ITEM = {
             "page": 7,
             "requirement_ids": [],
             "image_sha": IMAGE_SHA,
-            "ocr_scope": "human_verified",
+            "ocr_scope": "full_visible_text",
         },
     ],
     "generator_version": "gen-0.1",
