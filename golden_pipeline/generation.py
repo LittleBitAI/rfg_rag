@@ -292,7 +292,9 @@ def _candidate(run, candidate_id, row, bundle, spec, parent=None):
     if not (isinstance(labels, list) and labels and all(isinstance(label, str) for label in labels)
             and len(set(labels)) == len(labels) and set(labels) <= set(units)):
         return None, f"evidence 는 이 묶음의 서로 다른 근거 라벨 {sorted(units)} 이어야 합니다: {labels!r}"
-    cited = [units[label] for label in labels]
+    # 열 이름은 표의 머리글 행에 있다. 표 행만 인용해도 그 머리글 행을 근거에 넣는다 (계획이 묶음에 늘 넣어 둔다).
+    headers = {unit["ref"]["element_id"]: unit for unit in bundle["units"] if plans._table_row(unit) == 0}
+    cited = plans._with_headers([units[label] for label in labels], headers)
     tags = row["secondary_tags"]
     # 주 주제를 보조 태그에 다시 적은 것은 틀린 사실이 아니라 겹친 표시라, 거절하지 않고 뺀다.
     if isinstance(tags, list):

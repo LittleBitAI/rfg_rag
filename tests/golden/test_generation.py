@@ -96,6 +96,17 @@ def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mis
     assert reject["bundle_id"] == bundle("numeric")["bundle_id"]
 
 
+def test_a_table_row_cited_without_its_header_row_gets_the_header_row_as_evidence(planned):
+    # 생성기는 답에 쓴 행만 인용하곤 해, 열 이름이 근거에 없다며 표 후보 대부분이 거절됐다.
+    output = {"question": "예산의 A안 값은?", "answer": "1억원", "evidence": ["E2"],
+              "structure": {"row": "예산", "column": "A안"}, "secondary_tags": []}
+    run_dir = generate("A", "table", "p1", "a1", planned, Client(output))
+
+    [item] = read_jsonl(run_dir / "candidates.jsonl")
+    units = bundle("table")["units"]
+    assert item["evidence"] == [units[0]["ref"], units[1]["ref"]]
+
+
 def unit(text, kind="char"):
     location = {"kind": "table", "row": 0} if kind == "table" else {"kind": "char"}
     return {"text": text, "ref": {"location": location}}
