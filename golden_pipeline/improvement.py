@@ -7,10 +7,11 @@ B · C 는 실패 기록을 읽지 않는다. 이 모듈은 A run 만 다룬다.
 """
 import hashlib
 import json
+import threading
 
 from golden_pipeline import generation, plan, storage, validation
 
-PREVENTION_VERSION = "prevention-1"
+PREVENTION_VERSION = "prevention-4"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
 FAILURE_CODES = (
     ("JSON 이 아닙니다", "output_format"),
@@ -26,21 +27,25 @@ FAILURE_CODES = (
     ("독립 답과 다릅니다", "answer_mismatch"),
     ("복사형", "copied"),
     ("multi_hop 아님", "not_multi_hop"),
+    ("검증기 출력 오류", "validator_output"),
+    ("근거 충돌", "evidence_conflict"),
 )
 # 규칙 글을 바꾸면 PREVENTION_VERSION 을 올린다. 기록 항목은 쓸 때의 버전을 남긴다.
 PREVENTION_RULES = {
     "output_format": "출력은 정해진 필드만 가진 JSON 객체 하나로 쓰고, 다른 글을 붙이지 않는다.",
     "evidence_label": "evidence 에는 사용자 메시지에 있는 서로 다른 근거 라벨만 넣는다.",
     "schema": "필드마다 정해진 형을 지키고 질문과 답을 비우지 않는다.",
-    "type_mismatch": "structure 는 주제가 요구하는 필드를 모두 갖고, 값은 근거에 적힌 그대로 쓴다.",
+    "type_mismatch": "structure 에는 주제 명세의 필드만 넣고 (필드가 없는 주제는 빈 객체 {}), 값은 근거에 적힌 그대로 쓴다.",
     "evidence_owned": "다른 주제의 질문이 되는 근거 조합은 피하고, 이 주제가 요구하는 근거로만 묻는다.",
     "table_relation": "답에는 행 이름과 열 이름이 만나는 칸의 값을 근거에 적힌 그대로 넣는다.",
-    "missing_condition": "답에는 그 답을 제한하는 조건 · 예외 문구를 근거에 적힌 그대로 함께 쓴다.",
+    "missing_condition": "답 글에는 그 답을 제한하는 조건 · 예외 문구를 근거에 적힌 그대로 함께 쓴다. structure 의 값 · 단위에는 넣지 않는다.",
     "duplicate": "이미 통과한 질문과 같은 질문을 다시 만들지 않는다.",
     "unanswerable": "근거만 읽고 답할 수 있는 질문만 만든다.",
     "answer_mismatch": "답은 근거에서 바로 읽히는 값과 단위를 그대로 쓰고, 계산하거나 바꿔 쓰지 않는다.",
     "copied": "질문에 답의 값을 넣지 않는다.",
     "not_multi_hop": "근거 하나만으로는 답이 나오지 않고 둘 이상을 이어야 답이 나오는 질문을 만든다.",
+    "validator_output": "질문은 근거만 읽고 짧은 답 하나로 답할 수 있게 묻는다.",
+    "evidence_conflict": "근거끼리 값이 다르게 적힌 사실은 묻지 않는다.",
 }
 LOOP_CONFIG = ("max_rounds", "max_calls", "budget_usd", "generator", "validator")
 # 생성기 · 검증기마다 모델 · 추론 강도 · 단가. 호출 수 한도와 예산은 loop 전체의 값에서 남은 만큼을 round 마다 넘긴다.
@@ -119,12 +124,11 @@ def related_failures(topic):
 
 
 def open_bundles(topic, plan_id, loop_id):
-    """loop 의 앞 round 에서 통과 · 보류되지 않은 묶음 → 그 묶음에서 마지막으로 거절된 후보 id (없으면 None)."""
+    """loop 의 앞 round 에서 통과하지 못한 묶음 → 그 묶음에서 마지막으로 거절된 후보 id (없으면 None)."""
     planned = plan.load_plan(plan_id)[0]
     parents = {bundle["bundle_id"]: None for bundle in planned["bundles"] if bundle["topic"] == topic}
     for run_dir in _rounds(topic, loop_id):
-        accepted, held = storage.read_validated(topic, "A", run_dir.name)
-        for item in accepted + held:
+        for item in storage.read_validated(topic, "A", run_dir.name):
             parents.pop(item["bundle_id"], None)
         for row in storage._read_jsonl(run_dir / "rejected.jsonl"):
             if "candidate_id" in row and row["bundle_id"] in parents:
@@ -137,6 +141,7 @@ def thresholds():
     return {
         "topic_specs": storage.snapshot(storage.CONFIGS / "topics"),
         "validator_prompt_sha256": storage._sha256(storage.PROMPTS / "validator.txt"),
+        "judge_prompt_sha256": storage._sha256(storage.PROMPTS / "judge.txt"),
         "validator_version": validation.VALIDATOR_VERSION,
         "difficulty_rule": validation.DIFFICULTY_RULE,
     }
@@ -175,10 +180,12 @@ def _generate(topic, plan_id, loop_id, n, config, client):
 
 
 def _revision(topic, loop_id, n, parents):
-    """다음 A round 의 입력: 다시 부를 묶음과 그 부모 후보, 주제의 실패 코드에서 나온 예방 규칙 글, 매니페스트에 남길 policy."""
+    """다음 A round 의 입력: 다시 부를 묶음과 그 부모 후보, 주제의 실패 코드에서 나온 예방 규칙 글,
+    묶음마다 그 묶음에서 거절된 지난 시도(notes), 매니페스트에 남길 policy."""
     related = related_failures(topic)
     rules = "".join(f"- {PREVENTION_RULES[code]}\n" for code in sorted(related))
     prevention = f"\n\n지난 실패에서 정한 예방 규칙\n{rules}" if rules else ""
+    notes = bundle_notes(topic, loop_id, parents)
     policy = {
         "version": PREVENTION_VERSION,
         "loop_id": loop_id,
@@ -186,8 +193,27 @@ def _revision(topic, loop_id, n, parents):
         "start_sha256": storage._sha256(_loop_path(topic, loop_id) / "start.json"),
         "failures": related,
         "prevention_sha256": hashlib.sha256(prevention.encode("utf-8")).hexdigest(),
+        "notes": notes,
     }
-    return {"parents": parents, "prevention": prevention, "policy": policy}
+    return {"parents": parents, "prevention": prevention, "notes": notes, "policy": policy}
+
+
+def bundle_notes(topic, loop_id, parents):
+    """다시 부를 묶음마다 이 loop 에서 그 묶음이 거절된 지난 시도: 그때의 질문과 실패 코드의 예방 규칙 (최근 셋).
+
+    주제 전체의 예방 규칙만으로는 생성기가 이 묶음에서 무엇을 틀렸는지 모른다. 실패 기록 항목이 가리키는
+    rejected.jsonl 줄에서 질문만 꺼내고, 고친 답 · 독립 답은 넣지 않는다 (검증하지 않은 답을 사실로 주지 않는다).
+    """
+    lines = {}
+    for run_dir in _rounds(topic, loop_id):
+        rejected = storage._read_jsonl(run_dir / "rejected.jsonl")
+        for entry in storage._read_jsonl(_memory_path(topic, run_dir.name)):
+            bundle = entry["evidence"]["bundle_id"]
+            if bundle in parents:
+                question = rejected[entry["evidence"]["line"] - 1].get("question")
+                tried = f"질문 {question!r}" if question else "출력 (항목이 되지 못함)"
+                lines.setdefault(bundle, []).append(f"- {tried}: {PREVENTION_RULES[entry['failure_code']]}")
+    return {bundle: "\n\n이 근거 묶음에서 거절된 지난 시도\n" + "\n".join(tried[-3:]) for bundle, tried in lines.items()}
 
 
 def _limits(topic, loop_id, n, config, role):
@@ -201,12 +227,18 @@ def _limits(topic, loop_id, n, config, role):
 
 
 def _counted(client, loop_dir, priced):
-    """돌아온 호출마다 그 자리에서 calls.jsonl 에 남기는 client. 생성 · 검증이 도중에 끊겨도 쓴 호출 · 비용이 남는다."""
+    """돌아온 호출마다 그 자리에서 calls.jsonl 에 남기는 client. 생성 · 검증이 도중에 끊겨도 쓴 호출 · 비용이 남는다.
+
+    호출은 여러 스레드에서 함께 돌아오므로 한 줄씩 잠가 쓴다.
+    """
+    lock = threading.Lock()
+
     def call(model, reasoning_effort, messages):
         response = client(model=model, reasoning_effort=reasoning_effort, messages=messages)
         usage = {"model": response["model"], "input_tokens": response["input_tokens"],
                  "output_tokens": response["output_tokens"]}
-        storage._append_jsonl(loop_dir / "calls.jsonl", [{**usage, "cost_usd": generation._cost(priced, [usage])}])
+        with lock:
+            storage._append_jsonl(loop_dir / "calls.jsonl", [{**usage, "cost_usd": generation._cost(priced, [usage])}])
         return response
     return call
 
@@ -220,7 +252,7 @@ def _spent(topic, loop_id):
 
 def _report(topic, plan_id, loop_id, stop):
     """멈춘 이유, round 별 상태 · policy, 쓴 호출 · 비용, 목표 개수 대비 통과 묶음과 모자란 수."""
-    rounds, accepted, held = [], set(), set()
+    rounds, accepted = [], set()
     for run_dir in _rounds(topic, loop_id):
         generated = storage._read_json(run_dir / "manifest.json")["generation"]
         record = storage._read_json(run_dir / "validation.json") if (run_dir / "validation.json").exists() else None
@@ -232,15 +264,13 @@ def _report(topic, plan_id, loop_id, stop):
             "policy": generated["policy"],
         })
         if record:
-            passed, kept = storage.read_validated(topic, "A", run_dir.name)
-            accepted.update(item["bundle_id"] for item in passed)
-            held.update(item["bundle_id"] for item in kept)
+            accepted.update(item["bundle_id"] for item in storage.read_validated(topic, "A", run_dir.name))
     calls, cost = _spent(topic, loop_id)
     target = plan.load_plan(plan_id)[0]["counts"][topic]
     return {
         "loop_id": loop_id, "topic": topic, "plan_id": plan_id, "stop_reason": stop, "rounds": rounds,
         "calls": calls, "cost_usd": cost, "target": target, "auto_validated": len(accepted),
-        "held": len(held - accepted), "shortfall": max(0, target - len(accepted)), "thresholds": thresholds(),
+        "shortfall": max(0, target - len(accepted)), "thresholds": thresholds(),
     }
 
 

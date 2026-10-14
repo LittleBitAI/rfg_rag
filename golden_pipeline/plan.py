@@ -3,13 +3,19 @@
 A · B · C 는 같은 계획 파일을 읽으므로 같은 근거 묶음과 같은 컨텍스트를 받는다.
 근거 묶음은 근거 어댑터가 eligible 로 판정한 단위로만 만든다.
 """
+import csv
 import hashlib
 import json
 import re
+import unicodedata
 from collections import defaultdict
+from pathlib import Path
 
 from golden_pipeline import evidence, storage
 from golden_pipeline.schema import EVIDENCE_FIELDS, TOPICS
+
+# 줄 끝에 쪽 번호가 붙은 목차 줄 (1. 용역개요 02). 목차로 만든 질문은 RFP 내용을 묻지 않는다.
+TOC_LINE = re.compile(r"\S\s+\d{1,3}\s*$")
 
 
 def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE):
@@ -21,13 +27,14 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     run_dir = storage._child(storage.OUTPUTS / "evidence", evidence_run)
     pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
     _check_package(package, pinned)
-    units = eligible_units(run_dir, package)
+    units = [unit for unit in eligible_units(run_dir, package) if not _is_toc(unit["text"])]
+    names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
     bundles, used = [], set()
     # 한 단위는 한 주제의 묶음에만 들어간다. 카탈로그가 같은 근거 묶음을 두 주제에 두지 않기 때문이다.
     for topic, (spec, _) in specs.items():
-        chosen = _pick(_groups(topic, spec, units, used, max_context_chars), counts[topic])
+        chosen = _pick(_groups(topic, spec, units, used, max_context_chars, names), counts[topic])
         used.update(unit["unit_id"] for bundle in chosen for unit in bundle["units"])
         bundles += chosen
 
@@ -77,6 +84,30 @@ def eligible_units(run_dir, package):
     return [unit for unit in units if unit["text"].strip()]
 
 
+def doc_names(package, docs):
+    """문서 SHA → {"agency": 발주 기관, "title": 사업 이름}. 문서 98개 가운데 어느 문서의 질문인지 밝히는 데 쓴다.
+
+    v11 레코드의 source_paths 첫 파일 이름("기관_사업명.hwp")으로 패키지 옆 data_list.csv 의 정리된 발주 기관을 찾고,
+    사업 이름은 파일 이름의 _ 뒤에서 앞머리 [재공고] 같은 표시를 뺀 것이다. 파일 이름이 잘려 사업 이름도 잘려 있을 수 있다.
+    한 기관에 문서가 여럿이라 기관 이름만으로는 문서를 가리지 못한다.
+    """
+    with (package.parent / "data_list.csv").open(encoding="utf-8-sig") as f:
+        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주 기관"] for row in csv.DictReader(f)}
+    names = {}
+    for record in evidence._iter_jsonl(package / evidence.RECORDS):
+        if record["doc_id"] in docs and record["doc_id"] not in names:
+            # 원본 파일 이름 일부는 한글이 자모로 풀린 NFD 라 csv 의 NFC 이름과 맞지 않는다.
+            file = Path(unicodedata.normalize("NFC", record["source_paths"][0]))
+            title = re.sub(r"^(\[[^\]]*\])+", "", file.stem.split("_", 1)[-1]).strip()
+            names[record["doc_id"]] = {"agency": agencies[file.name], "title": title}
+    return names
+
+
+def _is_toc(text):
+    lines = [line for line in text.splitlines() if line.strip()]
+    return len(lines) >= 2 and 2 * sum(bool(TOC_LINE.search(line)) for line in lines) >= len(lines)
+
+
 def _check_package(package, pinned):
     """근거 어댑터가 판정한 패키지와 지금 읽을 패키지가 같아야 본문이 판정과 맞는다."""
     for name, sha in pinned.items():
@@ -104,7 +135,7 @@ def _unit_text(ref, element):
     return " | ".join(cell["text"] for cell in element["cells"] if cell["row"] == location["row"])
 
 
-def _groups(topic, spec, units, used, max_context_chars):
+def _groups(topic, spec, units, used, max_context_chars, names):
     """문서마다 주제에 맞는 단위를 패키지 순서대로 bundle_units 개씩 묶는다. 컨텍스트가 한도를 넘는 묶음은 버린다."""
     # 다른 주제가 이미 가진 머리글 행은 붙이지 않는다. 그 표의 나머지 행은 묶음이 되지 못한다.
     headers = {unit["ref"]["element_id"]: unit for unit in units if _table_row(unit) == 0 and unit["unit_id"] not in used}
@@ -120,7 +151,7 @@ def _groups(topic, spec, units, used, max_context_chars):
     groups = {}
     for doc, doc_units in sorted(by_doc.items()):
         chunks = [_with_headers(doc_units[i:i + size], headers) for i in range(0, len(doc_units) - size + 1, size)]
-        bundles = [_bundle(topic, chunk) for chunk in chunks if chunk]
+        bundles = [_bundle(topic, chunk, names[doc]) for chunk in chunks if chunk]
         groups[doc] = [b for b in bundles if len(b["context"]) <= max_context_chars]
     return groups
 
@@ -153,13 +184,15 @@ def _pick(groups, count):
     return chosen
 
 
-def _bundle(topic, units):
+def _bundle(topic, units, doc):
+    """근거 묶음. doc 은 그 문서의 발주 기관 · 사업 이름이고, 생성이 질문 앞에 붙인다."""
     labelled = [{"label": f"E{i}", **unit} for i, unit in enumerate(units, 1)]
     ids = "\n".join(unit["unit_id"] for unit in units)
     return {
         "bundle_id": "b-" + hashlib.sha256(ids.encode("utf-8")).hexdigest()[:16],
         "topic": topic,
         "doc_sha": units[0]["ref"]["doc_sha"],
+        "doc": doc,
         "units": labelled,
         "context": "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in labelled),
     }

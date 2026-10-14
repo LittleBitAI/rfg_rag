@@ -28,6 +28,7 @@ VERDICTS = {
            "comparison": None},
     "E2": {"answerable": True, "answer": "입찰 금액의 5% 이상", "conditions": [], "conflict": False, "comparison": None},
 }
+SCREEN = (storage.PROMPTS / "screen.txt").read_text(encoding="utf-8")
 # 호출마다 입력 10 · 출력 10 토큰, 단가 1 · 4 USD / 100만 토큰.
 CALL_USD = 50 / 1_000_000
 
@@ -45,7 +46,11 @@ class FakeAPI:
     def __call__(self, model, reasoning_effort, messages):
         system, user = messages[0]["content"], messages[1]["content"]
         self.requests.append((model, reasoning_effort, user))
-        if user.startswith("{"):
+        if system == SCREEN:
+            # 출시 전 쓸모 판정: 보증금 질문은 쓸모 없다고 본다.
+            useful = "보증금" not in json.loads(user)["question"]
+            text = json.dumps({"useful": useful, "reason": "판정 이유"}, ensure_ascii=False)
+        elif user.startswith("{"):
             text = self._verdict(json.loads(user))
         elif "130,000,000원" in user:
             text = json.dumps(BUDGET if PREVENTION_RULES["answer_mismatch"] in system else WRONG, ensure_ascii=False)
@@ -120,17 +125,22 @@ def test_a_b_and_c_run_through_audit_release_and_report(planned, api, tmp_path, 
     golden("audit", "--topic", "numeric", "--method", "B", "--id", "b1", *VALIDATOR, *LIMITS)
     import_c(tmp_path, [(planned["budget"], BUDGET), (planned["bond"], BOND), ("b-unplanned", BOND), "JSON 아님"])
     golden("audit", "--topic", "numeric", "--method", "C", "--id", "c1", *VALIDATOR, *LIMITS)
-    golden("release", "--topic", "numeric", "--version", "v1", "--run", "A:l1-r1", "--run", "A:l1-r2")
+    golden("release", "--topic", "numeric", "--version", "v1", "--run", "A:l1-r1", "--run", "A:l1-r2", *VALIDATOR, *LIMITS)
     golden("report", "--topic", "numeric", "--id", "cmp", "--a", "l1", "--b", "b1", "--c", "c1")
 
+    # 검증을 통과해도 쓸모 판정에서 빠진 항목(보증금)은 출시되지 않고, 이유와 함께 매니페스트에 남는다.
     released = read_jsonl(storage.OUTPUTS / "goldens/numeric/releases/v1/golden.jsonl")
-    assert sorted(item["answer"] for item in released) == sorted([BUDGET["answer"], BOND["answer"]])
+    assert [item["answer"] for item in released] == [BUDGET["answer"]]
+    assert released[0]["state_history"][-1]["reason"] == "자동 검증 · 쓸모 판정 통과"
+    screen = json.loads((storage.OUTPUTS / "goldens/numeric/releases/v1/manifest.json").read_text(encoding="utf-8"))["release"]
+    assert (screen["screened"], screen["calls"]) == (2, 2)
+    assert [(row["question"].endswith(BOND["question"]), row["reason"]) for row in screen["dropped"]] == [(True, "판정 이유")]
     report = json.loads((storage.OUTPUTS / "goldens/numeric/reports/cmp.json").read_text(encoding="utf-8"))
     assert report["runs"] == {"A": ["l1-r1", "l1-r2", "l1-r3"], "B": ["b1"], "C": ["c1"]}
     a, b, c = (report["methods"][method] for method in "ABC")
     # A: round 1 예산 거절 · 보증금 통과 · 표 JSON 아님, round 2 예산 통과 · 표 JSON 아님, round 3 표 JSON 아님.
     assert (a["outputs"], a["validated"], a["pending"]) == (6, 3, 0)
-    assert (a["valid_rate"], a["hold_rate"]) == (ratio(2, 6), ratio(0, 6))
+    assert a["valid_rate"] == ratio(2, 6)
     assert (a["source_accuracy"], a["type_compliance"], a["duplicates"]) == (ratio(2, 3), ratio(3, 3), ratio(0, 3))
     assert a["coverage"] == ratio(2, 3) and a["difficulty"]["easy"] == ratio(2, 2)
     assert a["generation"] == {"input_tokens": 60, "output_tokens": 60, "cost_usd": pytest.approx(6 * CALL_USD)}
@@ -243,24 +253,24 @@ def test_a_resumed_audit_judges_only_the_pending_candidates_and_releases(planned
     second = json.loads((run_dir / "validation-2.json").read_text(encoding="utf-8"))
     assert second["continues"] == {"file": "validation.json", "sha256": storage._sha256(run_dir / "validation.json")}
     assert (second["status"], second["pending"], second["run_config"]["model"]) == ("complete", [], "validator-test")
-    judged = [row for name in ("accepted.jsonl", "review.jsonl", "rejected.jsonl")
+    judged = [row for name in ("accepted.jsonl", "rejected.jsonl")
               for row in read_jsonl(run_dir / name) if "candidate_id" in row]
     ids = [row["candidate_id"] for row in judged]
     assert len(ids) == len(set(ids)) == 3
     # 앞에서 통과한 같은 run 의 항목도 중복 검사에 든다.
     [duplicate] = [row for row in judged if row["state"] == "rejected"]
-    assert duplicate["question"] == reworded["question"]
+    assert duplicate["question"].endswith(f"사업에서 {reworded['question']}")
     assert duplicate["state_history"][-1]["reason"].startswith("중복")
     # 앞 기록이 바뀌면 이어 쓴 기록의 continues 와 맞지 않아, 바뀐 비용이 보고서 · 출시본에 들어가지 못한다.
     (run_dir / "validation.json").write_text(json.dumps({**first, "cost_usd": 9.0}), encoding="utf-8")
     for command in (("report", "--topic", "numeric", "--id", "cmp", "--c", "c1"),
-                    ("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1")):
+                    ("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1", *VALIDATOR, *LIMITS)):
         with pytest.raises(storage.CatalogError, match="validation-2.json"):
             golden(*command)
     (run_dir / "validation.json").write_text(first_text, encoding="utf-8")
-    golden("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1")
+    golden("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1", *VALIDATOR, *LIMITS)
     manifest = json.loads((storage.OUTPUTS / "goldens/numeric/releases/v1/manifest.json").read_text(encoding="utf-8"))
-    assert manifest["count"] == 2 and "validation-2.json" in manifest["sources"]["C/c1"]
+    assert manifest["count"] == 1 and "validation-2.json" in manifest["sources"]["C/c1"]
     with pytest.raises(ValueError, match="pending 후보가 없습니다"):
         golden("resume", "--topic", "numeric", "--method", "C", "--id", "c1", "--max-calls", "10", "--budget", "1")
 
@@ -307,7 +317,9 @@ def test_api_client_sends_the_effort_and_returns_the_reported_model_text_and_tok
             opened.append("open")
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
-        def create(self, model, reasoning_effort, messages):
+        def create(self, model, reasoning_effort, messages, response_format):
+            # 출력 계약이 JSON 객체 하나라, JSON 모드가 빠지면 형식만 틀린 출력이 거절로 쌓인다.
+            assert response_format == {"type": "json_object"}
             opened.append(reasoning_effort)
             return SimpleNamespace(model=f"{model}-2026-10-01", choices=[SimpleNamespace(message=SimpleNamespace(content=None))],
                                    usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3))

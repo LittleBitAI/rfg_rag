@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from golden_pipeline import improvement, storage
-from golden_pipeline.generation import generate, import_c
+from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.validation import release, validate
@@ -157,6 +157,20 @@ def test_next_round_gets_rules_for_the_topics_failure_codes_and_records_its_poli
     assert second["policy"]["prevention_sha256"] != first["policy"]["prevention_sha256"]
 
 
+def test_a_retried_bundle_is_told_its_own_failed_question_and_why_but_not_an_answer(loop_config):
+    # 주제 전체 규칙만으로는 생성기가 이 묶음에서 무엇을 틀렸는지 모른다. 묶음마다 지난 질문과 실패 규칙을 붙인다.
+    generator = Generator()
+    improve("numeric", "p3", "l1", loop_config(), generator, Validator())
+
+    budget, table = generator.requests[3][1]["content"], generator.requests[4][1]["content"]
+    note = "\n\n이 근거 묶음에서 거절된 지난 시도\n"
+    asked = with_document(BUDGET["question"], {"agency": "가기관", "title": "가사업 구축"})
+    assert budget.endswith(f"{note}- 질문 {asked!r}: {PREVENTION_RULES['answer_mismatch']}")
+    assert table.endswith(f"{note}- 출력 (항목이 되지 못함): {PREVENTION_RULES['output_format']}")
+    assert note not in generator.requests[0][1]["content"]
+    assert manifest(2)["policy"]["notes"][manifest(2)["bundle_ids"][0]] == budget[budget.index(note):]
+
+
 @pytest.mark.parametrize("limits, reason, rounds", [
     ({}, "max_rounds", 3),
     ({"max_calls": 4}, "call_cap", 1),
@@ -263,6 +277,9 @@ def test_b_and_c_code_paths_never_read_failure_memory(looped, monkeypatch, tmp_p
     def forbidden(*args, **kwargs):
         raise AssertionError("B · C 경로가 실패 기록 모듈을 불렀습니다")
 
+    def useful(model, reasoning_effort, messages):
+        return {"model": "screen-test", "text": '{"useful": true, "reason": "예산"}', "input_tokens": 10, "output_tokens": 10}
+
     generator = Generator()
     with monkeypatch.context() as patch:
         patch.setattr(Path, "open", spy)
@@ -272,7 +289,7 @@ def test_b_and_c_code_paths_never_read_failure_memory(looped, monkeypatch, tmp_p
         validate("numeric", "B", "b1", run, Validator())
         import_c("numeric", "p3", "c1", [export], sidecar)
         validate("numeric", "C", "c1", run, Validator())
-        release("numeric", "v-b", [("B", "b1")])
+        release("numeric", "v-b", [("B", "b1")], run, useful)
 
     assert reads and not [path for path in reads if "failure_memory" in path]
     assert "MEMORY-MARKER" not in json.dumps(generator.requests, ensure_ascii=False)
@@ -282,7 +299,7 @@ def test_a_topic_short_of_its_target_is_reported_with_thresholds_unchanged(loope
     # 목표에 못 미쳤다고 기준을 낮추면 골든 데이터의 질이 목표 개수에 맞춰 떨어진다.
     report, before = looped
 
-    assert (report["target"], report["auto_validated"], report["held"], report["shortfall"]) == (3, 2, 0, 1)
+    assert (report["target"], report["auto_validated"], report["shortfall"]) == (3, 2, 1)
     assert report["thresholds"] == before == thresholds()
     for round_no in (1, 2, 3):
         record = json.loads((run_dir(round_no) / "validation.json").read_text(encoding="utf-8"))
