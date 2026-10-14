@@ -7,7 +7,9 @@ from golden_pipeline import storage
 from golden_pipeline.generation import comparison_answer, generate, import_c
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.schema import DIFFICULTIES
-from golden_pipeline.validation import VALIDATOR_VERSION, difficulty, quantities, release, same_answer, validate
+from golden_pipeline.validation import (
+    VALIDATOR_VERSION, difficulty, quantities, release, same_answer, same_comparison, validate,
+)
 
 CONFIG = {
     "model": "validator-test", "max_calls": 20, "budget_usd": 1.0,
@@ -241,6 +243,17 @@ def test_comparison_compares_each_entity_value_and_the_chosen_entity_with_the_va
 
     [item] = validated(run_dir).values()
     assert item["state"] == state
+
+
+@pytest.mark.parametrize("mine, theirs, same", [
+    ("미지원", "지원", None),
+    ("1억원 이상", "1억원", None),
+    ("1억원", "2억원", False),
+])
+def test_structured_values_must_be_equal_not_just_contained(mine, theirs, same):
+    # 값 필드는 담기가 아니라 같음을 본다. 미지원 은 지원 을 글자로 담지만 반대 뜻이다.
+    structure = {"entities": ["A안", "B안"], "values": {"A안": mine, "B안": "2억원"}, "choice": None}
+    assert same_comparison(structure, {"values": {"A안": theirs, "B안": "2억원"}, "choice": None}) is same
 
 
 @pytest.mark.parametrize("e2_alone, state, reason", [

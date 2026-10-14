@@ -5,6 +5,7 @@
 출시는 auto_validated 항목과 사람이 확인한 held 항목을 releases/{version}/ 로 모은다.
 """
 import json
+import re
 import unicodedata
 from decimal import Decimal
 from pathlib import Path
@@ -187,7 +188,7 @@ def same_comparison(structure, independent):
 
     결론(어느 대상을 골랐는지)은 글에서 읽을 수 없어 둘 다 필드로 받는다. 후보의 답 글은 생성 검사에서 structure 와 같게 묶였다.
     검증기가 comparison 을 주지 않았거나, 대상 이름이 entities 와 꼭 같지 않으면 맞출 기준이 없어 None (held) 이다.
-    대상마다 값은 same_answer 로 맞추고 (1억원 = 100,000,000원), 고른 대상은 이름이 같아야 한다 (둘 다 null 도 같다).
+    대상마다 값은 _same_value 로 맞추고 (1억원 = 100,000,000원), 고른 대상은 이름이 같아야 한다 (둘 다 null 도 같다).
     """
     if independent is None:
         return None
@@ -196,9 +197,31 @@ def same_comparison(structure, independent):
     choice = independent["choice"]
     if set(values) != set(structure["entities"]) or (choice is not None and _norm(choice) not in names):
         return None
-    results = [same_answer(structure["values"][entity], values[entity]) for entity in structure["entities"]]
+    results = [_same_value(structure["values"][entity], values[entity]) for entity in structure["entities"]]
     chosen = names[_norm(choice)] if choice is not None else None
     return _combined([*results, chosen == structure["choice"]])
+
+
+def _same_value(value, independent):
+    """구조화 비교의 값 하나가 같은지: True · False · None.
+
+    필드는 답 글이 아니라 값 하나라서, 담기(부분 문자열)가 아니라 같음을 본다. 미지원 은 지원 을 담지만 반대 뜻이다.
+    글이 같으면(공백 · 쉼표 차이만) True, 수 · 단위 값이 다르면 False, 수 표기만 다르면(1억원 = 100,000,000원) True,
+    그 밖(글이 다른 값)은 같은지 글자로 알 수 없어 None (held) 이다.
+    """
+    if _norm(value) == _norm(independent):
+        return True
+    mine, theirs = quantities(value), quantities(independent)
+    if not (mine and theirs):
+        return None
+    if mine != theirs:
+        return False
+    return True if _without_numbers(value) == _without_numbers(independent) else None
+
+
+def _without_numbers(text):
+    """수 표기(숫자 · 쉼표 · 소수점 · 천 · 만 · 억)와 공백을 지운 글. 1억원 과 100,000,000원 은 모두 원 이 된다."""
+    return re.sub(rf"[\d.,\s{''.join(SCALES)}]", "", unicodedata.normalize("NFC", text))
 
 
 def _combined(results):

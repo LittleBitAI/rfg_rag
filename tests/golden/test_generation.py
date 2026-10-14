@@ -170,6 +170,7 @@ BUDGETS = {"A안": "1억원", "B안": "2억원"}
     ({"entities": ["A안", "B안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
     ({"entities": ["A안", "B안"], "values": {"A안": "3억원", "B안": "2억원"}, "choice": None}, "A안 3억원, B안 2억원", False),
     ({"entities": ["A안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
+    ({"entities": [{"name": "A안"}, {"name": "B안"}], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", False),
 ])
 def test_comparison_answer_is_the_text_built_from_its_structure(structure, answer, ok):
     # 결론은 structure 의 choice 로 검증한다. 답 글이 structure 와 다른 결론을 쓰면 검증을 비켜 가므로 생성에서 막는다.

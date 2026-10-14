@@ -200,7 +200,10 @@ def _comparison(structure, answer, cited, texts):
     결론(어느 대상을 골랐는지)을 글에서 읽을 수 없으므로, 검증은 structure 를 견주고 답 글은 structure 와 같게 묶는다.
     """
     entities, values, choice = structure["entities"], structure["values"], structure["choice"]
-    if not isinstance(entities, list) or len(set(map(str, entities))) < 2:
+    # 이름의 형을 먼저 본다. 문자열이 아닌 이름(객체)으로 집합을 만들면 거절 대신 예외로 run 전체가 멈춘다.
+    if not isinstance(entities, list) or not all(_is_text(entity) for entity in entities):
+        return "entities 는 비어 있지 않은 문자열 리스트여야 합니다"
+    if len(set(entities)) < 2:
         return "견주는 대상이 둘 이상이어야 합니다"
     if not isinstance(values, dict) or set(values) != set(entities):
         return "values 는 entities 마다 값을 담은 객체여야 합니다"
