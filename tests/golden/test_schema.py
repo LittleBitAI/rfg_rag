@@ -104,3 +104,27 @@ def test_item_past_candidate_needs_validator_version(make_item):
     validate_item(make_item(state="released", state_history=history, validator_version="val-0.1"))
     with pytest.raises(SchemaError, match="validator_version"):
         validate_item(make_item(state="released", state_history=history, validator_version=None))
+
+
+@pytest.mark.parametrize("at", [None, object(), "어제", "2026-10-14T00:00:00", "2026-10-14T09:00:00+09:00"])
+def test_transition_time_must_be_iso_utc(make_item, at):
+    # at 이 None 이면 그대로 저장되고, JSON 으로 못 쓰는 값이면 run 폴더만 만든 채 TypeError 로 끝나
+    # 같은 run_id 로 다시 돌릴 수 없던 결함을 막는다.
+    history = [{**step("candidate", "held"), "at": at}]
+    with pytest.raises(SchemaError, match="state_history.at"):
+        validate_item(make_item(state="held", state_history=history, validator_version="val-0.1"))
+
+
+@pytest.mark.parametrize("where", ["item", "evidence", "location", "state_history"])
+def test_undeclared_field_is_rejected_at_every_level(make_item, where):
+    # 선언되지 않은 필드는 출시 때 run 기록과의 비교를 빠져나가 golden.jsonl 에 그대로 들어가던 결함을 막는다.
+    item = make_item(state="held", state_history=[step("candidate", "held")], validator_version="val-0.1")
+    target = {
+        "item": item,
+        "evidence": item["evidence"][0],
+        "location": item["evidence"][0]["location"],
+        "state_history": item["state_history"][0],
+    }[where]
+    target["replacement_answer"] = "바꿔 끼운 답"
+    with pytest.raises(SchemaError, match="선언되지 않은 필드"):
+        validate_item(item)

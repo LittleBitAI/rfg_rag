@@ -1,5 +1,6 @@
 """골든 항목 스키마. 새 패키지를 requirements.txt 에 넣지 않으려고 표준 라이브러리로만 검증한다."""
 import re
+from datetime import datetime, timedelta
 
 from golden_pipeline.state import TRANSITIONS
 
@@ -20,6 +21,7 @@ EVIDENCE_FIELDS = (
     "doc_sha", "chunk_id", "element_id", "record_id", "location",
     "page", "requirement_ids", "image_sha", "ocr_scope",
 )
+LOCATION_FIELDS = {"char": ("kind", "start", "end"), "table": ("kind", "grid", "row", "cell")}
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -59,6 +61,7 @@ def _validate_history(state, history):
         if step["from"] != current or step["to"] not in TRANSITIONS[current]:
             raise SchemaError(f"state_history 에 허용되지 않는 전이가 있습니다: {step['from']} -> {step['to']}")
         _require_text(step["reason"], "state_history.reason")
+        _require_utc_time(step["at"], "state_history.at")
         current = step["to"]
     if current != state:
         raise SchemaError(f"state_history 는 {current} 에서 끝나는데 state 는 {state} 입니다")
@@ -100,28 +103,43 @@ def _validate_image(image_sha, ocr_scope):
 
 
 def _validate_location(location):
-    if not isinstance(location, dict):
-        raise SchemaError("location 은 객체여야 합니다")
-    kind = location.get("kind")
-    if kind == "char":
-        start, end = location.get("start"), location.get("end")
+    if not isinstance(location, dict) or location.get("kind") not in LOCATION_FIELDS:
+        raise SchemaError(f"location 은 kind 가 {tuple(LOCATION_FIELDS)} 중 하나인 객체여야 합니다")
+    _require_fields(location, LOCATION_FIELDS[location["kind"]], "location")
+    if location["kind"] == "char":
+        start, end = location["start"], location["end"]
         if not (_is_index(start) and _is_index(end) and start < end):
             raise SchemaError("location(char) 은 0 <= start < end 인 정수여야 합니다")
-    elif kind == "table":
-        _require_choice(location.get("grid"), GRIDS, "location.grid")
-        cell = location.get("cell")
-        if not _is_index(location.get("row")) or not (cell is None or _is_index(cell)):
-            raise SchemaError("location(table) 은 0 이상의 row 와 None 또는 0 이상의 cell 이 필요합니다")
     else:
-        raise SchemaError(f"알 수 없는 location.kind: {kind!r}")
+        _require_choice(location["grid"], GRIDS, "location.grid")
+        cell = location["cell"]
+        if not _is_index(location["row"]) or not (cell is None or _is_index(cell)):
+            raise SchemaError("location(table) 은 0 이상의 row 와 None 또는 0 이상의 cell 이 필요합니다")
 
 
 def _require_fields(record, fields, label):
+    """필드가 정확히 fields 여야 한다.
+
+    선언되지 않은 필드를 허용하면 출시 때 run 기록과의 비교를 빠져나가고, JSON 으로 못 쓰는 값이 저장까지 간다.
+    """
     if not isinstance(record, dict):
         raise SchemaError(f"{label} 는 객체여야 합니다")
     missing = [name for name in fields if name not in record]
     if missing:
         raise SchemaError(f"{label} 에 필드가 없습니다: {missing}")
+    extra = sorted(name for name in record if name not in fields)
+    if extra:
+        raise SchemaError(f"{label} 에 선언되지 않은 필드가 있습니다: {extra}")
+
+
+def _require_utc_time(value, name):
+    """transition 이 남기는 ISO-8601 UTC 시각인지 본다."""
+    try:
+        moment = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise SchemaError(f"{name} 는 ISO-8601 시각 문자열이어야 합니다: {value!r}") from None
+    if moment.utcoffset() != timedelta(0):
+        raise SchemaError(f"{name} 는 UTC 시각이어야 합니다: {value!r}")
 
 
 def _require_text(value, name):

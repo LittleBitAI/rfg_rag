@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from golden_pipeline.schema import METHODS, TOPICS, validate_item
+from golden_pipeline.schema import ITEM_FIELDS, METHODS, TOPICS, validate_item
 
 PACKAGE = Path(__file__).resolve().parent
 OUTPUTS = PACKAGE / "outputs"
@@ -154,7 +154,7 @@ def _require_same_record(original, item):
     질문·답·근거·방법·run 을 바꿔 끼우면 카탈로그의 근거 묶음 소유와 출시 매니페스트의 원본 run 이 거짓이 된다.
     """
     progress = ("state", "state_history", "validator_version")
-    changed = [name for name in original if name not in progress and item[name] != original[name]]
+    changed = [name for name in ITEM_FIELDS if name not in progress and item[name] != original[name]]
     history = original["state_history"]
     if item["state_history"][:len(history)] != history:
         changed.append("state_history")

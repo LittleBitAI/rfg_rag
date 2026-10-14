@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 from golden_pipeline import storage
+from golden_pipeline.schema import SchemaError
 from golden_pipeline.state import transition
 
 
@@ -107,6 +108,17 @@ def test_release_refuses_content_that_differs_from_its_registered_run(outputs, m
     with pytest.raises(storage.CatalogError, match="등록된 기록과 다릅니다"):
         storage.write_release("numeric", "v1", [substituted])
     assert not (outputs / "outputs/goldens/numeric/releases").exists()
+
+
+def test_invalid_item_leaves_no_partial_run_so_the_run_id_can_be_retried(outputs, make_item):
+    # 저장 도중 실패하면 run 폴더만 남아 같은 run_id 를 다시 쓸 수 없었다. 검증은 폴더를 만들기 전에 끝나야 한다.
+    broken = validated(make_item, "n-1", "계약 기간은?", "auto_validated", "통과")
+    broken["state_history"][0]["at"] = object()
+    with pytest.raises(SchemaError):
+        storage.write_run("numeric", "A", "r1", [broken])
+    assert not (outputs / "outputs/goldens/numeric/runs").exists()
+
+    storage.write_run("numeric", "A", "r1", run_items(make_item))
 
 
 def test_same_item_under_second_topic_is_refused(outputs, make_item):
