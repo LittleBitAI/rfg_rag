@@ -132,6 +132,9 @@ def test_quantities_normalize_value_and_unit(text, expected):
     ("5%p 인상", "5%", False),
     ("단, 우편 접수는 받지 않는다", "우편 접수는 받지 않는다", True),
     ("우편 접수도 받는다", "우편 접수는 받지 않는다", False),
+    ("A안은 1억원, B안은 2억원", "A안 2억원, B안 1억원", False),
+    ("B안 예산은 1억원이고 A안 예산은 2억원이다", "A안 2억원, B안 1억원", True),
+    ("1차년도 2억원, 2차년도 1억원", "1차년도 1억원, 2차년도 2억원", False),
 ])
 def test_same_answer_compares_after_value_and_unit_normalization(candidate, independent, same):
     assert same_answer(candidate, independent) is same
@@ -150,6 +153,18 @@ def test_independent_answer_mismatch_rejects_the_candidate(config, independent, 
     assert item["state"] == state
     if state == "rejected":
         assert item["state_history"][-1]["reason"].startswith("독립 답과 다릅니다")
+
+
+def test_a_plan_changed_after_generation_stops_validation_before_any_call(config):
+    # 생성 뒤 계획의 근거 본문이 바뀌면 검증기는 후보가 보지 않은 근거로 답한다.
+    generate("A", "numeric", "p1", "a1", config, Generator({**NUMERIC, "answer": "130,000,000원(부가세 별도)"}))
+    path = storage.OUTPUTS / "plans" / "p1.json"
+    path.write_text(path.read_text(encoding="utf-8").replace("부가세 포함", "부가세 별도"), encoding="utf-8")
+    validator = Validator({"*": verdict("130,000,000원", ["부가세 별도"])})
+
+    with pytest.raises(ValueError, match="바뀌었습니다"):
+        validate("numeric", "A", "a1", config, validator)
+    assert validator.requests == []
 
 
 CONDITION = {"question": "제안서 제출 기한과 접수 제한은?", "evidence": ["E1"], "secondary_tags": [],

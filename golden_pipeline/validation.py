@@ -25,6 +25,8 @@ CONFIRMATION_FIELDS = ("candidate_id", "reason")
 # 천 · 만 · 억(NR) 은 수에 곱하는 단위다. 5만원 과 50,000원 은 같은 값이다.
 SCALES = {"십": 10, "백": 100, "천": 1000, "만": 10_000, "억": 10**8, "조": 10**12}
 CONTENT_TAGS = ("NNG", "NNP", "SL", "SN")
+# 값의 대상에는 의존 명사도 든다 (1차년도 의 차 · 년도).
+SUBJECT_TAGS = CONTENT_TAGS + ("NNB",)
 
 
 def validate(topic, method, run_id, config_path, client):
@@ -34,8 +36,7 @@ def validate(topic, method, run_id, config_path, client):
     """
     config, config_sha = generation._run_config(config_path)
     run_dir = storage.unvalidated_run(topic, method, run_id)
-    plan_id = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["generation"]["plan_id"]
-    planned, _, spec = generation._plan_for(plan_id, topic)
+    plan_id, planned, spec = _pinned_plan(run_dir, topic)
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
     prompt_path = storage.PROMPTS / "validator.txt"
     calls = []
@@ -72,6 +73,15 @@ def validate(topic, method, run_id, config_path, client):
         "calls": calls,
     }
     return storage.write_validation(topic, method, run_id, judged, info)
+
+
+def _pinned_plan(run_dir, topic):
+    """생성 run 이 쓴 계획. 생성 뒤에 계획 파일이 바뀌었으면 검증기에 줄 근거가 후보의 근거와 다르므로 멈춘다."""
+    generated = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["generation"]
+    planned, plan_sha, spec = generation._plan_for(generated["plan_id"], topic)
+    if plan_sha != generated["plan_sha256"]:
+        raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_dir.name} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
+    return generated["plan_id"], planned, spec
 
 
 def release(topic, version, runs, confirmations=None):
@@ -127,8 +137,17 @@ def quantities(text):
     1억 3천만원 처럼 수 단위로 끝난 수 뒤에 이어 쓴 수는 하나로 더한다. 그래서 1억 3천만원 = 130,000,000원 이다.
     수와 단위를 읽는 법(부호, 단위 끝)은 생성의 numeric 검사와 같다.
     """
+    return {pair for pair, _ in facts(text)}
+
+
+def facts(text):
+    """text 의 (값, 단위) 쌍마다 그 대상을 함께 돌려준다: [((값, 단위), 대상 낱말 집합)].
+
+    대상은 단위가 같은 앞 값 뒤부터 이 값 앞까지의 내용 형태소다. A안은 2억원, B안은 1억원 에서 2억원 의 대상은 {A, 안},
+    1억원 의 대상은 {B, 안} 이다. 단위가 다른 값끼리는 바뀔 수 없어 경계로 삼지 않는다 (1차년도 1억원 의 대상은 {1, 차, 년도}).
+    """
     tokens = generation._kiwi().tokenize(unicodedata.normalize("NFC", text))
-    found, carry = set(), {}
+    found, carry, after = [], {}, {}
     for i, token in enumerate(tokens):
         if token.tag != "SN":
             continue
@@ -136,22 +155,41 @@ def quantities(text):
         if sign is None or not unit:
             continue
         scale, end = _scale(tokens, i)
-        sign, before = carry.pop(i, (sign, 0))
+        sign, before, start = carry.pop(i, (sign, 0, i))
         amount = before + Decimal(token.form.replace(",", "")) * scale
         rest = unit[len("".join(t.form for t in tokens[i + 1:end])):]
         if not rest and end < len(tokens) and tokens[end].tag == "SN":
-            carry[end] = (sign, amount)
+            carry[end] = (sign, amount, start)
             continue
-        found.add((sign.replace("−", "-") + format(amount.normalize(), "f"), rest))
+        subject = {_norm(t.form) for t in tokens[after.get(rest, 0):start] if t.tag in SUBJECT_TAGS}
+        found.append(((sign.replace("−", "-") + format(amount.normalize(), "f"), rest), subject))
+        after[rest] = _unit_end(tokens, end, rest)
     return found
 
 
 def same_answer(text, independent):
-    """독립 답이 text 에 들어 있는지. 수 · 단위는 값으로 맞추고, 수가 없는 답은 글자로 맞춘다 (공백 · 쉼표 차이만 허용)."""
-    expected = quantities(independent)
-    if expected:
-        return expected <= quantities(text)
-    return _contains(_norm(text), _norm(independent))
+    """독립 답이 text 에 들어 있는지. 수 · 단위는 값과 그 대상으로 맞추고, 수가 없는 답은 글자로 맞춘다 (공백 · 쉼표 차이만 허용).
+
+    독립 답의 값마다 text 에 같은 값이 있어야 하고, 그 값의 대상이 독립 답에서 다른 값의 대상인 낱말이면 안 된다.
+    그래서 A안 1억원, B안 2억원 은 A안 2억원, B안 1억원 과 값은 같아도 다른 답이다.
+    """
+    expected = facts(independent)
+    if not expected:
+        return _contains(_norm(text), _norm(independent))
+    found = facts(text)
+    return all(
+        any(pair == other and not subject & _foreign(pair, expected) for other, subject in found)
+        for pair, _ in expected
+    )
+
+
+def _foreign(pair, expected):
+    """독립 답에서 pair 가 아닌 값의 대상에만 있는 낱말.
+
+    ponytail: 대상은 값 앞에서만 읽는다. 2억원(A안), 1억원(B안) 처럼 대상을 값 뒤에 쓴 답은 바뀐 답으로 읽힌다.
+    """
+    own = set().union(*(subject for other, subject in expected if other == pair))
+    return set().union(*(subject for other, subject in expected if other != pair)) - own
 
 
 def difficulty(question, units, proven_multi_hop):
@@ -293,6 +331,14 @@ def _scale(tokens, i):
             scale *= SCALES[char]
         end += 1
     return scale, end
+
+
+def _unit_end(tokens, end, unit):
+    """end 부터 이어 쓴 단위 형태소들이 끝난 다음 토큰 위치."""
+    written = ""
+    while len(written) < len(unit):
+        written, end = written + tokens[end].form, end + 1
+    return end
 
 
 def _keys(item):
