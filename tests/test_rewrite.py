@@ -49,7 +49,7 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
                       "output_tokens": 5, "reasoning_tokens": 2, "latency_s": 0.1}
     rewrite_fn = MagicMock(return_value=rewrite_result)
     monkeypatch.setattr(generation, "rewrite_question", rewrite_fn)
-    hit = {"chunk_id": "c1", "body": "근거", "source": "문서.pdf", "page": 3}
+    hit = {"chunk_id": "c1", "doc_id": "doc-a", "body": "근거", "source": "문서.pdf", "page": 3}
     index = HybridIndex.__new__(HybridIndex)
     index.rcfg = {"token_budget": 2500}
     index.chunks = [hit]

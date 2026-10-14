@@ -77,8 +77,8 @@ def test_pack_keeps_first_chunk_over_budget():
 
 
 def test_pack_removes_near_duplicates_and_repeated_candidates():
-    index = make_index(["가 나 다 라 마", "가 나 다 라 바", "별도 근거"], [5, 5, 2], budget=7)
-    hits = index._pack([(0, 0.912345), (0, 0.9), (1, 0.8), (2, 0.7)])
+    index = make_index(["가 나 다 라 마", "가 나 다 라 바", "별도 근거", "가 나 다 라 마"], [5, 5, 2, 5], budget=7)
+    hits = index._pack([(0, 0.912345), (0, 0.9), (1, 0.8), (3, 0.75), (2, 0.7)])
     assert [hit["chunk_id"] for hit in hits] == ["c0", "c2"]
     assert hits[0]["score"] == 0.9123
 
@@ -97,6 +97,22 @@ def test_comparison_interleaves_and_skips_long_chunk_without_stopping():
     index.router.route.return_value = {"기관 가": {"a"}, "기관 나": {"b"}}
     index._rank = MagicMock(side_effect=[[(0, 1.0), (1, 0.9)], [(2, 0.8), (3, 0.7)]])
     assert [hit["chunk_id"] for hit in index.search("기관 가와 기관 나 비교")] == ["c0", "c2", "c3"]
+
+
+@pytest.mark.parametrize("second_body", ["SFR-001 응답시간은 2초 이내여야 한다", "SFR-001 응답시간은 2초 이내여야 합니다"])
+@pytest.mark.parametrize("route", [{}, {"기관 가": {"a", "b"}}, {"기관 가": {"a"}, "기관 나": {"b"}}])
+def test_search_preserves_overlapping_evidence_from_distinct_documents(second_body, route):
+    index = make_index(["SFR-001 응답시간은 2초 이내여야 한다", second_body], [5, 5], budget=10, doc_ids=["a", "b"])
+    for chunk in index.chunks:
+        chunk.update(source=f"{chunk['doc_id']}.pdf", page=1)
+    index.router.route.return_value = route
+    index._rank = MagicMock(return_value=[(0, 0.9), (1, 0.8)])
+    if len(route) == 2:
+        index._rank.side_effect = [[(0, 0.9)], [(1, 0.8)]]
+
+    hits = index.search("기관 가와 기관 나의 SFR-001 비교")
+
+    assert [(hit["doc_id"], hit["source"]) for hit in hits] == [("a", "a.pdf"), ("b", "b.pdf")]
 
 
 @pytest.mark.parametrize("bom", ["", "\ufeff"])

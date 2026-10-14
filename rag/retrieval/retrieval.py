@@ -97,14 +97,15 @@ class HybridIndex:
         return {int(i): float(scores[i]) for i in top if scores[i] > 0}
 
     def _pack(self, ranked: list[tuple[int, float]]) -> list[dict]:
-        """본문 토큰 예산 안에서 순서대로 담고 거의 같은 청크는 제외한다.
+        """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크는 제외한다.
         긴 청크는 건너뛰되 첫 청크는 예산을 넘어도 담아 빈 컨텍스트를 막는다."""
         budget = int(self.rcfg["token_budget"])
         picked: list[tuple[int, float, set[str]]] = []
         used = 0
         for i, score in ranked:
             words = set(self.chunks[i]["body"].split())
-            if any(i == j or _is_dup(words, seen) for j, _, seen in picked):
+            if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(words, seen))
+                   for j, _, seen in picked):
                 continue
             cost = self.embedder.token_counts([self.chunks[i]["body"]])[0]
             if picked and used + cost > budget:
