@@ -4,7 +4,6 @@
 근거 단위마다 자동 승인 가능(eligible) 또는 보류(held)를 이유와 함께 별도 판정 기록으로 남긴다.
 패키지는 고치지 않으며, 패키지의 verify_package.py · load_retriever_inputs.py 를 import 하거나 실행하지 않는다.
 """
-import argparse
 import csv
 import json
 import re
@@ -424,15 +423,3 @@ def _iter_jsonl(path):
         for line in f:
             if line.strip():
                 yield json.loads(line)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="v11 패키지 근거 어댑터 (읽기 전용)")
-    parser.add_argument("run_id")
-    parser.add_argument("copy", help="내려받은 압축의 안쪽 RFP_Preprocessing_Final_v11_Team 폴더")
-    args = parser.parse_args()
-    print(run(args.run_id, args.copy))
-
-
-if __name__ == "__main__":
-    main()

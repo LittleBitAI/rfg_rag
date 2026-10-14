@@ -1,15 +1,15 @@
-# golden_pipeline — 골든 데이터 파이프라인 기반
+# golden_pipeline — 골든 데이터 파이프라인
 
 평가용 골든 질문·답변을 주제별로 만들고 검증해 출시하기 위한 패키지입니다.
 ③ 검증 파이프라인에 속하고 담당자도 같지만, `rag/validation/validation.py` 와는 일부러 분리했습니다
 (`CLAUDE.md` · `AGENTS.md` 4절).
-지금은 항목 스키마, 주제별 저장 규약, run·버전·상태 모델, 출력 경로 보호,
+항목 스키마, 주제별 저장 규약, run·버전·상태 모델, 출력 경로 보호,
 v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C 후보 생성, 독립 검증 · 난도 판정 · 출시,
-A 만의 자기 개선(실패 기록과 round)을 담습니다. 실행기 · CLI · 보고서는 이후 단계에서 붙습니다.
+A 만의 자기 개선(실패 기록과 round), 이 모두를 부르는 CLI 와 두 실행기, A · B · C 비교 보고서를 담습니다.
 
-- `rag/` 에서 아무것도 import 하지 않고, `rag/`·`artifacts/`·`data/`·`eval/` 에 쓰지 않습니다.
-- 표준 라이브러리와, numeric 검사의 형태소 분석에 `kiwipiepy` 를 씁니다 (이미 `requirements.txt` 에 있어 변경 없음).
-- API 를 부르는 코드가 없습니다. 생성 · 검증은 호출 함수(`client`)를 인자로 받고, 테스트는 가짜 생성기 · 검증기만 씁니다.
+- `rag/` 에서 아무것도 import 하지 않고, `rag/`·`artifacts/`·`data/`·`eval/` 에 쓰지 않습니다. 노트북과 질문 화면 서버도 실행하지 않습니다.
+- 표준 라이브러리와, numeric 검사의 형태소 분석에 `kiwipiepy`, API 호출에 `openai` · `python-dotenv` 를 씁니다 (모두 이미 `requirements.txt` 에 있어 변경 없음).
+- API 를 부르는 곳은 `cli.py` 의 `api_client` 하나입니다. 생성 · 검증 모듈은 호출 함수(`client`)를 인자로 받고, 테스트는 가짜 API 만 씁니다.
 
 ## 구성
 
@@ -23,9 +23,59 @@ A 만의 자기 개선(실패 기록과 round)을 담습니다. 실행기 · CLI
 | `generation.py` | 후보 생성: A · B (`generate`), C 가져오기 (`import_c`), 주제 구조 검사 (`check_structure`) |
 | `validation.py` | 독립 검증 (`validate`), 난도 판정 (`difficulty`), 출시 (`release`) |
 | `improvement.py` | A 의 자기 개선: round 반복 (`improve`), 실패 기록 (`record_failures`, `write_memory`), 관련 실패 찾기 (`related_failures`) |
+| `report.py` | A · B · C 비교 보고서 (`compare`, `write_report`, `render`) |
+| `cli.py` | 하나뿐인 CLI (`python -m golden_pipeline.cli`)와 OpenAI 호출 (`api_client`) |
+| `golden.cmd` · `golden.command` | Windows · macOS 실행기. 둘 다 받은 인자를 그대로 `cli.py` 에 넘깁니다 |
 | `configs/` | 설정 파일. `topics/{topic}.json` 은 주제 명세입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
 | `prompts/` | 생성 프롬프트. `A/{topic}.txt` 는 A 의 주제 전용, `B.txt` 는 B 의 고정 프롬프트입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
 | `outputs/` | 모든 출력 (git 에서 제외, `.gitignore`) |
+
+## 실행기와 CLI
+
+Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.command` 를 씁니다.
+두 실행기는 받은 인자를 모두 같은 CLI(`python -m golden_pipeline.cli`)에 넘기기만 하고, 다른 것은 실행하지 않습니다.
+저장소의 `.venv` 로 돌고, 지금 폴더를 바꾸지 않으므로 `--export` 같은 상대 경로는 명령을 친 폴더 기준입니다.
+인자 없이 열면(더블클릭) 명령 목록을 보여 줍니다. 아래 예는 Windows 이고, macOS 는 `golden.cmd` 를 `./golden_pipeline/golden.command` 로 바꿉니다.
+
+| 명령 | 하는 일 | API 호출 |
+|---|---|---|
+| `evidence` | v11 근거 어댑터 run (아래 v11 근거 어댑터) | 없음 |
+| `plan` | 주제 · 목표 개수를 정한 분포 계획 (아래 분포 계획) | 없음 |
+| `run` | A: 자기 개선 loop (생성 → 검증 → 실패 기록을 round 마다). B: 고정 프롬프트 생성만 | 유료 |
+| `import` | C 가져오기 | 없음 |
+| `audit` | B · C run 의 독립 검증. A 는 loop 안에서 검증합니다 | 유료 |
+| `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
+| `release` | 검증한 run 들을 출시본으로 | 없음 |
+| `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
+
+```
+golden_pipeline\golden.cmd evidence v11-20261014 "<내려받은 압축>\RFP_Preprocessing_Final_v11_Team\RFP_Preprocessing_Final_v11_Team"
+golden_pipeline\golden.cmd plan p1 v11-20261014 --count numeric 20 --count table 20 --max-context-chars 4000
+
+golden_pipeline\golden.cmd run --topic numeric --method A --plan p1 --id a1 --model <모델> --price <입력 단가> <출력 단가> --max-calls 200 --budget 5 --max-rounds 3 --validator-model <모델> --validator-price <입력 단가> <출력 단가>
+golden_pipeline\golden.cmd run --topic numeric --method B --plan p1 --id b1 --model <모델> --price <입력 단가> <출력 단가> --max-calls 40 --budget 2
+golden_pipeline\golden.cmd audit --topic numeric --method B --id b1 --model <모델> --price <입력 단가> <출력 단가> --max-calls 80 --budget 2
+golden_pipeline\golden.cmd import --topic numeric --plan p1 --id c1 --export c_numeric.jsonl --sidecar c_sidecar.json
+golden_pipeline\golden.cmd audit --topic numeric --method C --id c1 --model <모델> --price <입력 단가> <출력 단가> --max-calls 80 --budget 2
+
+golden_pipeline\golden.cmd resume --topic numeric --method A --id a1
+golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls 40 --budget 1
+
+golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --confirmations confirm.jsonl
+golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
+```
+
+- 주제(`--topic`)는 명령마다 하나, 목표 개수는 `plan` 의 `--count` 로 정합니다. A · B · C 는 같은 계획을 받아야 견줄 수 있습니다.
+- 유료 명령은 모델(`--model`), 단가(`--price`, USD / 100만 토큰), 최대 호출 수(`--max-calls`), 총예산(`--budget`, USD)을
+  모두 받아야 시작합니다. 하나라도 빠지면 API 클라이언트를 열기 전에 멈춥니다. 기본값은 없습니다.
+  A 는 최대 round 수(`--max-rounds`)와 검증기 모델 · 단가(`--validator-model`, `--validator-price`)도 받고,
+  호출 수 · 예산은 loop 전체(생성 + 검증)의 한도입니다.
+- 키는 저장소 `.env` 의 `OPENAI_API_KEY` 입니다. 명령 하나 동안 OpenAI 클라이언트 하나를 열어 생성기 · 검증기가 함께 쓰고 명령이 끝나면 닫습니다.
+  기록하는 모델 이름은 요청한 이름이 아니라 API 응답이 알려 준 이름입니다.
+- 플래그로 받은 설정은 `outputs/` 아래 임시 파일로 넘기고 지웁니다. 내용과 SHA-256 은 run 매니페스트 · `validation.json` · loop `start.json` 에 남습니다.
+- `resume --method A` 는 `start.json` 에 고정된 설정 · 계획으로 loop 를 잇고 한도를 받지 않습니다. 이미 끝난(`report.json` 이 있는) loop 는 잇지 않습니다.
+- `resume --method B|C` 는 아래 독립 검증의 "이어서 검증" 입니다. 모델 · 단가는 앞 검증 기록의 것을 그대로 쓰고, 이번에 쓸 `--max-calls` · `--budget` 만 받습니다.
+- `release` 의 A run 은 loop 의 round run(`{loop_id}-r{n}`)입니다.
 
 ## 항목 스키마
 
@@ -91,6 +141,7 @@ golden_pipeline/outputs/
       rejected.jsonl                    rejected 항목, 그리고 항목이 되지 못한 생성 출력 {bundle_id, reason, raw}
       manifest.json                     설정·프롬프트 파일별 SHA-256, 코드 커밋, 개수, 생성 정보(generation)
       validation.json                   검증 기록: 검증기 버전, 난도 규칙, 호출, 상태 파일별 SHA-256 (run 마다 한 번)
+      validation-{n}.json               이어서 검증한 기록 (B · C 의 pending 후보, n = 2, 3, ...)
     failure_memory/A_{run_id}.jsonl     A run 의 실패 코드 · 참조 · 예방 규칙 · 규칙 버전 (질문 · 답은 넣지 않음)
     loops/{loop_id}/
       start.json                        처음 받은 loop 설정 · 계획 id · 계획 SHA-256 · 통과 기준 (이어 돌 때 같아야 함)
@@ -100,9 +151,10 @@ golden_pipeline/outputs/
     releases/{version}/
       golden.jsonl                      released 항목
       manifest.json                     개수, golden.jsonl SHA-256, 원본 run 과 그 파일별 SHA-256, 사람 확인 기록 SHA-256, 코드 커밋
+    reports/{report_id}.json            A · B · C 비교 보고서
 ```
 
-- 이미 있는 `run_id` 나 `version` 은 덮어쓰지 않고 `FileExistsError` 로 거절합니다.
+- 이미 있는 `run_id` 나 `version`, 보고서 id 는 덮어쓰지 않고 `FileExistsError` 로 거절합니다.
 - 카탈로그는 항목마다 한 줄(`candidate_id`, 소유 주제, 근거 묶음 키)을 남깁니다.
   같은 `candidate_id` 는 다시 등록할 수 없고, 같은 근거 묶음은 다른 주제가 가질 수 없습니다.
   근거 묶음 키는 근거 참조들의 SHA-256 이라 순서와 무관합니다.
@@ -119,7 +171,7 @@ golden_pipeline/outputs/
 `artifacts/docs.jsonl` · `artifacts/chunks.jsonl` 은 입력으로 쓰지 않습니다.
 
 ```
-python -m golden_pipeline.evidence <run_id> "<내려받은 압축>/RFP_Preprocessing_Final_v11_Team/RFP_Preprocessing_Final_v11_Team"
+golden_pipeline\golden.cmd evidence <run_id> "<내려받은 압축>/RFP_Preprocessing_Final_v11_Team/RFP_Preprocessing_Final_v11_Team"
 ```
 
 실행 순서와 멈추는 조건은 다음과 같습니다.
@@ -186,7 +238,7 @@ A · B · C 를 같은 조건에서 비교하려고, 주제별 개수 · 문서 
 API 를 부르지 않습니다.
 
 ```
-python -m golden_pipeline.plan <plan_id> <근거 어댑터 run_id> --count numeric 20 --count table 20 --max-context-chars 4000
+golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count numeric 20 --count table 20 --max-context-chars 4000
 ```
 
 1. 근거 어댑터 run 의 `manifest.json` 에 고정된 파일 SHA-256 과 지금 패키지 파일이 같은지 확인하고, 다르면 멈춥니다.
@@ -360,8 +412,26 @@ validate(topic, method, run_id, config_path, client)
 설정 · 프롬프트 해시, 호출, 비용, 상태별 개수, 세 상태 파일의 SHA-256 을 남깁니다.
 run 마다 한 번만 검증하며, 이미 검증한 run 은 호출 전에 막습니다.
 호출 수 한도와 예산은 후보를 시작하기 전에 보고, 닿으면 남은 후보를 검증하지 않은 채 `pending` 에 남깁니다
-(한 후보의 multi_hop 검사를 도중에 끊지 않음). 남은 후보를 이어서 검증하는 일은 실행기 단계에서 붙습니다.
+(한 후보의 multi_hop 검사를 도중에 끊지 않음).
 실패 기록(`failure_memory`)은 아래 자기 개선이 채웁니다.
+
+### 이어서 검증 (B · C)
+
+```python
+resume_validation(topic, method, run_id, config_path, client)
+```
+
+B · C run 의 마지막 검증 기록에 `pending` 이 남았으면 그 후보만 새 한도로 검증합니다. 생성을 다시 하지 않으므로 생성 비용을 또 내지 않습니다.
+A 의 검증은 자기 개선 loop 가 맡으므로 받지 않습니다.
+
+1. 상태 파일이 마지막 검증 기록의 SHA-256 과 같은지 보고, 다르면 멈춥니다.
+2. 검증기 버전 · 난도 규칙 · 검증기 프롬프트 SHA-256 · 모델 · 단가가 앞 기록과 다르면 호출 전에 바뀐 키를 밝히고 멈춥니다.
+   한 run 의 후보를 서로 다른 기준으로 판정하지 않기 위해서입니다. 바뀌는 것은 호출 수 한도와 예산뿐입니다.
+3. 중복 검사에 같은 run 에서 앞서 통과 · 보류된 항목도 넣습니다.
+4. 판정한 항목은 상태 파일 뒤에 붙이고, `validation-{n}.json` 에 이번 호출 · 비용 · 남은 `pending` 과
+   앞 기록의 이름 · SHA-256(`continues`)을 남깁니다. 출시와 비교 보고서는 마지막 기록의 SHA-256 으로 상태 파일을 확인하고,
+   출시 매니페스트의 `sources` 에는 모든 검증 기록의 SHA-256 이 들어갑니다.
+5. `pending` 이 없으면 멈춥니다. 같은 후보를 두 번 판정하지 않습니다.
 
 ## 자기 개선 (A 만)
 
@@ -452,8 +522,40 @@ release(topic, version, [(method, run_id), ...], confirmations=None)
 | 같은 근거 묶음이나 같은 질문의 항목 둘 | 방식을 섞어 낼 때도 |
 | run 에 등록된 기록과 다른 내용 | 위 저장 규약 |
 
-출시 매니페스트의 `sources` 에는 원본 run 마다 `candidates.jsonl` · 상태 파일 · `manifest.json` · `validation.json` 의 SHA-256 을,
+출시 매니페스트의 `sources` 에는 원본 run 마다 `candidates.jsonl` · 상태 파일 · `manifest.json` · 검증 기록들의 SHA-256 을,
 `release.confirmations` 에는 사람 확인 기록 파일 이름과 SHA-256 을 남깁니다.
+
+## 비교 보고서
+
+```python
+write_report(topic, report_id, {"A": [round run_id, ...], "B": [run_id, ...], "C": [run_id, ...]})
+```
+
+비교 대상은 데이터셋 생성 방식(A · B · C)이고, RAG 답변 시스템이 아닙니다. API 를 부르지 않습니다.
+CLI 의 `report --a` 는 loop id 를 받아 그 loop 의 round run 들을 넣습니다.
+모든 run 은 같은 계획(id 와 SHA-256)으로 만든 것이어야 하고, 계획 파일이 그 뒤 바뀌었어도 멈춥니다.
+검증한 run 은 상태 파일이 마지막 검증 기록과 같은지 먼저 확인합니다.
+결과는 `reports/{report_id}.json` 에 쓰고 마크다운 표로 보여 줍니다. 비율은 모두 분자 · 분모 · 값으로 남깁니다.
+
+생성 출력 하나는 생성기 응답 한 번(C 는 내보낸 파일의 한 줄)이고, 항목이 된 것과 되지 못한 것(`rejected.jsonl` 의 `{bundle_id, reason, raw}`)을 모두 셉니다.
+A 는 모든 round 의 출력을 셉니다. 거절 이유는 자기 개선의 실패 코드로 나눕니다 (C 의 계획에 없는 묶음만 `unplanned_bundle`).
+
+| 지표 | 분자 | 분모 |
+|---|---|---|
+| 유효 문항률 | `auto_validated` 항목 | 생성 출력 |
+| 보류율 | `held` 항목 | 생성 출력 |
+| 출처 정확성 | 근거 대조를 마친 항목 중 근거와 답이 맞지 않아(`table_relation` · `unanswerable` · `answer_mismatch`) 거절되지 않은 것 | 근거 대조를 마친 항목: 검증한 항목에서 `held` 와, 대조 전에 걸릴 수 있는 거절(`type_mismatch` · `missing_condition` · `duplicate`)을 뺀 것 |
+| 유형 준수 | 주제 구조 검사를 통과한 출력 (생성 · 검증의 `type_mismatch` 를 뺀 것) | 주제 구조 검사까지 간 출력: 모든 항목과, 항목이 되지 못한 출력 중 `type_mismatch` · `evidence_owned` |
+| 중복 | `duplicate` 로 거절된 항목 | 검증한 항목 |
+| 커버리지 | `auto_validated` 항목이 하나라도 있는 계획의 근거 묶음 | 계획의 그 주제 근거 묶음 |
+| 난도 분포 | `easy` · `medium` · `hard` 각각의 `auto_validated` 항목 | `auto_validated` 항목 |
+| 유효 문항당 비용 | 총비용 | `auto_validated` 항목 |
+
+- 아직 검증하지 않은 후보 수(`pending`)도 함께 보여 줍니다. 이 후보는 유효 · 보류 어느 쪽에도 들지 않습니다.
+- 비용과 토큰은 생성(A · B 의 run 매니페스트 `calls` · `cost_usd`)과 검증(모든 검증 기록)으로 나누고, 총비용은 둘의 합입니다.
+  기록을 남기기 전에 끊긴 호출은 들지 않습니다.
+- C 의 생성 토큰 · 비용은 웹 환경이라 관측할 수 없어 `unobserved` 로 남기고, 그래서 C 의 총비용과 유효 문항당 비용도 `unobserved` 입니다.
+  0 으로 채우면 C 가 공짜처럼 보여 유효 문항당 비용을 견줄 수 없게 되기 때문입니다. C 의 검증 비용은 관측한 값이라 숫자로 남습니다.
 
 ## 테스트
 
@@ -464,4 +566,5 @@ release(topic, version, [(method, run_id), ...], confirmations=None)
 python -m pytest -q tests/golden
 ```
 
-`.env` 키와 네트워크 없이 돌아가고, 출력은 임시 폴더에 씁니다.
+`.env` 키와 네트워크 없이 돌아가고, 출력은 임시 폴더에 씁니다. CLI 테스트는 `api_client` 를 가짜 API 로 바꿔
+A · B 실행, C 가져오기, 검증, 출시, 비교 보고서, 이어 돌기를 끝까지 돌립니다.

@@ -36,17 +36,62 @@ def validate(topic, method, run_id, config_path, client):
 
     client 는 생성과 같은 계약이다: client(model=..., messages=[...]) -> {"model", "text", "input_tokens", "output_tokens"}.
     """
-    config, config_sha = generation._run_config(config_path)
     run_dir = storage.unvalidated_run(topic, method, run_id)
+    candidates = storage._read_jsonl(run_dir / "candidates.jsonl")
+    survivors = _survivors(topic, method, run_id)
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors)
+    return storage.write_validation(topic, method, run_id, judged, info)
+
+
+def resume_validation(topic, method, run_id, config_path, client):
+    """B · C run 의 검증이 호출 수 한도나 예산에 닿아 남긴 pending 후보만 이어서 검증한다.
+
+    A 의 검증은 자기 개선 loop 가 맡는다. loop 의 round 와 report 가 그 검증 기록을 읽기 때문이다.
+    한 run 의 후보는 같은 기준으로 판정해야 하므로 검증기 버전 · 난도 규칙 · 프롬프트 · 모델 · 단가가
+    앞 기록과 다르면 호출 전에 멈춘다. 앞에서 통과 · 보류된 같은 run 의 항목도 중복 검사에 넣는다.
+    """
+    if method == "A":
+        raise ValueError("A 의 검증은 자기 개선 loop 가 이어 돕니다")
+    accepted, held = storage.read_validated(topic, method, run_id)
+    run_dir = storage.run_path(topic, method, run_id)
+    last = json.loads(storage.validation_records(run_dir)[-1].read_text(encoding="utf-8"))
+    if not last["pending"]:
+        raise ValueError(f"이어서 검증할 pending 후보가 없습니다: {topic}/{method}/{run_id}")
+    current = {"validator_version": VALIDATOR_VERSION, "difficulty_rule": DIFFICULTY_RULE,
+               "prompt_sha256": storage._sha256(storage.PROMPTS / "validator.txt"),
+               "run_config": generation._run_config(config_path)[0]}
+    changed = sorted(key for key, value in _criteria(current).items() if _criteria(last)[key] != value)
+    if changed:
+        raise ValueError(f"{topic}/{method}/{run_id} 를 앞서 검증할 때와 기준이 다릅니다: {changed}")
+
+    survivors = _survivors(topic, method, run_id)
+    for item in accepted + held:
+        for key in _keys(item):
+            survivors.setdefault(key, item["candidate_id"])
+    pending = set(last["pending"])
+    candidates = [item for item in storage._read_jsonl(run_dir / "candidates.jsonl") if item["candidate_id"] in pending]
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors)
+    return storage.continue_validation(topic, method, run_id, judged, info)
+
+
+def _criteria(record):
+    """한 run 의 검증 기준: 검증기 버전 · 난도 규칙 · 프롬프트 SHA-256 과 run 설정의 모델 · 단가 (한도 · 예산은 빼고)."""
+    priced = {key: value for key, value in record["run_config"].items() if key not in ("max_calls", "budget_usd")}
+    return {"validator_version": record["validator_version"], "difficulty_rule": record["difficulty_rule"],
+            "prompt_sha256": record["prompt_sha256"], "run_config": priced}
+
+
+def _judge_run(run_dir, topic, method, config_path, client, candidates, survivors):
+    """candidates 를 차례로 검증해 (판정한 항목, 검증 기록) 을 돌려준다. 한도에 닿으면 남은 후보를 pending 에 남긴다."""
+    config, config_sha = generation._run_config(config_path)
     plan_id, planned, spec = _pinned_plan(run_dir, topic)
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
     prompt_path = storage.PROMPTS / "validator.txt"
     calls = []
     ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls)
-    survivors = _survivors(topic, method, run_id)
 
     judged, pending, status = [], [], "complete"
-    for item in storage._read_jsonl(run_dir / "candidates.jsonl"):
+    for item in candidates:
         units = evidence_units(item, bundles[item["bundle_id"]])
         if status == "complete":
             status = _limit(config, calls, _calls_needed(item, units))
@@ -55,7 +100,7 @@ def validate(topic, method, run_id, config_path, client):
             continue
         judged.append(judge(item, spec, units, ask, survivors))
     info = {
-        "run_id": run_id,
+        "run_id": run_dir.name,
         "topic": topic,
         "method": method,
         "validator_version": VALIDATOR_VERSION,
@@ -74,7 +119,7 @@ def validate(topic, method, run_id, config_path, client):
         "cost_usd": generation._cost(config, calls),
         "calls": calls,
     }
-    return storage.write_validation(topic, method, run_id, judged, info)
+    return judged, info
 
 
 def _pinned_plan(run_dir, topic):
