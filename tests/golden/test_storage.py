@@ -13,7 +13,7 @@ def read_jsonl(path):
 
 
 def validated(make_item, candidate_id, question, to, reason):
-    return transition(make_item(candidate_id=candidate_id, question=question, validator_version="val-0.1"), to, reason)
+    return transition(make_item(candidate_id=candidate_id, question=question), to, reason, validator_version="val-0.1")
 
 
 def run_items(make_item):
@@ -100,9 +100,9 @@ def test_release_refuses_content_that_differs_from_its_registered_run(outputs, m
     # 출시본과 매니페스트(원본 run)에 그대로 들어가던 결함을 막는다.
     items = run_items(make_item)
     storage.write_run("numeric", "A", "r1", items)
-    other = make_item(question="바꿔 끼운 질문", answer="바꿔 끼운 답", method="B", run_id="r9", validator_version="val-9")
+    other = make_item(question="바꿔 끼운 질문", answer="바꿔 끼운 답", method="B", run_id="r9")
     other["evidence"][0]["chunk_id"] = "c-99"
-    other = transition(other, "auto_validated", "다른 검증 기록")
+    other = transition(other, "auto_validated", "다른 검증 기록", validator_version="val-9")
     substituted = transition({**items[1], field: other[field]}, "released", "출시")
 
     with pytest.raises(storage.CatalogError, match="등록된 기록과 다릅니다"):

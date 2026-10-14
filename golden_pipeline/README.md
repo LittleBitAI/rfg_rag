@@ -62,6 +62,8 @@ v11 읽기, 생성, 검증, 자기 개선, 실행기는 이후 단계에서 붙�
 
 `rejected` 와 `released` 는 끝 상태입니다. 허용되지 않은 전이는 `StateError` 로 막고,
 허용된 전이는 `{from, to, reason, at}` 을 `state_history` 에 덧붙인 새 항목을 돌려줍니다.
+`candidate` 를 떠나는 전이는 검증기가 하므로 `transition(item, to, reason, validator_version="...")` 처럼
+검증기 버전을 반드시 받아 `validator_version` 에 남기고, 그 뒤의 전이는 이 값을 받지 않습니다.
 `validate_item` 은 `state_history` 가 `candidate` 에서 시작해 허용된 전이만 거쳐 지금 `state` 에 닿는지,
 전이마다 이유와 ISO-8601 UTC 시각(`at`)이 있는지 확인합니다. 그래서 `state` 만 고쳐 검증이나 사람 검토를 건너뛸 수 없습니다.
 
