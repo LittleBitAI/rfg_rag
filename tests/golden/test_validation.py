@@ -142,6 +142,16 @@ def test_same_answer_compares_after_value_and_unit_normalization(candidate, inde
     assert same_answer(candidate, independent) is same
 
 
+@pytest.mark.parametrize("candidate, same", [
+    ("A안 1억원, B안 12개월", True),
+    ("B안은 1억원, A안은 12개월", False),
+    ("C안은 1억원, D안은 12개월", None),
+])
+def test_comparison_attribution_is_read_from_the_entity_names_for_every_value(candidate, same):
+    # 단위가 다른 값끼리 바뀌어도 대상이 달라진다. 비교 항목은 값마다 entities 이름으로 대상을 맞춘다.
+    assert same_answer(candidate, "A안은 1억원, B안은 12개월", ["A안", "B안"]) is same
+
+
 @pytest.mark.parametrize("independent, state", [
     ("1억 3천만원", "auto_validated"),
     ("13,000,000원", "rejected"),
@@ -215,6 +225,24 @@ def test_each_check_sends_the_candidate_to_its_state(config, topic, row, verdict
     assert item["validator_version"] == VALIDATOR_VERSION and item["difficulty"] in DIFFICULTIES
     record = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))
     assert record["validator_version"] == VALIDATOR_VERSION and record["difficulty_rule"].startswith("difficulty-1")
+
+
+@pytest.mark.parametrize("answer, state", [
+    ("B안이 2억원으로 더 많다", "auto_validated"),
+    ("A안이 2억원으로 더 많다", "rejected"),
+    ("2억원인 안이 더 많다", "held"),
+])
+def test_comparison_values_must_belong_to_the_same_entity_as_in_the_independent_answer(config, answer, state):
+    # 비교 후보는 값이 맞아도 그 값을 다른 대상에 붙이면 틀린 답이다. 대상은 구조의 entities 이름으로 읽는다.
+    make_plan("p3", "ev1", {"comparison": 1}, 2000, package=config.parent / "v11")
+    row = {"question": "A안과 B안 중 예산이 더 많은 안은?", "answer": answer, "evidence": ["E3"],
+           "structure": {"entities": ["A안", "B안"]}, "secondary_tags": []}
+    generate("A", "comparison", "p3", "a1", config, Generator(row))
+
+    run_dir = validate("comparison", "A", "a1", config, Validator({"*": verdict("B안이 2억원으로 더 많다")}))
+
+    [item] = validated(run_dir).values()
+    assert item["state"] == state
 
 
 @pytest.mark.parametrize("e2_alone, state, reason", [

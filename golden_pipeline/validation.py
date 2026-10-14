@@ -139,17 +139,19 @@ def quantities(text):
     1억 3천만원 처럼 수 단위로 끝난 수 뒤에 이어 쓴 수는 하나로 더한다. 그래서 1억 3천만원 = 130,000,000원 이다.
     수와 단위를 읽는 법(부호, 단위 끝)은 생성의 numeric 검사와 같다.
     """
-    return {pair for pair, _ in facts(text)}
+    return {pair for pair, _, _ in facts(text)}
 
 
 def facts(text):
-    """text 의 (값, 단위) 쌍마다 그 대상을 함께 돌려준다: [((값, 단위), 대상 낱말 집합)].
+    """text 의 (값, 단위) 쌍마다 그 대상을 함께 돌려준다: [((값, 단위), 대상 낱말 집합, 앞 글)].
 
     대상은 단위가 같은 앞 값 뒤부터 이 값 앞까지의 내용 형태소다. A안은 2억원, B안은 1억원 에서 2억원 의 대상은 {A, 안},
     1억원 의 대상은 {B, 안} 이다. 단위가 다른 값끼리는 바뀔 수 없어 경계로 삼지 않는다 (1차년도 1억원 의 대상은 {1, 차, 년도}).
+    앞 글은 단위와 상관없이 바로 앞 값 뒤부터 이 값 앞까지의 글(공백 · 쉼표 제거)이다. 비교 항목의 대상 이름은 여기서 찾는다.
     """
-    tokens = generation._kiwi().tokenize(unicodedata.normalize("NFC", text))
-    found, carry, after = [], {}, {}
+    text = unicodedata.normalize("NFC", text)
+    tokens = generation._kiwi().tokenize(text)
+    found, carry, after, last = [], {}, {}, 0
     for i, token in enumerate(tokens):
         if token.tag != "SN":
             continue
@@ -164,25 +166,55 @@ def facts(text):
             carry[end] = (sign, amount, start)
             continue
         subject = {_norm(t.form) for t in tokens[after.get(rest, 0):start] if t.tag in SUBJECT_TAGS}
-        found.append(((sign.replace("−", "-") + format(amount.normalize(), "f"), rest), subject))
+        window = _norm(text[last:tokens[start].start])
+        found.append(((sign.replace("−", "-") + format(amount.normalize(), "f"), rest), subject, window))
         after[rest] = _unit_end(tokens, end, rest)
+        last = tokens[after[rest] - 1].end
     return found
 
 
-def same_answer(text, independent):
+def same_answer(text, independent, entities=None):
     """독립 답이 text 에 들어 있는지. 수 · 단위는 값과 그 대상으로 맞추고, 수가 없는 답은 글자로 맞춘다 (공백 · 쉼표 차이만 허용).
 
     True · False 이고, 값은 모두 있지만 어느 값이 어느 대상의 것인지 확인하지 못하면 None 이다 (사람이 볼 일).
     그래서 A안 1억원, B안 2억원 은 A안 2억원, B안 1억원 과 값은 같아도 다른 답이고, 1억원, 2억원 은 확인하지 못한 답이다.
+    entities (비교 항목의 대상 이름) 가 있으면 값마다 그 이름으로 대상을 맞춘다 (_anchored).
     """
     expected = facts(independent)
     if not expected:
         return _contains(_norm(text), _norm(independent))
     found = facts(text)
-    results = [_attributed(fact, expected, found) for fact in expected]
+    if entities:
+        results = [_anchored(fact, found, entities) for fact in expected]
+    else:
+        results = [_attributed(fact, expected, found) for fact in expected]
     if False in results:
         return False
     return None if None in results else True
+
+
+def _anchored(fact, found, entities):
+    """비교 항목의 값 하나: 독립 답이 그 값 앞에 쓴 대상 이름이 text 의 같은 값 앞에도 있는지. True · False · None.
+
+    값이 하나뿐이거나 단위가 달라도 늘 본다. 대상이 확인될 때만 같은 답이고, 확인할 수 없으면 None (held) 이다.
+    독립 답이 값 앞에 대상 이름을 꼭 하나 쓰지 않았으면 맞출 기준이 없어 None 이다.
+    text 의 같은 값 앞이 모두 다른 대상 이름뿐이면 False, 이름이 없거나 여럿이면 None 이다.
+    ponytail: 이름은 부분 문자열로 찾는다. B안 이 AB안 안에서도 잡히니, 서로를 품는 이름이 생기면 가장 긴 일치로 바꾼다.
+    """
+    pair, _, window = fact
+    owner = _named(window, entities)
+    named = [_named(other_window, entities) for other, _, other_window in found if other == pair]
+    if not named:
+        return False
+    if len(owner) != 1:
+        return None
+    if owner in named:
+        return True
+    return False if all(names and not names & owner for names in named) else None
+
+
+def _named(window, entities):
+    return {entity for entity in entities if _contains(window, _norm(entity))}
 
 
 def _attributed(fact, expected, found):
@@ -192,15 +224,15 @@ def _attributed(fact, expected, found):
     text 의 대상에 모두 있어야 하고, 다른 값의 대상에 있는 낱말(foreign)이 있으면 다른 대상의 값이다.
     ponytail: 대상은 값 앞에서만 읽는다. 2억원(A안) 처럼 대상을 값 뒤에 쓴 답은 확인하지 못하거나 바뀐 답으로 읽힌다.
     """
-    pair, subject = fact
-    subjects = [other_subject for other, other_subject in found if other == pair]
+    pair, subject, _ = fact
+    subjects = [other_subject for other, other_subject, _ in found if other == pair]
     if not subjects:
         return False
     rivals = [other for other in expected if other is not fact and other[0][1] == pair[1]]
     if not rivals:
         return True
-    own = subject - set().union(*(other_subject for _, other_subject in rivals))
-    foreign = set().union(*(other_subject for other, other_subject in rivals if other != pair)) - subject
+    own = subject - set().union(*(other_subject for _, other_subject, _ in rivals))
+    foreign = set().union(*(other_subject for other, other_subject, _ in rivals if other != pair)) - subject
     if own and any(own <= other_subject and not other_subject & foreign for other_subject in subjects):
         return True
     return False if all(other_subject & foreign for other_subject in subjects) else None
@@ -229,7 +261,7 @@ def _verdict(item, spec, units, ask, survivors):
     reason = next((reason for check in ANSWER_CHECKS if (reason := check(item, full))), None)
     if reason:
         return "rejected", reason
-    if same_answer(item["answer"], full["answer"]) is None:
+    if same_answer(item["answer"], full["answer"], _entities(item)) is None:
         return "held", f"{UNATTRIBUTED}: 독립 답 {full['answer']!r}"
     if item["primary_topic"] == "multi_hop":
         return _single_unit_verdict(item, units, full, ask)
@@ -283,7 +315,7 @@ def _numeric_answer(item, full):
 
 def _same_as_independent(item, full):
     # 대상을 확인하지 못한 답(None)은 여기서 거절하지 않고, 다른 거절 검사를 마친 뒤 held 로 보낸다.
-    if same_answer(item["answer"], full["answer"]) is False:
+    if same_answer(item["answer"], full["answer"], _entities(item)) is False:
         return f"독립 답과 다릅니다: 독립 답 {full['answer']!r}"
     return None
 
@@ -298,10 +330,14 @@ def _not_copied(item, full):
     # 질문에 값이 모두 있으면 대상을 확인하지 못했어도(None) 답을 내준 것이다.
     if same_answer(item["question"], full["answer"]) is False:
         return None
-    entities = item["structure"].get("entities", []) if item["primary_topic"] == "comparison" else []
-    if _norm(full["answer"]) in {_norm(entity) for entity in entities}:
+    if _norm(full["answer"]) in {_norm(entity) for entity in _entities(item) or []}:
         return None
     return f"복사형: 질문에 답 {full['answer']!r} 이 들어 있습니다"
+
+
+def _entities(item):
+    """비교 항목이 견주는 대상 이름 (구조의 entities). 다른 주제는 None 이다."""
+    return item["structure"]["entities"] if item["primary_topic"] == "comparison" else None
 
 
 ANSWER_CHECKS = (_answerable, _numeric_answer, _same_as_independent, _conditions_stated, _not_copied)

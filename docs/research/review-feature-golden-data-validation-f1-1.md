@@ -109,7 +109,7 @@ Before editing, run on a41c9fb: same_answer('A안이 2억원으로 더 많다', 
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Draft observation, not a verification. Before the edit, on a41c9fb: `same_answer('A안이 2억원으로 더 많다', 'B안이 2억원으로 더 많다')` and `same_answer('B안은 1억원, A안은 12개월', 'A안은 1억원, B안은 12개월')` both returned True, as predicted. The new test `test_comparison_values_must_belong_to_the_same_entity_as_in_the_independent_answer` (comparison candidate, entities ['A안','B안'], validator answer 'B안이 2억원으로 더 많다') gave auto_validated for the candidate 'A안이 2억원으로 더 많다' (predicted) and also for '2억원인 안이 더 많다'. After the fix in the commit that adds this result: comparison items now compare each value through `_anchored`, which reads the entity name written before the value in both texts. Called with entities, the two calls above return False and False. The validate() case is rejected, the unnamed candidate is held, and 'B안이 2억원으로 더 많다' stays auto_validated. `test_comparison_attribution_is_read_from_the_entity_names_for_every_value` covers the cross-unit swap (False), the correct order (True) and C안/D안 (None). Called without entities, as the experiment literally wrote them, the two calls still return True. That is intended: other topics keep the rival-word rule, per this page's Applicability section. Every existing row of `test_same_answer_compares_after_value_and_unit_normalization` keeps its result (tests/golden/test_validation.py: 51 passed).
 
 ## Unresolved limits
 
