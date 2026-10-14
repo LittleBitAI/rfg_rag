@@ -277,6 +277,9 @@ def test_b_and_c_code_paths_never_read_failure_memory(looped, monkeypatch, tmp_p
     def forbidden(*args, **kwargs):
         raise AssertionError("B · C 경로가 실패 기록 모듈을 불렀습니다")
 
+    def useful(model, reasoning_effort, messages):
+        return {"model": "screen-test", "text": '{"useful": true, "reason": "예산"}', "input_tokens": 10, "output_tokens": 10}
+
     generator = Generator()
     with monkeypatch.context() as patch:
         patch.setattr(Path, "open", spy)
@@ -286,7 +289,7 @@ def test_b_and_c_code_paths_never_read_failure_memory(looped, monkeypatch, tmp_p
         validate("numeric", "B", "b1", run, Validator())
         import_c("numeric", "p3", "c1", [export], sidecar)
         validate("numeric", "C", "c1", run, Validator())
-        release("numeric", "v-b", [("B", "b1")])
+        release("numeric", "v-b", [("B", "b1")], run, useful)
 
     assert reads and not [path for path in reads if "failure_memory" in path]
     assert "MEMORY-MARKER" not in json.dumps(generator.requests, ensure_ascii=False)

@@ -139,16 +139,60 @@ def _pinned_plan(run_dir, topic):
     return generated["plan_id"], planned, spec
 
 
-def release(topic, version, runs):
-    """검증한 run 들의 auto_validated 항목을 releases/{version}/ 로 낸다. runs 는 [(method, run_id)] 다.
+def release(topic, version, runs, config_path, client):
+    """검증한 run 들의 auto_validated 항목 중 쓸모 판정을 통과한 것을 releases/{version}/ 로 낸다. runs 는 [(method, run_id)] 다.
 
-    사람이 확인하는 단계는 없다. 검증에서 애매한 판정을 두지 않으므로 통과 항목이 곧 출시 대상이다.
+    검증은 답이 근거와 맞는지만 본다. 목차 · 쪽 번호 · 표 머리글을 묻는 질문도 답은 맞아 통과하므로,
+    출시 전에 판정기(prompts/screen.txt)가 RFP 를 읽는 사람이 물을 만한 질문인지 참거짓으로 정한다. 사람이 확인하는 단계는 없다.
+    빠진 항목과 이유는 출시 매니페스트에 남긴다. 한도에 닿으면 일부만 낸 출시본을 만들지 않고 멈춘다.
     """
-    items = []
-    for method, run_id in runs:
-        items += [transition(item, "released", "자동 검증 통과") for item in storage.read_validated(topic, method, run_id)]
+    items = [item for method, run_id in runs for item in storage.read_validated(topic, method, run_id)]
     _refuse_duplicates(items)
-    return storage.write_release(topic, version, items)
+    config, config_sha = generation._run_config(config_path)
+    prompt_path = storage.PROMPTS / "screen.txt"
+    calls = []
+    screen = _screener(client, config, prompt_path.read_text(encoding="utf-8"), calls)
+    verdicts = []
+    for start in range(0, len(items), generation.WORKERS):
+        batch = items[start:start + generation.WORKERS]
+        # 출력 오류면 한 번 더 부르므로 항목마다 두 번까지 센다.
+        status = generation.limit_reached(config, len(calls), generation._cost(config, calls), 2 * len(batch))
+        if status:
+            raise ValueError(f"쓸모 판정이 한도({status})에 닿아 출시하지 않았습니다: {len(verdicts)}/{len(items)} 판정")
+        verdicts += generation.parallel(screen, batch)
+    released = [transition(item, "released", "자동 검증 · 쓸모 판정 통과")
+                for item, (useful, _) in zip(items, verdicts) if useful]
+    dropped = [{"candidate_id": item["candidate_id"], "question": item["question"], "reason": reason}
+               for item, (useful, reason) in zip(items, verdicts) if not useful]
+    info = {
+        "screen_prompt_sha256": storage._sha256(prompt_path),
+        "run_config": config,
+        "run_config_sha256": config_sha,
+        "model_reported": sorted({call["model"] for call in calls}),
+        "calls": len(calls),
+        "cost_usd": generation._cost(config, calls),
+        "screened": len(items),
+        "dropped": dropped,
+    }
+    return storage.write_release(topic, version, released, info)
+
+
+def _screener(client, config, instructions, calls):
+    """항목 하나를 판정기에 묻고 (쓸모 있는지, 이유) 를 돌려주는 함수. 출력이 두 번 다 계약을 어기면 쓸모 없다고 본다."""
+    def screen(item):
+        content = json.dumps({"question": item["question"], "answer": item["answer"]}, ensure_ascii=False)
+        verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful)
+        return verdict if error is None else (False, f"판정기 출력 오류: {error}")
+    return screen
+
+
+def _parse_useful(text):
+    row, reason = generation._parse(text, ("useful", "reason"))
+    if row is None:
+        return None, reason
+    if not (isinstance(row["useful"], bool) and generation._is_text(row["reason"])):
+        return None, "useful 은 참거짓, reason 은 비어 있지 않은 문자열이어야 합니다"
+    return (row["useful"], row["reason"]), None
 
 
 def validator_input(question, units):

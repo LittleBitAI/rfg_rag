@@ -28,6 +28,7 @@ VERDICTS = {
            "comparison": None},
     "E2": {"answerable": True, "answer": "입찰 금액의 5% 이상", "conditions": [], "conflict": False, "comparison": None},
 }
+SCREEN = (storage.PROMPTS / "screen.txt").read_text(encoding="utf-8")
 # 호출마다 입력 10 · 출력 10 토큰, 단가 1 · 4 USD / 100만 토큰.
 CALL_USD = 50 / 1_000_000
 
@@ -45,7 +46,11 @@ class FakeAPI:
     def __call__(self, model, reasoning_effort, messages):
         system, user = messages[0]["content"], messages[1]["content"]
         self.requests.append((model, reasoning_effort, user))
-        if user.startswith("{"):
+        if system == SCREEN:
+            # 출시 전 쓸모 판정: 보증금 질문은 쓸모 없다고 본다.
+            useful = "보증금" not in json.loads(user)["question"]
+            text = json.dumps({"useful": useful, "reason": "판정 이유"}, ensure_ascii=False)
+        elif user.startswith("{"):
             text = self._verdict(json.loads(user))
         elif "130,000,000원" in user:
             text = json.dumps(BUDGET if PREVENTION_RULES["answer_mismatch"] in system else WRONG, ensure_ascii=False)
@@ -120,11 +125,16 @@ def test_a_b_and_c_run_through_audit_release_and_report(planned, api, tmp_path, 
     golden("audit", "--topic", "numeric", "--method", "B", "--id", "b1", *VALIDATOR, *LIMITS)
     import_c(tmp_path, [(planned["budget"], BUDGET), (planned["bond"], BOND), ("b-unplanned", BOND), "JSON 아님"])
     golden("audit", "--topic", "numeric", "--method", "C", "--id", "c1", *VALIDATOR, *LIMITS)
-    golden("release", "--topic", "numeric", "--version", "v1", "--run", "A:l1-r1", "--run", "A:l1-r2")
+    golden("release", "--topic", "numeric", "--version", "v1", "--run", "A:l1-r1", "--run", "A:l1-r2", *VALIDATOR, *LIMITS)
     golden("report", "--topic", "numeric", "--id", "cmp", "--a", "l1", "--b", "b1", "--c", "c1")
 
+    # 검증을 통과해도 쓸모 판정에서 빠진 항목(보증금)은 출시되지 않고, 이유와 함께 매니페스트에 남는다.
     released = read_jsonl(storage.OUTPUTS / "goldens/numeric/releases/v1/golden.jsonl")
-    assert sorted(item["answer"] for item in released) == sorted([BUDGET["answer"], BOND["answer"]])
+    assert [item["answer"] for item in released] == [BUDGET["answer"]]
+    assert released[0]["state_history"][-1]["reason"] == "자동 검증 · 쓸모 판정 통과"
+    screen = json.loads((storage.OUTPUTS / "goldens/numeric/releases/v1/manifest.json").read_text(encoding="utf-8"))["release"]
+    assert (screen["screened"], screen["calls"]) == (2, 2)
+    assert [(row["question"].endswith(BOND["question"]), row["reason"]) for row in screen["dropped"]] == [(True, "판정 이유")]
     report = json.loads((storage.OUTPUTS / "goldens/numeric/reports/cmp.json").read_text(encoding="utf-8"))
     assert report["runs"] == {"A": ["l1-r1", "l1-r2", "l1-r3"], "B": ["b1"], "C": ["c1"]}
     a, b, c = (report["methods"][method] for method in "ABC")
@@ -254,13 +264,13 @@ def test_a_resumed_audit_judges_only_the_pending_candidates_and_releases(planned
     # 앞 기록이 바뀌면 이어 쓴 기록의 continues 와 맞지 않아, 바뀐 비용이 보고서 · 출시본에 들어가지 못한다.
     (run_dir / "validation.json").write_text(json.dumps({**first, "cost_usd": 9.0}), encoding="utf-8")
     for command in (("report", "--topic", "numeric", "--id", "cmp", "--c", "c1"),
-                    ("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1")):
+                    ("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1", *VALIDATOR, *LIMITS)):
         with pytest.raises(storage.CatalogError, match="validation-2.json"):
             golden(*command)
     (run_dir / "validation.json").write_text(first_text, encoding="utf-8")
-    golden("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1")
+    golden("release", "--topic", "numeric", "--version", "v1", "--run", "C:c1", *VALIDATOR, *LIMITS)
     manifest = json.loads((storage.OUTPUTS / "goldens/numeric/releases/v1/manifest.json").read_text(encoding="utf-8"))
-    assert manifest["count"] == 2 and "validation-2.json" in manifest["sources"]["C/c1"]
+    assert manifest["count"] == 1 and "validation-2.json" in manifest["sources"]["C/c1"]
     with pytest.raises(ValueError, match="pending 후보가 없습니다"):
         golden("resume", "--topic", "numeric", "--method", "C", "--id", "c1", "--max-calls", "10", "--budget", "1")
 

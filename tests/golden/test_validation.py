@@ -66,6 +66,21 @@ class Validator:
         return tuple(unit["label"] for unit in json.loads(messages[1]["content"])["evidence"])
 
 
+class Screener:
+    """출시 전 쓸모 판정 대역. 질문 끝말에 replies[끝말] 을 글 그대로 돌려주고, 없으면 쓸모 있다고 답한다."""
+
+    def __init__(self, replies=None):
+        self.replies = replies or {}
+        self.requests = []
+
+    def __call__(self, model, reasoning_effort, messages):
+        self.requests.append(messages)
+        question = json.loads(messages[1]["content"])["question"]
+        reply = next((text for end, text in self.replies.items() if question.endswith(end)),
+                     json.dumps({"useful": True, "reason": "예산을 묻는다"}, ensure_ascii=False))
+        return {"model": "screen-test", "text": reply, "input_tokens": 10, "output_tokens": 10}
+
+
 @pytest.fixture
 def config(evidence_run, tmp_path):
     """p1 은 numeric · table · condition 묶음이 하나씩, p2 는 multi_hop 묶음 하나 (E1 · E2 · E3 = u1 · u2 · u3)."""
@@ -318,7 +333,7 @@ def test_duplicates_and_items_from_the_same_evidence_group_are_rejected_through_
     assert a2["state_history"][-1]["reason"] == "중복: numeric-A-a1-0001 와 같은 근거 묶음이나 질문입니다"
     # 방식을 섞어 낸 출시본에도 같은 근거 묶음의 항목이 둘 들어가지 않는다.
     with pytest.raises(ValueError, match="같은 근거 묶음"):
-        release("numeric", "v1", [("A", "a1"), ("C", "c1")])
+        release("numeric", "v1", [("A", "a1"), ("C", "c1")], config, Screener())
 
 
 @pytest.mark.parametrize("question, proven, level", [
@@ -345,28 +360,58 @@ def judged(config, tmp_path):
     return validate("numeric", "C", "c1", config, validator)
 
 
-def test_release_collects_only_accepted_items_and_refuses_an_existing_version(judged):
+def test_release_collects_only_accepted_items_and_refuses_an_existing_version(judged, config):
     run_dir = judged
+    screener = Screener()
 
-    release_dir = release("numeric", "v1", [("C", "c1")])
+    release_dir = release("numeric", "v1", [("C", "c1")], config, screener)
 
     golden = read_jsonl(release_dir / "golden.jsonl")
     assert [(item["candidate_id"], item["state_history"][-1]["reason"]) for item in golden] == [
-        ("numeric-C-c1-0001", "자동 검증 통과"),
+        ("numeric-C-c1-0001", "자동 검증 · 쓸모 판정 통과"),
     ]
+    # 판정기는 질문과 답만 받는다.
+    assert json.loads(screener.requests[0][1]["content"]) == {"question": golden[0]["question"], "answer": golden[0]["answer"]}
     manifest = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))
     assert (manifest["runs"], manifest["count"]) == (["C/c1"], 1)
     assert manifest["golden_sha256"] == storage._sha256(release_dir / "golden.jsonl")
+    assert manifest["release"]["screen_prompt_sha256"] == storage._sha256(storage.PROMPTS / "screen.txt")
     for name in ("candidates.jsonl", "accepted.jsonl", "manifest.json", "validation.json"):
         assert manifest["sources"]["C/c1"][name] == storage._sha256(run_dir / name)
     before = (release_dir / "golden.jsonl").read_bytes()
 
     with pytest.raises(FileExistsError):
-        release("numeric", "v1", [("C", "c1")])
+        release("numeric", "v1", [("C", "c1")], config, Screener())
     assert (release_dir / "golden.jsonl").read_bytes() == before
 
 
-def test_release_refuses_files_changed_after_validation(judged):
+@pytest.mark.parametrize("reply, reason", [
+    (json.dumps({"useful": False, "reason": "쪽 번호를 묻는다"}, ensure_ascii=False), "쪽 번호를 묻는다"),
+    # 출력이 두 번 다 계약을 어기면 애매하게 남기지 않고 뺀다.
+    ("쓸모 있음", "판정기 출력 오류: JSON 이 아닙니다"),
+])
+def test_an_item_the_screen_rejects_is_left_out_with_its_reason(judged, config, reply, reason):
+    # 목차 · 쪽 번호를 묻는 질문은 답이 근거와 맞아 검증을 통과하지만 RAG 평가에 쓸모가 없다.
+    screener = Screener({"얼마인가?": reply})
+
+    release_dir = release("numeric", "v1", [("C", "c1")], config, screener)
+
+    assert read_jsonl(release_dir / "golden.jsonl") == []
+    info = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))["release"]
+    [dropped] = info["dropped"]
+    assert dropped["candidate_id"] == "numeric-C-c1-0001" and dropped["reason"].startswith(reason)
+    assert (info["screened"], info["calls"]) == (1, len(screener.requests))
+
+
+def test_release_stops_without_writing_when_the_screen_would_pass_its_call_cap(judged, tmp_path):
+    path = tmp_path / "screen.json"
+    path.write_text(json.dumps({**CONFIG, "max_calls": 1}), encoding="utf-8")
+    with pytest.raises(ValueError, match="call_cap"):
+        release("numeric", "v1", [("C", "c1")], path, Screener())
+    assert not (storage.OUTPUTS / "goldens" / "numeric" / "releases").exists()
+
+
+def test_release_refuses_files_changed_after_validation(judged, config):
     # 거절 항목을 accepted.jsonl 로 옮겨 출시본에 끼워 넣지 못하게 한다.
     run_dir = judged
     rejected = [line for line in (run_dir / "rejected.jsonl").read_text(encoding="utf-8").splitlines()
@@ -374,7 +419,7 @@ def test_release_refuses_files_changed_after_validation(judged):
     with (run_dir / "accepted.jsonl").open("a", encoding="utf-8") as f:
         f.write("\n".join(rejected) + "\n")
     with pytest.raises(storage.CatalogError, match="validation.json"):
-        release("numeric", "v1", [("C", "c1")])
+        release("numeric", "v1", [("C", "c1")], config, Screener())
     assert not (storage.OUTPUTS / "goldens" / "numeric" / "releases").exists()
 
 

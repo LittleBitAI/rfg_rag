@@ -99,7 +99,9 @@ def _audit(args):
 
 def _release(args):
     runs = [tuple(run.split(":", 1)) for run in args.run]
-    return validation.release(args.topic, args.version, runs)
+    config = {**_priced(args.model, args.reasoning_effort, args.price), "max_calls": args.max_calls, "budget_usd": args.budget}
+    with _config_file(config) as path, api_client() as call:
+        return validation.release(args.topic, args.version, runs, path, call)
 
 
 def _report(args):
@@ -180,6 +182,13 @@ def _paid_commands(commands):
     _limits(command)
     command.set_defaults(handler=_audit)
 
+    command = commands.add_parser("release", help="검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (유료 호출)")
+    command.add_argument("--topic", choices=TOPICS, required=True)
+    command.add_argument("--version", required=True)
+    command.add_argument("--run", action="append", required=True, metavar="METHOD:RUN_ID")
+    _limits(command)
+    command.set_defaults(handler=_release)
+
 
 def _record_commands(commands):
     command = commands.add_parser("import", help="C 가져오기 (API 호출 없음)")
@@ -189,12 +198,6 @@ def _record_commands(commands):
     command.add_argument("--export", nargs="+", required=True, help="웹에서 내보낸 JSONL 파일들")
     command.add_argument("--sidecar", required=True, help="관측 기록 JSON")
     command.set_defaults(handler=_import)
-
-    command = commands.add_parser("release", help="검증한 run 들을 출시본으로 (API 호출 없음)")
-    command.add_argument("--topic", choices=TOPICS, required=True)
-    command.add_argument("--version", required=True)
-    command.add_argument("--run", action="append", required=True, metavar="METHOD:RUN_ID")
-    command.set_defaults(handler=_release)
 
     command = commands.add_parser("report", help="A · B · C 비교 보고서 (API 호출 없음)")
     command.add_argument("--topic", choices=TOPICS, required=True)

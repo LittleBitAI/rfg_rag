@@ -45,7 +45,7 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `import` | C 가져오기 | 없음 |
 | `audit` | B · C run 의 독립 검증. A 는 loop 안에서 검증합니다 | 유료 |
 | `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
-| `release` | 검증한 run 들을 출시본으로 | 없음 |
+| `release` | 검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (아래 출시) | 유료 |
 | `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
 
 ```
@@ -61,7 +61,7 @@ golden_pipeline\golden.cmd audit --topic numeric --method C --id c1 --model <모
 golden_pipeline\golden.cmd resume --topic numeric --method A --id a1
 golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls 40 --budget 1
 
-golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2
+golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 400 --budget 2
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
 
@@ -524,10 +524,18 @@ round 마다와 `report.json` 을 쓰기 전에 지금 값과 맞춰 봅니다. 
 ## 출시
 
 ```python
-release(topic, version, [(method, run_id), ...])
+release(topic, version, [(method, run_id), ...], config_path, client)
 ```
 
-고른 run 들의 `auto_validated` 항목을 `released` 로 옮겨 `releases/{version}/golden.jsonl` 에 씁니다. 사람이 확인하는 단계는 없습니다.
+고른 run 들의 `auto_validated` 항목 중 쓸모 판정을 통과한 것을 `released` 로 옮겨 `releases/{version}/golden.jsonl` 에 씁니다.
+사람이 확인하는 단계는 없습니다.
+
+검증은 답이 근거와 맞는지만 봅니다. 목차 · 쪽 번호 · 순번 · 표 머리글 · 연락처를 묻는 질문도 답은 맞아 통과하므로,
+출시 전에 판정기(`prompts/screen.txt`)가 질문 · 답만 받아 RFP 를 읽는 사람이 물을 만한 질문인지 `{"useful": 참거짓, "reason"}` 으로 정합니다.
+출력이 두 번 다 계약을 어기면 쓸모 없다고 봅니다. 빠진 항목은 `candidate_id` · 질문 · 이유와 함께 매니페스트 `release.dropped` 에,
+판정 설정 · 프롬프트 SHA-256 · 호출 수 · 비용은 `release` 에 남습니다. CLI 는 다른 유료 명령처럼 모델 · 추론 강도 · 단가 · 한도를 받고,
+한도에 닿으면 일부만 판정한 출시본을 만들지 않고 멈춥니다.
+2026-10-15 실제 표본(비교 40 · 표 30)에서 `low` 는 같은 기준을 들쭉날쭉 적용해, 출시에는 `high` 를 씁니다.
 
 | 거절 | 이유 |
 |---|---|
