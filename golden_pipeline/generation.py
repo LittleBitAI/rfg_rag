@@ -123,7 +123,7 @@ def check_structure(topic, spec, row, cited):
     structure = row["structure"]
     if set(structure) != set(spec["structure"]):
         return f"structure 필드는 {sorted(spec['structure'])} 여야 합니다"
-    texts = [_norm(unit["text"]) for unit in cited]
+    texts = [unit["text"] for unit in cited]
     return CHECKS[topic](structure, row["answer"], cited, texts)
 
 
@@ -247,18 +247,21 @@ def _quoted(values, texts, label):
     """구조의 값은 근거에 적힌 그대로여야 한다 (공백·쉼표 차이만 허용)."""
     if not all(_is_text(value) for value in values):
         return f"{label}은 비어 있지 않은 문자열이어야 합니다"
-    missing = [value for value in values if not any(_contains(text, _norm(value)) for text in texts)]
+    missing = [value for value in values if not any(_contains(text, value) for text in texts)]
     return f"{label}이 근거에 없습니다: {missing}" if missing else None
 
 
 def _contains(text, quote):
-    """quote 가 text 에 있는지 본다. 숫자로 시작하거나 끝나는 quote 는 더 긴 수의 일부와 맞추지 않는다.
+    """quote 가 text 에 있는지 본다 (공백 · 쉼표 차이만 허용). 숫자로 시작하거나 끝나는 quote 는 더 긴 수의 일부와 맞추지 않는다.
 
-    쉼표를 지우고 견주므로 그냥 부분 문자열이면 30000000원 이 130000000원 안에서, 2개월 이 12개월 안에서 맞는다.
+    쉼표를 지우고 견주므로 그냥 부분 문자열이면 30,000,000원 이 130,000,000원 안에서, 2개월 이 12개월 안에서 맞는다.
+    수의 경계는 공백을 지우기 전의 글에서 본다. 띄어 쓴 두 수(목차의 13\\n 1.)를 지운 뒤 보면 131 로 이어져 맞지 않는다.
     """
-    head = r"(?<!\d)(?<!\d\.)" if quote[:1].isdigit() else ""
-    tail = r"(?!\.?\d)" if quote[-1:].isdigit() else ""
-    return re.search(head + re.escape(quote) + tail, text) is not None
+    quote = _norm(quote)
+    head = r"(?<!\d)(?<!\d,)(?<!\d\.)" if quote[:1].isdigit() else ""
+    tail = r"(?!,?\.?\d)" if quote[-1:].isdigit() else ""
+    body = r"[\s,]*".join(map(re.escape, quote))
+    return re.search(head + body + tail, unicodedata.normalize("NFC", text)) is not None
 
 
 def _candidate(run, candidate_id, row, bundle, spec, parent=None):
