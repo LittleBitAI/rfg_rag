@@ -8,3 +8,4 @@ __pycache__/
 *.part
 frontend/web/node_modules/
 frontend/web/dist/
+/a.excalidraw

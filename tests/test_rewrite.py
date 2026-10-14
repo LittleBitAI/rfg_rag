@@ -49,12 +49,15 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
                       "output_tokens": 5, "reasoning_tokens": 2, "latency_s": 0.1}
     rewrite_fn = MagicMock(return_value=rewrite_result)
     monkeypatch.setattr(generation, "rewrite_question", rewrite_fn)
-    hit = {"chunk_id": "c1", "body": "근거", "source": "문서.pdf", "page": 3}
+    hit = {"chunk_id": "c1", "doc_id": "doc-a", "body": "근거", "source": "문서.pdf", "page": 3}
     index = HybridIndex.__new__(HybridIndex)
-    index.rcfg = {"top_k": 5}
+    index.rcfg = {"token_budget": 2500}
+    index.chunks = [hit]
+    index.embedder = MagicMock()
+    index.embedder.token_counts.return_value = [1]
     index.router = MagicMock()
     index.router.route.return_value = route
-    index._search = MagicMock(return_value=[hit])
+    index._rank = MagicMock(return_value=[(0, 1.0)])
     generate_fn = MagicMock(return_value={"answer": "답변", "input_tokens": 100,
                                           "output_tokens": 50, "reasoning_tokens": 20})
     monkeypatch.setattr(generation, "generate", generate_fn)
@@ -65,10 +68,10 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
 
     rewrite_fn.assert_called_once_with(item["question"], rewrite_cfg)
     index.router.route.assert_called_once_with(item["question"])
-    expected_calls = ([call("검색용 질문", 3, doc_ids) for doc_ids in route.values()] if len(route) > 1
-                      else [call("검색용 질문", 5, next(iter(route.values()), None))])
-    assert index._search.call_args_list == expected_calls
-    generate_fn.assert_called_once_with(item["question"], [hit], llm_cfg, history=[])
+    expected_calls = ([call("검색용 질문", set(), doc_ids) for doc_ids in route.values()] if len(route) > 1
+                      else [call("검색용 질문", set(), next(iter(route.values()), None))])
+    assert index._rank.call_args_list == expected_calls
+    generate_fn.assert_called_once_with(item["question"], [{**hit, "score": 1.0}], llm_cfg, history=[])
     assert row["question"] == item["question"]
     assert row["reference"] == item["reference"]
     assert row["key_facts"] == item["key_facts"]
@@ -77,14 +80,3 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
     assert row["contexts"] == ["근거"]
     assert row["sources"] == ["문서.pdf p.3"]
     assert row["trace_id"] is None
-
-
-def test_search_uses_original_query_when_rewrite_is_not_supplied():
-    index = HybridIndex.__new__(HybridIndex)
-    index.rcfg = {"top_k": 5}
-    index.router = MagicMock()
-    index.router.route.return_value = {}
-    index._search = MagicMock(return_value=[])
-
-    assert index.search("원본 질문") == []
-    index._search.assert_called_once_with("원본 질문", 5, None)
