@@ -61,7 +61,7 @@ golden_pipeline\golden.cmd audit --topic numeric --method C --id c1 --model <모
 golden_pipeline\golden.cmd resume --topic numeric --method A --id a1
 golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls 40 --budget 1
 
-golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --confirmations confirm.jsonl
+golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
 
@@ -114,18 +114,17 @@ golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 
 | 현재 상태 | 갈 수 있는 상태 |
 |---|---|
-| `candidate` (후보) | `auto_validated` · `held` · `rejected` |
-| `auto_validated` (자동 검증 통과) | `released` · `held` · `rejected` |
-| `held` (보류, 사람 검토) | `released` (승인) · `rejected` |
+| `candidate` (후보) | `auto_validated` · `rejected` |
+| `auto_validated` (자동 검증 통과) | `released` · `rejected` |
 | `rejected` (거절) | 없음 |
 | `released` (출시 골든) | 없음 |
 
-`rejected` 와 `released` 는 끝 상태입니다. 허용되지 않은 전이는 `StateError` 로 막고,
+`rejected` 와 `released` 는 끝 상태입니다. 애매한 항목을 사람이 볼 보류 상태는 없습니다. 검증은 통과나 거절로만 끝납니다. 허용되지 않은 전이는 `StateError` 로 막고,
 허용된 전이는 `{from, to, reason, at}` 을 `state_history` 에 덧붙인 새 항목을 돌려줍니다.
 `candidate` 를 떠나는 전이는 검증기가 하므로 `transition(item, to, reason, validator_version="...", difficulty="...")` 처럼
 검증기 버전과 난도를 반드시 받아 남기고, 그 뒤의 전이는 이 값들을 받지 않습니다.
 `validate_item` 은 `state_history` 가 `candidate` 에서 시작해 허용된 전이만 거쳐 지금 `state` 에 닿는지,
-전이마다 이유와 ISO-8601 UTC 시각(`at`)이 있는지 확인합니다. 그래서 `state` 만 고쳐 검증이나 사람 검토를 건너뛸 수 없습니다.
+전이마다 이유와 ISO-8601 UTC 시각(`at`)이 있는지 확인합니다. 그래서 `state` 만 고쳐 검증을 건너뛸 수 없습니다.
 
 ## 저장 규약
 
@@ -137,7 +136,6 @@ golden_pipeline/outputs/
     runs/{A|B|C}/{run_id}/
       candidates.jsonl                  run 의 모든 항목
       accepted.jsonl                    auto_validated
-      review.jsonl                      held (사람 검토 대상)
       rejected.jsonl                    rejected 항목, 그리고 항목이 되지 못한 생성 출력 {bundle_id, reason, raw}
       manifest.json                     설정·프롬프트 파일별 SHA-256, 코드 커밋, 개수, 생성 정보(generation)
       validation.json                   검증 기록: 검증기 버전, 난도 규칙, 호출, 상태 파일별 SHA-256 (run 마다 한 번)
@@ -150,7 +148,7 @@ golden_pipeline/outputs/
       report.json                       멈춘 이유, round 별 상태 · policy, 호출 · 비용, 목표 대비 모자란 수, 기준 해시
     releases/{version}/
       golden.jsonl                      released 항목
-      manifest.json                     개수, golden.jsonl SHA-256, 원본 run 과 그 파일별 SHA-256, 사람 확인 기록 SHA-256, 코드 커밋
+      manifest.json                     개수, golden.jsonl SHA-256, 원본 run 과 그 파일별 SHA-256, 코드 커밋
     reports/{report_id}.json            A · B · C 비교 보고서
 ```
 
@@ -249,7 +247,12 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
    한 단위는 한 주제의 묶음에만 들어갑니다 (카탈로그가 같은 근거를 두 주제에 두지 않기 때문).
    표 행이 든 묶음에는 그 표의 머리글 행(논리 표 0행)을 맨 앞에 붙입니다. 열 이름 없이는 칸을 가리킬 수 없기 때문입니다.
    머리글 행이 `eligible` 이 아니거나 앞 주제의 묶음이 이미 가졌으면 그 묶음을 버립니다.
+   줄의 절반 이상이 쪽 번호로 끝나는 목차 줄(`1. 용역개요 02`)인 단위는 묶지 않습니다. 목차로 만든 질문은 RFP 내용을 묻지 않습니다.
 4. 문서를 돌아가며 하나씩 골라 개수를 채웁니다. 모자라면 기준을 낮추지 않고 `planned` 에 실제 개수를 남깁니다.
+   그래서 한 문서에 묶음이 몰리지 않습니다.
+5. 묶음마다 문서 이름 `doc` (`agency`, `title`)을 남깁니다. 발주 기관은 패키지 옆 `data_list.csv` 의 정리된 `발주 기관` 을
+   v11 레코드의 원본 파일 이름으로 찾고, 사업 이름은 파일 이름의 `_` 뒤에서 `[재공고]` 같은 앞 표시를 뺀 것입니다.
+   원본 파일 이름 일부는 한글 자모가 풀린 NFD 라 두 이름 모두 NFC 로 맞춘 뒤 찾습니다.
 
 계획 파일(`outputs/plans/{plan_id}.json`)은 덮어쓰지 않으며, run 은 이 파일의 SHA-256 을 남깁니다.
 
@@ -259,9 +262,9 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | `topic_specs` | 주제 명세 파일별 SHA-256. 생성 때 명세가 바뀌었으면 멈춥니다 |
 | `max_context_chars` | 묶음 컨텍스트 글자 수 한도 (A · B 의 입력 한도) |
 | `counts` · `planned` · `coverage` | 요청 개수, 실제 묶음 수, 주제별 문서 SHA → 묶음 수 |
-| `bundles[]` | `bundle_id`, `topic`, `doc_sha`, `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
+| `bundles[]` | `bundle_id`, `topic`, `doc_sha`, `doc` (`agency`, `title`), `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
 
-`context` 는 `[E1]\n본문\n\n[E2]\n본문` 형식이며 생성기에 이 문자열을 그대로 보냅니다.
+`context` 는 `[E1]\n본문\n\n[E2]\n본문` 형식이며 생성기에 이 문자열을 그대로 보냅니다. 문서 이름은 컨텍스트에 넣지 않습니다.
 
 2026-10-14 실제 v11 근거 run(`v11-20261014`)으로 주제마다 20개를 요청한 계획은 약 8초에 만들어졌고,
 다섯 주제 모두 20개 묶음을 서로 다른 문서 20개에서 골랐습니다.
@@ -281,14 +284,18 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | `numeric` | `value` · `unit` | 값에 숫자가 있고, (`value`, `unit`) 이 답과 인용한 근거에 모두 수 · 단위 쌍으로 있음. 쌍은 Kiwi 형태소 분석으로 읽습니다. 수(SN) 앞의 부호는 띄어 써도 값에 들고, 수 뒤에 붙어 이어지는 단위 형태소는 끝까지 한 단위가 되며 더 짧은 단위로 물러나지 않습니다. 단위는 조사 · 어미 · 문장부호 · 띄어쓰기에서 끝납니다. 그래서 부호 · 수 · 단위가 통째로 맞아야 합니다 (`30,000,000원` ≠ `130,000,000원`, `-130,000,000원` · `- 130,000,000원` ≠ `130,000,000원`, `12개` ≠ `12개월` · `12개월간`, `5%` ≠ `5%p` · `5%포인트`, `5MB` ≠ `5MB/s`, `12개월이다` 는 `12` · `개월`, `5만원` 은 `5` · `만원`). 범위 표시 · 다른 수 · 쉼표 · 접두사에 붙은 수(`10~12개월`, `2024년-2025년`, `1,2,3개월`, `제3회`)는 쌍이 아닙니다. 한글로만 쓴 수(`삼천만원`)는 쌍이 없어 거절됩니다. 줄머리 기호 `- 12개월` 도 음수로 읽혀 거절됩니다. 값 없이 설명만 하는 답은 `유형 불일치` 로 거절 |
 | `table` | `row` · `column` | 인용한 근거에 표 행이 있고, 행 · 열 이름이 근거에 있음 |
 | `condition` | `condition` | 조건 · 예외 문구가 근거에 있음 |
-| `comparison` | `entities` · `values` · `choice` | 서로 다른 대상 2개 이상, 각각 근거에 있음. `values` 는 대상마다 값이고 값도 근거에 있음. `choice` 는 대상 중 하나이거나 `null`. 답은 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같음 (공백 · 쉼표 차이만 허용) |
+| `comparison` | `entities` · `values` · `choice` | 서로 다른 대상 2개 이상, 각각 근거에 있음. `values` 는 대상마다 값이고 값도 근거에 있음. 값이 대상 이름이면(`A안 A안`, `A안 B안`) 견줄 값이 없어 거절. `choice` 는 대상 중 하나이거나 `null`. 답은 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같음 (공백 · 쉼표 차이만 허용) |
 | `multi_hop` | 없음 (`{}`) | 인용한 근거 단위가 2개 이상 |
 
 ## 후보 생성
 
 A · B · C 는 같은 출력 계약과 같은 검사를 거쳐 같은 `write_run` 으로 저장됩니다.
 모든 출력은 `candidate` 상태이고, 이 단계의 어떤 코드도 `auto_validated` · `released` 로 옮기지 않습니다.
-`accepted.jsonl` · `review.jsonl` 은 비어 있습니다.
+`accepted.jsonl` 은 비어 있습니다.
+
+질문에는 문서 98개 가운데 어느 문서를 묻는지가 드러나야 합니다. 프롬프트는 질문에 기관 · 사업 이름을 쓰지 말라고 하고,
+A · B 는 항목을 만들 때 계획의 `doc` 으로 질문 앞에 `{발주 기관}의 「{사업 이름}」 사업에서 ` 를 붙입니다 (`with_document`).
+생성기가 이름을 잘못 옮겨 쓰는 일을 막기 위해서입니다.
 
 출력 한 행은 정확히 `question`, `answer`, `evidence` (묶음의 근거 라벨 리스트), `structure`, `secondary_tags` 를 가집니다 (C 는 `bundle_id` 도).
 아래 중 하나라도 어기면 항목이 되지 않고 원문 · 이유와 함께 `rejected.jsonl` 로 갑니다:
@@ -360,18 +367,22 @@ validate(topic, method, run_id, config_path, client)
 | 1 | 주제 구조 (`check_structure`, 생성과 같은 검사) | `rejected` `유형 불일치` |
 | 2 | 표: 인용한 표에서 행 이름 · 열 이름이 만나는 칸의 값이 답에 있음 | `rejected` `표 관계` |
 | 2 | 조건: 구조의 조건 · 예외 문구가 답에 있음 | `rejected` `조건 · 예외 누락` |
-| 3 | 같은 주제 · 같은 방식에서 이미 통과 · 보류된 항목과 근거 묶음이나 질문(공백 · 쉼표 무시)이 같음 | `rejected` `중복` |
-| 4 | 검증기 출력이 계약에 맞음 | `held` `검증기 출력 오류` |
-| 5 | 검증기가 근거 충돌을 알림 | `held` `근거 충돌` |
+| 3 | 같은 주제 · 같은 방식에서 이미 통과한 항목과 근거 묶음이나 질문(공백 · 쉼표 무시)이 같음 | `rejected` `중복` |
+| 4 | 검증기 출력이 계약에 맞음 (어기면 한 번 다시 부름) | `rejected` `검증기 출력 오류` |
+| 5 | 검증기가 근거 충돌을 알리지 않음 | `rejected` `근거 충돌` |
 | 6 | 검증기가 근거만으로 답할 수 있음 | `rejected` |
 | 7 | numeric: 독립 답에 수 · 단위가 있고, 후보 구조의 값 · 단위가 독립 답에 있음 | `rejected` `유형 불일치` · `독립 답과 다릅니다` |
-| 8 | 독립 답이 후보 답에 있음 (아래 정규화). 비교는 대상별 값 · 고른 대상이 같음 | `rejected` `독립 답과 다릅니다` |
-| 9 | 독립 답이 단 조건 · 예외가 모두 후보 답에 있음 | `rejected` `조건 · 예외 누락` |
-| 10 | 질문에 독립 답이 이미 들어 있지 않음. 비교 질문이 선택지로 든 대상 이름 하나를 답하는 것은 예외 | `rejected` `복사형` |
-| 11 | 독립 답의 값마다 후보 답에서 대상을 확인함 (아래 정규화) | `held` `대상 확인 불가` |
-| 12 | multi_hop: 근거 단위를 하나씩만 준 검증기 답이 어느 것도 독립 답을 다 담지 않음 (대상을 확인하지 못하면 `held`) | `rejected` `multi_hop 아님` |
+| 8 | 질문에 독립 답이 이미 들어 있지 않음. 비교 질문이 선택지로 든 대상 이름 하나를 답하는 것은 예외 | `rejected` `복사형` |
+| 9 | 독립 답이 후보 답과 같음 (아래 정규화, 정하지 못하면 판정기). 비교는 대상별 값 · 고른 대상이 같음 | `rejected` `독립 답과 다릅니다` |
+| 9 | 독립 답이 단 조건 · 예외 중 후보 답에 글자로 없는 것이 있으면 판정기가 그 조건이 답을 제한하는지까지 보고 정함 | `rejected` `조건 · 예외 누락` |
+| 10 | multi_hop: 근거 단위를 하나씩만 준 검증기 답이 어느 것도 독립 답과 같지 않음 | `rejected` `multi_hop 아님` |
 
-나머지는 `auto_validated` 입니다. 비교의 정규화:
+나머지는 `auto_validated` 입니다. 애매한 판정을 사람에게 넘기는 상태는 없습니다.
+검증기 출력이 두 번 다 계약을 어기거나 근거끼리 값이 다르면 틀린 문제로 보고 거절하고,
+값 · 글자로 같은지 정하지 못하면 판정기(`prompts/judge.txt`)가 같은지 다른지 둘 중 하나로 정합니다.
+판정기는 `{"question", "evidence", "answer_a": 독립 답, "answer_b": 후보 답}` 을 받아 `{"same": true|false}` 만 돌려주며,
+정하지 못하면 다른 답이라고 하도록 되어 있습니다. 판정기 출력도 계약을 두 번 어기면 `검증기 출력 오류 (판정기)` 로 거절합니다.
+비교의 정규화:
 
 - 독립 답에 수가 있으면 (부호 포함 값, 단위) 쌍으로 맞춥니다. 쌍은 numeric 검사와 같이 Kiwi 형태소로 읽고,
   쉼표를 지운 십진수로 바꾸며 천 · 만 · 억 · 조는 값에 곱합니다. `1억 3천만원` = `130,000,000원`, `5만원` = `50,000원`,
@@ -384,36 +395,37 @@ validate(topic, method, run_id, config_path, client)
   수가 여럿이면 쓴 차례로 견줍니다. 수 밖의 글이 같은데 자리마다 수가 다르면 다른 값입니다
   (`구축 2억원, 운영 1억원` ≠ `구축 1억원, 운영 2억원`).
   수 밖의 글은 수 · 단위 쌍으로 읽은 자리만 지우고 견주므로, 쌍이 아닌 수는 남습니다
-  (`제3회 회의 1억원` 과 `제4회 회의 1억원` 은 수 밖의 글이 달라 `held`).
-  그 밖에 글이 다른 값(`지원 가능` · `지원`, `1억원 이상` · `1억원`)은 `held` 입니다. `choice` 는 같은 대상이어야 합니다 (둘 다 `null` 도 같음).
+  (`제3회 회의 1억원` 과 `제4회 회의 1억원` 은 수 밖의 글이 달라 판정기로).
+  그 밖에 글이 다른 값(`지원 가능` · `지원`, `1억원 이상` · `1억원`)은 판정기가 정합니다. `choice` 는 같은 대상이어야 합니다 (둘 다 `null` 도 같음).
   값이나 `choice` 가 다르면 `rejected` `독립 답과 다릅니다`, 검증기가 `comparison` 을 주지 않았거나
-  대상 이름이 `entities` 와 꼭 같지 않으면 `held` `대상 확인 불가` 입니다.
+  대상 이름이 `entities` 와 꼭 같지 않으면 판정기가 정합니다.
   답 글은 생성 검사에서 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같아야 하므로 필드와 다른 결론을 쓸 수 없습니다.
 - 그 밖의 주제는 독립 답에 단위가 같은 값이 여럿일 때 값마다 그 대상(단위가 같은 앞 값 뒤부터 이 값 앞까지의 내용 형태소)도 맞춥니다.
   그 값의 대상에만 있는 낱말이 후보 답의 같은 값 앞에 모두 있어야 같은 답입니다.
   다른 값의 대상 낱말 뒤에 쓰면 다른 답(`A안 1억원, B안 2억원` ≠ `A안 2억원, B안 1억원`)이고,
-  대상이 없거나 다른 이름이면(`1억원, 2억원`, `C안 2억원, D안 1억원`) 확인하지 못한 답이라 `held` `대상 확인 불가` 로 갑니다.
-  이 보류는 다른 거절 검사를 모두 마친 뒤에 합니다.
+  대상이 없거나 다른 이름이면(`1억원, 2억원`, `C안 2억원, D안 1억원`) 확인하지 못한 답이라 판정기가 정합니다.
   대상은 값 앞에서만 읽으므로 `validator.txt` 는 대상을 값 앞에 쓰라고 합니다.
-- 수가 없는 답은 공백 · 쉼표만 지우고 글자로 맞춥니다. 조건 · 예외 문구 비교도 같습니다.
+- 수가 없는 답은 공백 · 쉼표만 지우고 글자로 맞추고, 글자가 다르면 표현만 다를 수 있어 판정기가 정합니다.
+  조건 · 예외 문구 비교는 글자로 맞춥니다.
 
-거절은 끝 상태라 사람이 되돌릴 수 없습니다. 판단을 사람에게 넘길 경우(근거 충돌, 검증기 출력 오류, 대상 확인 불가)만 `held` 입니다.
+거절은 끝 상태라 사람이 되돌릴 수 없습니다.
 
-중복은 카탈로그로 같은 주제 · 같은 방식의 다른 run 을 찾아, 그 run 의 `accepted.jsonl` · `review.jsonl` 과 맞춥니다.
+중복은 카탈로그로 같은 주제 · 같은 방식의 다른 run 을 찾아, 그 run 의 `accepted.jsonl` 과 맞춥니다.
 거절된 항목은 맞추지 않습니다 (같은 근거로 다시 만든 항목이 막히지 않도록).
 다른 방식(A · B · C)은 같은 계획의 같은 근거 묶음을 받는 것이 비교의 전제라 중복으로 보지 않고, 대신 출시본 하나에 함께 들어가지 못합니다.
 
-난도는 `DIFFICULTY_RULE` (`difficulty-1`) 대로 정하고 모든 검증 항목에 `validator_version` 과 함께 남깁니다.
+난도는 `DIFFICULTY_RULE` (`difficulty-2`) 대로 정하고 모든 검증 항목에 `validator_version` 과 함께 남깁니다.
 
 | 난도 | 규칙 |
 |---|---|
-| `hard` | multi_hop 이고 11번 검사를 통과함 (근거 둘 이상이 필요함이 확인됨) |
-| `easy` | 그 밖에, 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외)가 모두 근거 본문에 그대로 있음 |
+| `hard` | multi_hop 이고 10번 검사를 통과함 (근거 둘 이상이 필요함이 확인됨) |
+| `easy` | 그 밖에, 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외)가 모두 근거 본문에 그대로 있음. 앞에 붙인 문서 이름은 근거에 없으므로 빼고 봄 |
 | `medium` | 나머지 (질문이 근거와 다른 말로 물음) |
 
-결과는 run 의 `accepted.jsonl` (`auto_validated`) · `review.jsonl` (`held`, 사람 검토 대상)을 채우고,
+결과는 run 의 `accepted.jsonl` (`auto_validated`)을 채우고,
 거절 항목은 `rejected.jsonl` 뒤에 붙입니다. `validation.json` 에는 검증기 버전, 난도 규칙, 모델(요청 · 응답),
-설정 · 프롬프트 해시, 호출, 비용, 상태별 개수, 세 상태 파일의 SHA-256 을 남깁니다.
+설정 · 검증기 프롬프트 · 판정기 프롬프트 해시, 호출, 비용, 상태별 개수, 두 상태 파일의 SHA-256 을 남깁니다.
+후보는 `WORKERS` (8) 개씩 함께 판정합니다. 중복 검사는 판정이 끝난 뒤 후보 차례대로 하므로 함께 판정한 후보끼리도 막힙니다.
 run 마다 한 번만 검증하며, 이미 검증한 run 은 호출 전에 막습니다.
 호출 수 한도와 예산은 후보를 시작하기 전에 보고, 닿으면 남은 후보를 검증하지 않은 채 `pending` 에 남깁니다
 (한 후보의 multi_hop 검사를 도중에 끊지 않음).
@@ -431,7 +443,7 @@ A 의 검증은 자기 개선 loop 가 맡으므로 받지 않습니다.
 1. 상태 파일이 마지막 검증 기록의 SHA-256 과 같은지 보고, 다르면 멈춥니다.
 2. 검증기 버전 · 난도 규칙 · 검증기 프롬프트 SHA-256 · 모델 · 추론 강도 · 단가가 앞 기록과 다르면 호출 전에 바뀐 키를 밝히고 멈춥니다.
    한 run 의 후보를 서로 다른 기준으로 판정하지 않기 위해서입니다. 바뀌는 것은 호출 수 한도와 예산뿐입니다.
-3. 중복 검사에 같은 run 에서 앞서 통과 · 보류된 항목도 넣습니다.
+3. 중복 검사에 같은 run 에서 앞서 통과한 항목도 넣습니다.
 4. 판정한 항목은 상태 파일 뒤에 붙이고, `validation-{n}.json` 에 이번 호출 · 비용 · 남은 `pending` 과
    앞 기록의 이름 · SHA-256(`continues`)을 남깁니다. 출시와 비교 보고서는 마지막 기록의 SHA-256 으로 상태 파일을 확인하고,
    출시 매니페스트의 `sources` 에는 모든 검증 기록의 SHA-256 이 들어갑니다.
@@ -446,12 +458,15 @@ improve(topic, plan_id, loop_id, config_path, generator, validator)
 A 를 round 마다 생성 → 독립 검증 → 실패 기록 순서로 돌립니다. round n 의 run 은 `{loop_id}-r{n}` 입니다.
 B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revision=...)` 는 거절합니다.
 
-1. 다시 부를 묶음: 계획의 주제 묶음 중 loop 의 앞 round 에서 `auto_validated` · `held` 가 되지 않은 묶음.
+1. 다시 부를 묶음: 계획의 주제 묶음 중 loop 의 앞 round 에서 `auto_validated` 가 되지 않은 묶음.
    남은 묶음이 없으면 멈춥니다 (`no_open_bundles`).
 2. 관련 실패: 그 주제의 `failure_memory/A_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
    코드마다 정해 둔 예방 규칙을 A 프롬프트 뒤에 `지난 실패에서 정한 예방 규칙` 으로 붙입니다.
-   다른 주제의 기록과, 실패한 후보의 질문 · 답은 붙이지 않습니다.
-3. 생성: 그 묶음만 부릅니다. 같은 묶음에서 거절된 앞 후보가 있으면 새 후보의 `parent_candidate_id` 가 그 id 이고,
+   다른 주제의 기록과, 실패한 후보의 답은 붙이지 않습니다.
+   묶음마다 그 묶음의 지난 실패(`bundle_notes`)도 user 메시지 뒤에 붙입니다. 최근 3개까지
+   `- 질문 '{그 묶음에서 거절된 질문}': {예방 규칙}` 또는 `- 출력 (항목이 되지 못함): {예방 규칙}` 입니다.
+   같은 묶음이 같은 이유로 거듭 거절되지 않게 하려는 것이고, 고친 답은 주지 않습니다. 붙인 글은 run 매니페스트의 `policy.notes` 에 남습니다.
+3. 생성: 그 묶음만 `WORKERS` (8) 개씩 함께 부릅니다. 같은 묶음에서 거절된 앞 후보가 있으면 새 후보의 `parent_candidate_id` 가 그 id 이고,
    새 후보는 새 `candidate_id` 를 받습니다. 앞 round 의 파일은 바꾸지 않습니다.
    run 매니페스트의 `generation.prompt_sha256` (프롬프트 파일)과 `generation.policy`
    (`version`, `loop_id`, `round`, `start.json` 의 `start_sha256`, 코드별 기록 `failures`, 붙인 글의 `prevention_sha256`)로
@@ -467,7 +482,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `entry_id` | `{run_id}:{rejected.jsonl 줄 번호}` |
 | `failure_code` | 거절 이유의 앞부분으로 정한 코드 (`FAILURE_CODES`). 코드가 없는 이유는 기록하지 않고 멈춥니다 |
 | `evidence` | 보존된 실패를 가리킴: `run` (`A/{run_id}`), `line`, `candidate_id` (항목이 되지 못한 출력이면 `null`), `bundle_id` |
-| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-1`). 글을 바꾸면 버전을 올립니다 |
+| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-3`). 글을 바꾸면 버전을 올립니다 |
 
 | 실패 코드 | 거절 이유 |
 |---|---|
@@ -475,9 +490,10 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `type_mismatch` · `evidence_owned` | 주제 구조 위반, 다른 주제가 가진 근거 묶음 |
 | `table_relation` · `missing_condition` · `duplicate` | 표 칸, 조건 · 예외 누락, 중복 |
 | `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
+| `validator_output` · `evidence_conflict` | 검증기 · 판정기 출력이 두 번 다 계약을 어김, 근거끼리 값이 다름 |
 
 실패 기록에 쓰는 곳은 `record_failures` 하나이고, 항목을 밖에서 받지 않고 그 run 의 `rejected.jsonl` 줄에서만 만듭니다.
-그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유(사람 확인 이유 포함)가 들어올 자리가 없습니다.
+그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유가 들어올 자리가 없습니다.
 
 loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 
@@ -501,30 +517,26 @@ round 마다와 `report.json` 을 쓰기 전에 지금 값과 맞춰 봅니다. 
 따로 만든 run (`policy` 가 `null`)이나 다른 계획 · 다른 시작 기록의 run 이 그 이름에 있으면 다른 키를 밝히고 멈춥니다.
 `report.json` 이 있는 loop 는 다시 돌지 않습니다.
 
-`report.json` 은 목표(계획의 요청 개수)와 `auto_validated` 묶음 수, `held` 묶음 수, 모자란 수(`shortfall`)를 남깁니다.
+`report.json` 은 목표(계획의 요청 개수)와 `auto_validated` 묶음 수, 모자란 수(`shortfall`)를 남깁니다.
 목표에 못 미쳐도 기준을 낮추지 않고 모자란 수만 보고합니다. 기준 해시(`thresholds`: 주제 명세 파일별 SHA-256,
-검증기 프롬프트 SHA-256, 검증기 버전, 난도 규칙)를 함께 남깁니다. 이 값은 `start.json` 에 고정한 값과 같습니다.
+검증기 · 판정기 프롬프트 SHA-256, 검증기 버전, 난도 규칙)를 함께 남깁니다. 이 값은 `start.json` 에 고정한 값과 같습니다.
 
 ## 출시
 
 ```python
-release(topic, version, [(method, run_id), ...], confirmations=None)
+release(topic, version, [(method, run_id), ...])
 ```
 
-고른 run 들의 `auto_validated` 항목과, 사람이 확인한 `held` 항목만 `released` 로 옮겨 `releases/{version}/golden.jsonl` 에 씁니다.
-사람 확인 기록은 JSONL 파일이고 한 줄이 정확히 `{"candidate_id", "reason"}` 입니다. 이유는 전이 기록에 `사람 확인: ...` 으로 남습니다.
-확인하지 않은 `held` 항목은 빠집니다.
+고른 run 들의 `auto_validated` 항목을 `released` 로 옮겨 `releases/{version}/golden.jsonl` 에 씁니다. 사람이 확인하는 단계는 없습니다.
 
 | 거절 | 이유 |
 |---|---|
 | 이미 있는 `version` | 출시본을 덮어쓰지 않음 (`FileExistsError`) |
-| 고른 run 의 `held` 항목이 아닌 확인 | 오타나 다른 run 의 확인이 조용히 무시되지 않도록 |
-| 검증 뒤 바뀐 상태 파일 | `validation.json` 의 SHA-256 과 다르면 막음. `held` 를 `accepted.jsonl` 로 옮겨 사람 확인을 건너뛰지 못하게 |
+| 검증 뒤 바뀐 상태 파일 | `validation.json` 의 SHA-256 과 다르면 막음. 거절 항목을 `accepted.jsonl` 로 옮겨 넣지 못하게 |
 | 같은 근거 묶음이나 같은 질문의 항목 둘 | 방식을 섞어 낼 때도 |
 | run 에 등록된 기록과 다른 내용 | 위 저장 규약 |
 
-출시 매니페스트의 `sources` 에는 원본 run 마다 `candidates.jsonl` · 상태 파일 · `manifest.json` · 검증 기록들의 SHA-256 을,
-`release.confirmations` 에는 사람 확인 기록 파일 이름과 SHA-256 을 남깁니다.
+출시 매니페스트의 `sources` 에는 원본 run 마다 `candidates.jsonl` · 상태 파일 · `manifest.json` · 검증 기록들의 SHA-256 을 남깁니다.
 
 ## 비교 보고서
 
@@ -544,15 +556,14 @@ A 는 모든 round 의 출력을 셉니다. 거절 이유는 자기 개선의 �
 | 지표 | 분자 | 분모 |
 |---|---|---|
 | 유효 문항률 | `auto_validated` 항목 | 생성 출력 |
-| 보류율 | `held` 항목 | 생성 출력 |
-| 출처 정확성 | 근거 대조를 마친 항목 중 근거와 답이 맞지 않아(`table_relation` · `unanswerable` · `answer_mismatch`) 거절되지 않은 것 | 근거 대조를 마친 항목: 검증한 항목에서 `held` 와, 대조 전에 걸릴 수 있는 거절(`type_mismatch` · `missing_condition` · `duplicate`)을 뺀 것 |
+| 출처 정확성 | 근거 대조를 마친 항목 중 근거와 답이 맞지 않아(`table_relation` · `unanswerable` · `answer_mismatch`) 거절되지 않은 것 | 근거 대조를 마친 항목: 검증한 항목에서 대조 전에 걸릴 수 있는 거절(`type_mismatch` · `missing_condition` · `duplicate`)을 뺀 것 |
 | 유형 준수 | 주제 구조 검사를 통과한 출력 (생성 · 검증의 `type_mismatch` 를 뺀 것) | 주제 구조 검사까지 간 출력: 모든 항목과, 항목이 되지 못한 출력 중 `type_mismatch` · `evidence_owned` |
 | 중복 | `duplicate` 로 거절된 항목 | 검증한 항목 |
 | 커버리지 | `auto_validated` 항목이 하나라도 있는 계획의 근거 묶음 | 계획의 그 주제 근거 묶음 |
 | 난도 분포 | `easy` · `medium` · `hard` 각각의 `auto_validated` 항목 | `auto_validated` 항목 |
 | 유효 문항당 비용 | 총비용 | `auto_validated` 항목 |
 
-- 아직 검증하지 않은 후보 수(`pending`)도 함께 보여 줍니다. 이 후보는 유효 · 보류 어느 쪽에도 들지 않습니다.
+- 아직 검증하지 않은 후보 수(`pending`)도 함께 보여 줍니다. 이 후보는 유효 문항에 들지 않습니다.
 - 비용과 토큰은 생성(A · B 의 run 매니페스트 `calls` · `cost_usd`)과 검증(모든 검증 기록)으로 나누고, 총비용은 둘의 합입니다.
   기록을 남기기 전에 끊긴 호출은 들지 않습니다.
 - C 의 생성 토큰 · 비용은 웹 환경이라 관측할 수 없어 `unobserved` 로 남기고, 그래서 C 의 총비용과 유효 문항당 비용도 `unobserved` 입니다.
