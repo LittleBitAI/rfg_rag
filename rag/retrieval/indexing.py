@@ -44,11 +44,11 @@ class Embedder(Embeddings):
 
 
 # 형태소 분석으로 쪼개지는 요구사항 코드를 한 토큰으로도 색인한다
-_CODE_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,5})-?(\d{2,4})(?!\d)")
+_CODE_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,5})-?(\d{2,4})(?![A-Za-z0-9])")
 
 
 def find_codes(text: str) -> set[str]:
-    """글 속 요구사항 코드를 'SFR-001' 꼴로 통일한다 (sfr001 · SFR-001 → SFR-001)"""
+    """글 속 요구사항 코드를 'SFR-001' 꼴로 통일한다. 긴 영숫자 식별자의 일부는 코드로 보지 않는다."""
     return {f"{letters.upper()}-{digits}" for letters, digits in _CODE_RE.findall(text)}
 
 

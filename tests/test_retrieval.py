@@ -28,9 +28,14 @@ def make_index(bodies, costs, budget=2500, doc_ids=None):
     return index
 
 
-@pytest.mark.parametrize("text", ["sfr001", "SFR-001", "sfr-001 SFR001"])
+@pytest.mark.parametrize("text", ["sfr001", "SFR-001", "sfr-001 SFR001", "SFR-001은", "[SFR-001], sfr001."])
 def test_find_codes_normalizes(text):
     assert find_codes(text) == {"SFR-001"}
+
+
+@pytest.mark.parametrize("text", ["SFR-001A", "SFR-001B", "sfr001a", "SFR-0012A", "1SFR-001"])
+def test_find_codes_does_not_extract_prefixes_from_longer_identifiers(text):
+    assert find_codes(text) == set()
 
 
 def test_token_counts_uses_untruncated_model_tokenizer():
@@ -43,11 +48,25 @@ def test_token_counts_uses_untruncated_model_tokenizer():
 
 def test_kiwi_batch_and_query_keep_alias_user_words_negation_and_codes():
     tokenizer = KiwiTokenizer()
-    texts = ["지체 상금과 부가세 SFR-001은 제출하지 않는다", "부가 가치세는 대상이 아니다"]
+    texts = ["지체 상금과 부가세 SFR-001은 제출하지 않는다", "부가 가치세는 대상이 아니다",
+             "SFR-001A와 SFR-001B의 응답시간"]
     tokens = tokenizer.batch(texts)
     assert tokens == [tokenizer(text) for text in texts]
     assert {"지체상금", "부가가치세", "sfr-001", "않"} <= set(tokens[0])
     assert {"부가가치세", "아니"} <= set(tokens[1])
+    assert "sfr-001" not in tokens[2]
+
+
+@pytest.mark.parametrize("question,query", [("SFR-001A 요구사항", None), ("원본 질문", "SFR-001A 요구사항"),
+                                           ("SFR-001 요구사항", None)])
+def test_identifier_prefixes_do_not_promote_wrong_chunks_ahead_of_semantic_candidates(question, query):
+    index = make_index(["SFR-001B 다른 식별자", "실제 질문의 답변 근거"], [5, 5], budget=5)
+    index._dense = MagicMock(return_value={1: 1.0})
+    index._sparse = MagicMock(return_value={1: 1.0})
+
+    hits = index.search(question, query=query)
+
+    assert [hit["chunk_id"] for hit in hits] == ["c1"]
 
 
 @pytest.mark.parametrize("question,query", [("원본 기관 sfr001", "재작성 질문"),
