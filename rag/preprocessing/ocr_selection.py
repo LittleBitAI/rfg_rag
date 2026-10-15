@@ -70,6 +70,8 @@ class SelectionParser:
     def lazy_parse(self, blob):
         try:
             array = np.load(io.BytesIO(blob.as_bytes()))
+            if array.ndim == 3 and array.shape[2] == 1:
+                array = np.squeeze(array, axis=2)
             image = Image.fromarray(array)
         except (ValueError, OSError, TypeError):
             self.record_error('PDF image blob decode failed')

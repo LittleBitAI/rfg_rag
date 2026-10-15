@@ -541,7 +541,8 @@ def _ocr_image_file(path: str, image_parser) -> str:
 def _image_selection_location(parser, page, image_index, xref):
     if isinstance(parser, SelectionParser):
         parser.set_location(format="pdf", page=page.number + 1, image_index=image_index,
-                            xref=xref, bbox_points=[list(rect) for rect in page.get_image_rects(xref)])
+                            xref=xref, bbox_points=[])
+        parser.location["bbox_points"] = [list(rect) for rect in page.get_image_rects(xref)]
 
 
 def _image_selection_error(parser, reason):
@@ -564,14 +565,14 @@ def _patch_pymupdf_image_extraction():
 
         images = []
         for image_index, img in enumerate(page.get_images()):
-            _image_selection_location(self.images_parser, page, image_index, img[0])
             try:
+                _image_selection_location(self.images_parser, page, image_index, img[0])
                 pix = pymupdf.Pixmap(doc, img[0])
                 if pix.n - pix.alpha >= 4:  # CMYK → RGB
                     pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
                 arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, -1)
             except Exception:  # noqa: BLE001  손상·특수 인코딩 이미지는 건너뜀
-                _image_selection_error(self.images_parser, "PDF image decode failed")
+                _image_selection_error(self.images_parser, "PDF image location/decode failed")
                 continue
             buf = io.BytesIO()
             np.save(buf, arr)

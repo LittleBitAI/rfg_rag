@@ -3,9 +3,11 @@ import json
 from unittest.mock import Mock
 
 import numpy as np
+import pymupdf
 import pytest
 from PIL import Image
 
+from rag.config import load_config
 from rag.preprocessing import parsing
 from rag.preprocessing.ocr_selection import SelectionParser
 
@@ -136,3 +138,53 @@ def test_pdf_location_trace(selector):
     parsing._image_selection_location(selector, page, 4, 9)
     assert selector.location == {'format': 'pdf', 'page': 3, 'image_index': 4,
         'xref': 9, 'bbox_points': [[1, 2, 30, 40]]}
+
+
+def _write_pdf_image(tmp_path, mode):
+    image = Image.new(mode, (20, 20), 'white')
+    image.putpixel((3, 3), 0 if mode == 'L' else (0, 0, 0))
+    payload = io.BytesIO()
+    image.save(payload, format='PNG')
+    path = tmp_path / f'{mode}.pdf'
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((40, 40), 'Preserved document body with project requirements.')
+        page.insert_image(pymupdf.Rect(40, 60, 100, 120), stream=payload.getvalue())
+        document.save(path)
+    return path
+
+
+@pytest.mark.parametrize('mode', ['RGB', 'L'])
+def test_real_pdf_candidate_reaches_vision(selector, tmp_path, mode):
+    from langchain_core.documents import Document
+
+    path = _write_pdf_image(tmp_path, mode)
+    selector.set_source(path)
+    selector.detector.classify = lambda *args: decision('OCR_CANDIDATE')
+    response = Document(page_content='unchanged Vision response')
+    selector.delegate.lazy_parse.return_value = iter([response])
+    _, images = parsing._pdf_tables_images(str(path), selector)
+    assert images == {1: ['unchanged Vision response']}
+    selector.delegate.lazy_parse.assert_called_once()
+    assert not selector.review_path.exists()
+
+
+def test_pdf_location_failure_keeps_document_and_review(selector, tmp_path, monkeypatch):
+    path = _write_pdf_image(tmp_path, 'RGB')
+    settings = load_config()
+    settings['parsing'].update(skip_first_pages=0, hanja_mode='none')
+    monkeypatch.setattr(parsing, '_ocr_parser', lambda *args: selector)
+    monkeypatch.setattr(pymupdf.Page, 'get_image_rects', Mock(side_effect=RuntimeError('broken placement')))
+    documents = parsing.parse_documents([str(path)], settings['parsing'], True, settings['ocr'])
+    assert len(documents) == 1
+    assert 'Preserved document body' in documents[0]['records'][0]['text']
+    entry = json.loads(selector.review_path.read_text(encoding='utf-8'))
+    assert entry['classification'] == 'REVIEW_REQUIRED'
+    assert entry['source']['source'] == path.name
+    assert entry['source']['document_sha256']
+    assert entry['location']['format'] == 'pdf'
+    assert entry['location']['page'] == 1
+    assert entry['location']['image_index'] == 0
+    assert entry['location']['xref'] > 0
+    assert entry['location']['bbox_points'] == []
+    selector.delegate.lazy_parse.assert_not_called()
