@@ -48,7 +48,7 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
 | `release` | 검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (아래 출시) | 유료 |
 | `rename` | 출시본들을 합쳐 질문 앞 문서 이름만 지금 `data/data_list.csv` 의 이름으로 바꾼 새 출시본으로. 쓸모 판정은 다시 하지 않습니다 | 없음 |
-| `split` | 다섯 주제의 출시본을 문서 단위 dev 30% · test 70% 로 (아래 dev · test 나누기) | 없음 |
+| `split` | 주제들의 출시본을 문서 단위 dev 30% · test 70% 로, 또는 앞 분할(`--base`)을 그대로 두고 새 주제를 더함 (아래 dev · test 나누기) | 없음 |
 | `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
 
 ```
@@ -67,7 +67,9 @@ golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls
 golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 400 --budget 2
 golden_pipeline\golden.cmd rename --topic numeric --version final --source v1 --source v2
 golden_pipeline\golden.cmd split --version final
+golden_pipeline\golden.cmd split --version final3 --base final2
 golden_pipeline\golden.cmd plan p2 v11-20261014 --count numeric 20 --max-context-chars 4000 --skip-plan p1
+golden_pipeline\golden.cmd plan p3 v11-20261014 --count unanswerable 60 --max-context-chars 4000 --skip-plan p1 --side final2 dev
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
 
@@ -93,7 +95,7 @@ golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 | `candidate_id` · `run_id` | 비어 있지 않은 문자열 |
 | `parent_candidate_id` | 다시 만든 항목이면 원래 항목 id, 아니면 `null` |
 | `method` | `A` · `B` · `C` |
-| `primary_topic` | 정확히 하나: `numeric` · `table` · `condition` · `comparison` · `multi_hop` |
+| `primary_topic` | 정확히 하나: `numeric` · `table` · `condition` · `comparison` · `multi_hop` · `unanswerable` · `false_premise` |
 | `secondary_tags` | 위 주제 중 0개 이상. `primary_topic` 은 다시 넣을 수 없습니다 |
 | `question` · `answer` | 비어 있지 않은 문자열 |
 | `evidence` | 근거 참조 1개 이상 (아래 표) |
@@ -253,7 +255,7 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 1. 근거 어댑터 run 의 `manifest.json` 에 고정된 파일 SHA-256 과 지금 패키지 파일이 같은지 확인하고, 다르면 멈춥니다.
 2. `judgments.jsonl` 에서 `eligible` 인 단위만 씁니다. `held` 단위는 어떤 묶음에도 들어가지 않습니다.
    단위 본문은 패키지 `final_elements.jsonl` 에서 읽습니다 (글자 span 은 그 구간, 표 행은 칸을 ` | ` 로 이은 것).
-3. 주제 순서(`numeric` → `table` → `condition` → `comparison` → `multi_hop`)대로, 주제 명세의 `pattern` · `table_only` 에 맞는 단위를
+3. 주제 순서(`numeric` → `table` → `condition` → `comparison` → `multi_hop` → `unanswerable` → `false_premise`)대로, 주제 명세의 `pattern` · `table_only` 에 맞는 단위를
    문서마다 패키지 순서로 `bundle_units` 개씩 묶습니다. 컨텍스트가 `--max-context-chars` 를 넘는 묶음은 버립니다.
    multi_hop 은 청크 둘 이상에 걸친 묶음만 냅니다 (`_spanning`). 이어진 단위는 대개 한 표의 이웃 행이라
    그대로 묶으면 절반 넘게(night 계획 300개 중 162개) 한 청크 안에 들었고, 그 묶음의 후보 431개는 하나도 출시되지 못했습니다.
@@ -265,6 +267,8 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
    줄의 절반 이상이 쪽 번호로 끝나는 목차 줄(`1. 용역개요 02`)인 단위는 묶지 않습니다. 목차로 만든 질문은 RFP 내용을 묻지 않습니다.
 4. 문서를 돌아가며 하나씩 골라 개수를 채웁니다. 모자라면 기준을 낮추지 않고 `planned` 에 실제 개수를 남깁니다.
    그래서 한 문서에 묶음이 몰리지 않습니다.
+   unanswerable 묶음은 문서 A 의 단위로 묶되 질문은 다른 문서 B 에 하므로, 묶음의 `doc_sha` · `doc` 는 B 입니다 (`_borrowed`).
+   B 는 문서를 SHA 차례로 늘어놓은 고리에서 A 의 맞은편 문서라 늘 같게 골라집니다.
 5. 묶음마다 문서 이름 `doc` (`agency`, `title`)을 남깁니다. 발주 기관은 패키지 옆 `data_list.csv` 의 정리된 `발주기관` 을
    v11 레코드의 원본 파일 이름으로 찾고, 사업 이름은 파일 이름의 `_` 뒤에서 `[재공고]` 같은 앞 표시를 뺀 것입니다.
    원본 파일 이름 일부는 한글 자모가 풀린 NFD 라 두 이름 모두 NFC 로 맞춘 뒤 찾습니다.
@@ -273,6 +277,10 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 새 근거로 재생성하려면 `--skip-plan <앞 계획 id>` 를 줍니다 (여러 번 줄 수 있음). 그 계획이 쓴 단위는 1번 다음에 바로 빼고,
 계획 파일의 `skipped_plans` 에 계획 id → SHA-256 을 남깁니다. 머리글 행을 앞 계획이 가졌던 표의 나머지 행도 3번 규칙대로 빠집니다.
 
+`--side <분할 version> dev|test` 를 주면 질문이 묻는 문서(unanswerable 은 B)가 그 분할의 그쪽에 있는 묶음만 고르고,
+계획 파일의 `side` 에 분할 · 쪽 · 분할 매니페스트 SHA-256 을 남깁니다. 분할 파일이 그 매니페스트의 SHA-256 과 다르면 멈춥니다.
+앞 분할에 주제를 더할 때(아래 dev · test 나누기) 한쪽만 모자라면 그쪽 문서로만 다시 만들어, 반대쪽 묶음에 쓸 호출을 아끼려는 것입니다.
+
 계획 파일(`outputs/plans/{plan_id}.json`)은 덮어쓰지 않으며, run 은 이 파일의 SHA-256 을 남깁니다.
 
 | 필드 | 값 |
@@ -280,9 +288,10 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | `evidence_run` · `v11_manifest_sha256` | 근거 어댑터 run 과 v11 `manifest.json` SHA-256 |
 | `topic_specs` | 주제 명세 파일별 SHA-256. 생성 때 명세가 바뀌었으면 멈춥니다 |
 | `skipped_plans` | 단위를 뺀 앞 계획 id → 그 계획 파일 SHA-256 (없으면 `{}`) |
+| `side` | `--side` 의 `{"split", "part", "manifest_sha256"}`, 주지 않았으면 `null` |
 | `max_context_chars` | 묶음 컨텍스트 글자 수 한도 (A · B 의 입력 한도) |
 | `counts` · `planned` · `coverage` | 요청 개수, 실제 묶음 수, 주제별 문서 SHA → 묶음 수 |
-| `bundles[]` | `bundle_id`, `topic`, `doc_sha`, `doc` (`agency`, `title`), `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
+| `bundles[]` | `bundle_id`, `topic`, `doc_sha` (질문이 묻는 문서), `doc` (`agency`, `title`), `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
 
 `context` 는 `[E1]\n본문\n\n[E2]\n본문` 형식이며 생성기에 이 문자열을 그대로 보냅니다. 문서 이름은 컨텍스트에 넣지 않습니다.
 
@@ -293,6 +302,7 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 
 `configs/topics/{topic}.json` 은 `version`, `requires` (프롬프트에 넣는 요구 설명), `structure` (출력 구조 필드와 설명),
 묶음 선택 규칙 `pattern` · `table_only` · `bundle_units` 를 가집니다.
+`unanswerable` · `false_premise` 는 출시의 쓸모 판정기에 붙일 설명 `screen` 도 가집니다 (아래 출시).
 출력의 `structure` 는 명세의 필드를 정확히 가져야 하고, 주제마다 아래를 지켜야 후보가 됩니다.
 값은 근거에 적힌 그대로여야 합니다 (공백 · 쉼표 차이만 허용).
 수로 시작하거나 끝나는 값은 수 전체가 맞아야 합니다. 예를 들어 조건 `1년 이내` 는 `11년 이내` 에 맞지 않습니다.
@@ -306,6 +316,8 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | `condition` | `condition` | 조건 · 예외 문구가 근거에 있음 |
 | `comparison` | `entities` · `values` · `choice` | 서로 다른 대상 2개 이상, 각각 근거에 있음. `values` 는 대상마다 값이고 값도 근거에 있음. 값이 대상 이름이면(`A안 A안`, `A안 B안`) 견줄 값이 없어 거절. `choice` 는 대상 중 하나 (고르지 않는 비교는 나란한 조회라 거절). 답은 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같음 (공백 · 쉼표 차이만 허용) |
 | `multi_hop` | 없음 (`{}`) | 인용한 근거 단위가 2개 이상 |
+| `unanswerable` | `attribute` · `key_terms` | 답은 정확히 `제공된 문서에서 확인할 수 없습니다.` (④ 생성이 컨텍스트에 답이 없을 때 쓰는 문장). `attribute` 는 인용한 근거(다른 문서 A)에 있음. `key_terms` 는 띄어쓰기 없는 낱말 1개 이상이고 각각 `attribute` 와 질문(앞에 붙인 문서 이름 제외)에 있음. 묻는 문서 B 에 속성이 없는지는 독립 검증이 봅니다 |
+| `false_premise` | `stated` · `actual` | 둘 다 명세 `pattern` 의 금액 · 기간 · 개수 · 날짜 수 · 단위를 담고, numeric 과 같은 수 · 단위 쌍(Kiwi)으로 읽어 단위가 같고 수만 다름 (`1년` 과 `12개월` 처럼 단위가 다르면 같은 값일 수 있어 거절). 질문은 `stated` 를 담고 `actual` 은 담지 않음. 답은 `actual` 을 담음. `actual` 은 인용한 근거 단위 하나에 쌍째 그대로 있음 (`130,000,000원` 안의 `30,000,000원`, `12개월간` 의 `12개월` 은 아님). `stated` 가 문서 어디에도 없는지는 독립 검증이 봅니다 |
 
 ## 후보 생성
 
@@ -387,18 +399,28 @@ validate(topic, method, run_id, config_path, client)
 | 순서 | 검사 | 걸리면 |
 |---|---|---|
 | 1 | 주제 구조 (`check_structure`, 생성과 같은 검사) | `rejected` `유형 불일치` |
-| 1 | 규칙 검사 (`rule_reason`, 아래 출시에서도 다시 봄): 답은 맞지만 평가에 쓸 수 없던 꼴. 대상을 이름으로 밝히지 않은 numeric 질문의 `값과 단위` · `수치와 단위` · `첫 번째 값`, table 질문의 줄바꿈, 인용한 표 행·머리글의 빈 칸(빈 칸으로 시작하거나 이어짐), condition 답의 `(조건:` 덧붙임, comparison 의 `choice` 없음 (1 이 먼저 막지만 그 전에 검증한 run 을 출시할 때 걸림), multi_hop 근거가 모두 한 청크. 무료 검사는 호출 한도 확인 전에 모든 후보에 적용하고, 검증 도중 새로 확인된 중복도 한도 종료 뒤 거절로 남깁니다 | `rejected` `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `multi_hop 아님` |
+| 1 | 규칙 검사 (`rule_reason`, 아래 출시에서도 다시 봄): 답은 맞지만 평가에 쓸 수 없던 꼴. 대상을 이름으로 밝히지 않은 numeric 질문의 `값과 단위` · `수치와 단위` · `첫 번째 값`, table 질문의 줄바꿈, 인용한 표 행·머리글의 빈 칸(빈 칸으로 시작하거나 이어짐), condition 답의 `(조건:` 덧붙임, comparison 의 `choice` 없음 (1 이 먼저 막지만 그 전에 검증한 run 을 출시할 때 걸림), multi_hop 근거가 모두 한 청크, unanswerable 질문의 근거 라벨(`E1` · `머리글 행`, 생성기가 다른 문서 묶음의 라벨을 옮겨 적음). 무료 검사는 호출 한도 확인 전에 모든 후보에 적용하고, 검증 도중 새로 확인된 중복도 한도 종료 뒤 거절로 남깁니다 | `rejected` `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `multi_hop 아님` · `근거 지칭` |
 | 2 | 표: 인용한 표에서 행 이름 · 열 이름이 만나는 칸의 값이 답에 있음 | `rejected` `표 관계` |
 | 2 | 조건: 구조의 조건 · 예외 문구가 답에 있음 | `rejected` `조건 · 예외 누락` |
+| 2 | unanswerable: `key_terms` 가 묻는 문서 B 의 어느 근거 단위에도 없음 (공백 · 쉼표 무시) | `rejected` `대상 문서에 있음` |
+| 2 | false_premise: `stated` 의 수 · 단위 쌍(`quantities`, `3천만원` = `30,000,000원`)이 묻는 문서의 어느 근거 단위에도 모두 함께 있지 않음. `13초` 는 `3초` 가 아님 | `rejected` `전제가 문서에 있음` |
 | 3 | 같은 주제 · 같은 방식에서 이미 통과한 항목과 근거 묶음이나 질문(공백 · 쉼표 무시)이 같음 | `rejected` `중복` |
 | 4 | 검증기 출력이 계약에 맞음 (어기면 한 번 다시 부름) | `rejected` `검증기 출력 오류` |
 | 5 | 검증기가 근거 충돌을 알리지 않음 | `rejected` `근거 충돌` |
 | 6 | 검증기가 근거만으로 답할 수 있음 | `rejected` |
-| 7 | numeric: 독립 답에 수 · 단위가 있고, 후보 구조의 값 · 단위가 독립 답에 있음 | `rejected` `유형 불일치` · `독립 답과 다릅니다` |
+| 6 | unanswerable: 4 · 5 · 6 대신, 묻는 문서 B 에서 질문의 내용 형태소를 가장 많이 담은 근거 단위 5개만 받은 검증기가 답하지 못함. 여기서 끝나며 7 이후는 보지 않습니다 | `rejected` `대상 문서에 있음` · `검증기 출력 오류` |
+| 7 | numeric · false_premise: 독립 답에 수 · 단위가 있고, 후보 구조의 값 · 단위(false_premise 는 `actual`)가 독립 답에 있음 | `rejected` `유형 불일치` · `독립 답과 다릅니다` |
 | 8 | 질문에 독립 답이 이미 들어 있지 않음. 비교 질문이 선택지로 든 대상 이름 하나를 답하는 것은 예외 | `rejected` `복사형` |
 | 9 | 독립 답이 후보 답과 같음 (아래 정규화, 정하지 못하면 판정기). 비교는 대상별 값 · 고른 대상이 같음 | `rejected` `독립 답과 다릅니다` |
 | 9 | 독립 답이 단 조건 · 예외 중 후보 답에 글자로 없는 것이 있으면 판정기가 그 조건이 답을 제한하는지까지 보고 정함 | `rejected` `조건 · 예외 누락` |
 | 10 | multi_hop: 근거 단위를 하나씩만 준 검증기 답이 어느 것도 독립 답과 같지 않음 | `rejected` `multi_hop 아님` |
+
+unanswerable · false_premise 의 2번 검사는 근거 묶음이 아니라 질문이 묻는 문서 전체를 읽습니다 (`plan.document_units`).
+근거 어댑터 run 의 `units.jsonl` 에서 그 문서의 모든 단위를 eligible · held 가리지 않고 읽고,
+글자 span · 표 행은 패키지 요소에서, 원본 그리드 셀은 원본 그리드 참고 파일에서 본문을 가져옵니다.
+묶음만 보면 문서의 다른 곳에 있는 답을 "문서에 없다" 고 내고, eligible 만 보면 `UNVERIFIED` OCR · 원본 그리드 셀에 든 답을 놓칩니다.
+읽기 전에 패키지가 근거 어댑터 run 에 고정된 SHA 와 같은지 봅니다.
+핵심어 검사는 글자로만 맞추므로, 같은 속성을 다른 말로 쓴 근거(`하자보수` · `하자담보책임`)는 6번의 검증기가 찾습니다.
 
 나머지는 `auto_validated` 입니다. 애매한 판정을 사람에게 넘기는 상태는 없습니다.
 검증기 출력이 두 번 다 계약을 어기거나 근거끼리 값이 다르면 틀린 문제로 보고 거절하고,
@@ -537,6 +559,7 @@ held-out 은 어떤 채택에도 쓰지 않았으므로 이 차이가 채택한 
 | `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
 | `single_chunk` | multi_hop 이 인용한 근거가 모두 한 청크 (규칙 검사) |
 | `validator_output` · `evidence_conflict` | 검증기 · 판정기 출력이 두 번 다 계약을 어김, 근거끼리 값이 다름 |
+| `present_in_target` · `premise_in_document` | unanswerable 의 속성이 묻는 문서에 있음, false_premise 의 `stated` 가 문서에 있음 |
 
 A run 의 실패 기록은 `record_failures` 가 그 run 의 `rejected.jsonl` 줄에서만 만듭니다.
 그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유가 들어올 자리가 없습니다.
@@ -549,7 +572,7 @@ A run 의 실패 기록은 `record_failures` 가 그 run 의 `rejected.jsonl` �
 
 | 출시 실패 코드 | 빠진 이유 |
 |---|---|
-| `structure_question` · `ordinal_reference` · `evidence_reference` | 목차 · 위치 · 표 형식을 물음, 순번 · '첫 번째 값' 으로 가리킴, 질문자가 볼 수 없는 근거('E1 · E2' · '근거들' · '이 요구사항')를 가리킴 |
+| `structure_question` · `ordinal_reference` · `evidence_reference` | 목차 · 위치 · 표 형식을 물음, 순번 · '첫 번째 값' 으로 가리킴, 질문자가 볼 수 없는 근거('E1 · E2' · '근거들' · '이 요구사항')를 가리킴 (unanswerable 의 라벨은 규칙 검사 `근거 지칭` 이 같은 코드로 뺌) |
 | `answer_dump` · `useless_answer` · `copied` | 답이 원문 · 덧붙임을 늘어놓음, 답이 양식 빈칸 · 안내 문구, 답이 질문에 있음 |
 | `malformed_question` · `personal_info` · `invalid_comparison` | 끊긴 질문, 사람 이름 · 연락처 · 결재란, 견줄 까닭이 없는 비교 |
 | `broken_table` | 근거 표에 빈 칸 행이 있어 칸의 뜻이 정해지지 않음 (규칙 검사) |
@@ -594,6 +617,8 @@ release(topic, version, [(method, run_id), ...], config_path, client)
 출시 전에 먼저 검증의 규칙 검사(`rule_reason`)를 다시 봅니다. 규칙이 생기기 전에 검증한 run 도 같은 기준으로 내기 위해서입니다.
 그다음 판정기(`prompts/screen.txt`)가 질문 · 답만 받아 RFP 를 읽는 사람이 물을 만한 질문인지 `{"useful": 참거짓, "code", "reason"}` 으로 정합니다.
 `code` 는 쓸모 있으면 `null`, 없으면 위 출시 실패 코드 중 하나입니다 (`SCREEN_CODES`).
+unanswerable · false_premise 는 판정기 프롬프트 뒤에 주제 명세의 `screen` 설명을 붙입니다 (매니페스트 `release.screen_note`).
+판정기는 질문 · 답만 받으므로, 설명이 없으면 거절 문장 정답은 안내 문구(`useless_answer`)처럼, 틀린 전제는 틀린 질문처럼 보입니다.
 출력이 두 번 다 계약을 어기면 쓸모 없다고 봅니다. 빠진 항목은 `candidate_id` · 방식 · `run_id` · 질문 · 코드 · 이유와 함께 매니페스트 `release.dropped` 에,
 판정 설정 · 프롬프트 SHA-256 · 호출 수 · 비용은 `release` 에 남습니다. CLI 는 다른 유료 명령처럼 모델 · 추론 강도 · 단가 · 한도를 받고,
 한도에 닿으면 일부만 판정한 출시본을 만들지 않고 멈춥니다.
@@ -610,12 +635,20 @@ release(topic, version, [(method, run_id), ...], config_path, client)
 
 ## dev · test 나누기
 
-`split --version V` 는 다섯 주제의 출시본 `V` 를 `splits/V/dev.jsonl` (30%) 과 `test.jsonl` (70%) 로 나눕니다. API 호출은 없습니다.
+`split --version V` 는 모든 주제의 출시본 `V` 를 `splits/V/dev.jsonl` (30%) 과 `test.jsonl` (70%) 로 나눕니다. API 호출은 없습니다.
+문서는 질문이 묻는 문서입니다 (`plan.asked_document`). unanswerable 은 근거가 다른 문서의 것이라 계획 묶음의 `doc_sha` 로 봅니다.
 
 - 한 문서의 질문은 모두 한쪽으로 갑니다. dev 에서 틀린 질문을 보고 그 문서에 맞춘 별칭 · 사용자 단어를 넣으면 같은 문서의 test 점수도 올라, test 가 실제보다 좋게 나오기 때문입니다.
 - 그 안에서 주제 × 난이도 칸마다 dev 몫이 30% 에 가깝도록 문서를 고릅니다. 고정 시드로 무작위로 시작해, 문서 하나를 옮겨 칸별 최대 오차가 줄어드는 동안 옮깁니다. 문서로 묶으므로 칸 비율이 정확히 30% 가 되지는 않습니다.
 - dev 는 설정을 바꿀 때마다 돌리므로 작게, test 는 마지막에 한 번 돌리는 최종 점수라 크게 둡니다.
 - 매니페스트에는 원본 출시본의 SHA-256, dev · test 의 개수 · 문서 수 · 파일 SHA-256 · 칸별 개수를 남깁니다. 원본 `golden.jsonl` 이 매니페스트의 SHA-256 과 다르면 나누지 않습니다.
+
+`split --version V --base B` 는 앞 분할 `splits/B` 를 다시 나누지 않고 주제를 더합니다.
+
+- `B` 의 dev · test 를 차례 그대로 앞에 두고, `B` 의 `sources` 에 없는 주제의 출시본 `V` 질문을 뒤에 붙입니다. 그래서 `B` 의 항목은 모두 같은 쪽에 같은 차례로 남습니다.
+- 새 질문은 그 질문이 묻는 문서가 `B` 에서 간 쪽으로 갑니다. 문서가 쪽을 바꾸면 팀이 dev 로 맞춰 온 설정이 test 문서까지 보게 되기 때문입니다. `B` 에 없는 문서의 질문이 있으면 나누지 않습니다.
+- `B` 의 `dev.jsonl` · `test.jsonl` 이 `B` 매니페스트의 SHA-256 과 다르면 멈춥니다.
+- 매니페스트의 `sources` 는 `B` 의 출처에 더한 주제의 출시본 SHA-256 을 더한 것이고, `base` 에 `B` 와 그 매니페스트의 SHA-256 을 남깁니다.
 
 ## 비교 보고서
 
