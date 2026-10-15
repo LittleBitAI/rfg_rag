@@ -58,6 +58,7 @@ export default function App() {
   if (turns.length === 0) {
     return (
       <main className="landing">
+        <Settings />
         <h1>RFP 질의응답</h1>
         <p className="lead">공공기관 제안요청서에 대해 물어보세요. 답변의 번호를 누르면 근거 문단이 옆에 열립니다.</p>
         <AskBox value={input} onChange={setInput} onSubmit={ask} autoFocus
@@ -91,6 +92,18 @@ export default function App() {
         </aside>
       </div>
     </>
+  )
+}
+
+// 첫 화면 오른쪽 위의 설정 메뉴 — 같은 Vite 서버의 다른 화면으로 옮겨 간다
+function Settings() {
+  return (
+    <details className="settings">
+      <summary className="ghost">설정</summary>
+      <nav className="settings-menu">
+        <a href="/ocr.html">OCR 이미지 라벨링</a>
+      </nav>
+    </details>
   )
 }
 

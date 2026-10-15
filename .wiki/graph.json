@@ -32,6 +32,16 @@
    "a": "README.md",
    "b": "CLAUDE.md",
    "kind": "link"
+  },
+  {
+   "a": "README.md",
+   "b": "docs/craft_ocr_selection.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/craft_ocr_selection.md",
+   "b": "README.md",
+   "kind": "link"
   }
  ],
  "orphans": [
@@ -42,12 +52,12 @@
   "docs/research/review-feature-golden-data-validation-f1-2.md"
  ],
  "counts": {
-  "docs": 8,
-  "linked": 3,
+  "docs": 9,
+  "linked": 4,
   "read": 0,
   "orphans": 5,
   "pages": 1,
-  "decisions": 21,
-  "injectable_decisions": 5
+  "decisions": 32,
+  "injectable_decisions": 6
  }
 }
