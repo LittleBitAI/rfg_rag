@@ -214,13 +214,21 @@ def _bundle(topic, units, doc):
     """근거 묶음. doc 은 그 문서의 발주 기관 · 사업 이름이고, 생성이 질문 앞에 붙인다."""
     labelled = [{"label": f"E{i}", **unit} for i, unit in enumerate(units, 1)]
     ids = "\n".join(unit["unit_id"] for unit in units)
+    chunks = list(dict.fromkeys(unit["ref"]["chunk_id"] for unit in units))
+
+    def header(unit):
+        # multi_hop 은 청크 둘을 이어야 하는데, 라벨만으로는 생성기가 어느 근거가 같은 청크인지 알 수 없다.
+        if topic != "multi_hop":
+            return unit["label"]
+        return f"{unit['label']} · 청크 {chunks.index(unit['ref']['chunk_id']) + 1}"
+
     return {
         "bundle_id": "b-" + hashlib.sha256(ids.encode("utf-8")).hexdigest()[:16],
         "topic": topic,
         "doc_sha": units[0]["ref"]["doc_sha"],
         "doc": doc,
         "units": labelled,
-        "context": "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in labelled),
+        "context": "\n\n".join(f"[{header(unit)}]\n{unit['text']}" for unit in labelled),
     }
 
 

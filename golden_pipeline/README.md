@@ -248,6 +248,8 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
    문서마다 패키지 순서로 `bundle_units` 개씩 묶습니다. 컨텍스트가 `--max-context-chars` 를 넘는 묶음은 버립니다.
    multi_hop 은 청크 둘 이상에 걸친 묶음만 냅니다 (`_spanning`). 이어진 단위는 대개 한 표의 이웃 행이라
    그대로 묶으면 절반 넘게(night 계획 300개 중 162개) 한 청크 안에 들었고, 그 묶음의 후보 431개는 하나도 출시되지 못했습니다.
+   multi_hop 컨텍스트는 라벨 옆에 청크 번호를 보입니다 (`[E3 · 청크 2]`). 번호가 없을 때 생성기는 청크가 다른 근거를 고를 수 없어,
+   청크 둘에 걸친 묶음에서도 round 마다 후보의 절반 넘게 한 청크만 인용했습니다 (계획 `v11-20261015-span`, loop `span1`).
    한 단위는 한 주제의 묶음에만 들어갑니다 (카탈로그가 같은 근거를 두 주제에 두지 않기 때문).
    표 행이 든 묶음에는 그 표의 머리글 행(논리 표 0행)을 맨 앞에 붙입니다. 열 이름 없이는 칸을 가리킬 수 없기 때문입니다.
    머리글 행이 `eligible` 이 아니거나 앞 주제의 묶음이 이미 가졌으면 그 묶음을 버립니다.
@@ -492,7 +494,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `entry_id` | `{run_id}:{rejected.jsonl 줄 번호}` |
 | `failure_code` | 거절 이유의 앞부분으로 정한 코드 (`FAILURE_CODES`). 코드가 없는 이유는 기록하지 않고 멈춥니다 |
 | `evidence` | 보존된 실패를 가리킴: `run` (`A/{run_id}`), `line`, `candidate_id` (항목이 되지 못한 출력이면 `null`), `bundle_id` |
-| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-7`). 글을 바꾸면 버전을 올립니다 |
+| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-8`). 글을 바꾸면 버전을 올립니다 |
 
 | 실패 코드 | 거절 이유 |
 |---|---|
@@ -500,6 +502,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `type_mismatch` · `evidence_owned` | 주제 구조 위반, 다른 주제가 가진 근거 묶음 |
 | `table_relation` · `missing_condition` · `duplicate` | 표 칸, 조건 · 예외 누락, 중복 |
 | `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
+| `single_chunk` | multi_hop 이 인용한 근거가 모두 한 청크 (규칙 검사) |
 | `validator_output` · `evidence_conflict` | 검증기 · 판정기 출력이 두 번 다 계약을 어김, 근거끼리 값이 다름 |
 
 A run 의 실패 기록은 `record_failures` 가 그 run 의 `rejected.jsonl` 줄에서만 만듭니다.
