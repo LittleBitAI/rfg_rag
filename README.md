@@ -95,10 +95,9 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 본문이 `[IMAGE]` 표시뿐인 청크는 제외하고, 패키지에 쪽 번호가 없는 HWP는 `page = None`을 유지합니다.
 이후 02부터 다시 실행해 새 입력의 색인을 만드세요. 임베딩의 `max_seq_length` 기본값은 2048입니다.
 
-현재 파서와 v11을 비교할 때는 `eval/golden_set.jsonl`과 `eval/eval_questions.yaml`만
-`load_eval_items` → `check_eval_items`로 읽어 통과한 질문을 하나의 `eval_set.jsonl`로 고정합니다.
-03의 청크 기반 질문 생성은 실행하지 않습니다. 두 입력에 같은 질문 파일과 02 설정을 사용하고,
-각각 02 → 04 → 05를 실행해 네 평가 CSV를 별도 보관합니다.
+현재 파서와 v11을 비교할 때는 03을 한 번 실행해 골든 dev 분할(`eval/golden/dev.jsonl`)과 `eval/eval_questions.yaml`로
+만든 `eval_set.jsonl`을 두 입력에 똑같이 씁니다. 골든 test 분할(`eval/golden/test.jsonl`)은 최종 점수용이라 비교에 쓰지 않습니다.
+두 입력에 같은 질문 파일과 02 설정을 사용하고, 각각 02 → 04 → 05를 실행해 네 평가 CSV를 별도 보관합니다.
 
 ## 팀 VM `codeit` 에서 작업 (VS Code Remote-SSH, GPU NVIDIA L4)
 코드는 그대로이고, VS Code 가 VM 에 접속해 VM 의 GPU 로 실행합니다. 임베딩은 GPU 가 있으면 알아서 `cuda` 를 씁니다.
@@ -136,7 +135,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 |---|---|---|---|
 | ① 전처리 | `01_preprocessing.ipynb` | `rag/preprocessing/parsing.py` (PDF · HWP/HWPX 파싱 · 정제 · OCR), `rag/preprocessing/chunking.py` (청크 분할) | `artifacts/chunks.jsonl`, `artifacts/docs.jsonl` |
 | ② 검색 | `02_retrieval.ipynb` | `rag/retrieval/indexing.py` (임베딩 · FAISS · BM25 색인), `rag/retrieval/rewrite.py` (질문 재작성 · API 사용량), `rag/retrieval/retrieval.py` (하이브리드 검색 · 발주기관 라우팅) | `artifacts/index/` · `artifacts/retrieval_settings.jsonl` |
-| ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (QA 생성 · 근거 키워드 정리 · 분할 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
+| ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (골든 dev 분할 · 평가 질문 읽기 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
 | ④ 생성 | `04_generation.ipynb` | `rag/generation/generation.py` (검색 → 이전 대화를 참고해 답변 · 토큰 · 지연 시간) | `artifacts/answers.jsonl` |
 | ⑤ 평가 | `05_evaluation.ipynb` | `rag/evaluation/evaluation.py` (네 가지 평가) | `artifacts/retrieval.csv` · `generation.csv` · `grounding.csv` · `end_to_end.csv` |
 | ⑥ 질문 화면 | — | `frontend/server.py` (`answer_question` 을 감싸는 `POST /api/ask`), `frontend/web/` (React + Vite 화면), `frontend/start.cmd` · `frontend/start.command` (실행기); `frontend/ocr_select/` (OCR 이미지 라벨링 화면) | 브라우저 화면의 답변 · 출처, `artifacts/ocr_labels/labels.jsonl` |
@@ -258,12 +257,11 @@ CSV는 UTF-8 without BOM입니다.
 - 프로젝트 책임자는 Langfuse Cloud 에서 질문마다 추적 하나(`answer-question` 안에 검색 `retrieve-context` · 생성 `generate-answer` — 모델 · 토큰 · 비용 포함)를 보고, 05 의 질문별 점수도 그 추적에 붙어 있습니다. 키가 없는 팀원은 노트북 표와 CSV 로 봅니다.
 
 ### 평가 데이터셋 (03 검증)
-- `eval/golden_set.jsonl`: 직접 만든 질문 · 정답(`reference`) · 핵심 사실(`key_facts`).
-- `eval/eval_questions.yaml`: 오타 · 한영 자판 · 한자 · 영어 혼용 · 잘못된 전제 질문(연말정산)과 RFP 질문. 핵심 사실은 `must_include` (`'A|B'` = 둘 중 하나).
-- 청크로 만든 QA 의 test 분할 (최대 `validation.max_qa` 개, 핵심 사실 = 근거 키워드).
+- `eval/golden/dev.jsonl`: `golden_pipeline` 릴리스 `final2` 를 문서 단위로 나눈 dev 분할(30개 문서 396문항). 정답은 `answer`, 핵심 사실은 주제별 `structure` 에서 뽑습니다 — 수치형은 값+단위(`180일`), 비교형은 고른 쪽의 값, 조건형은 조건 문장, 표·다중 근거형은 정답 그대로.
+- `eval/golden/test.jsonl`: 같은 릴리스의 test 분할(68개 문서 930문항). 설정을 dev 에 맞춰 고르면 test 점수가 부풀지 않게 최종 점수에만 쓰며, 03 은 읽지 않습니다. `manifest.json` 은 두 분할의 개수 · 해시입니다.
+- `eval/eval_questions.yaml`: 직접 만든 RFP 질문(멀티턴 대화 포함). 핵심 사실은 `must_include` (`'A|B'` = 둘 중 하나).
 - 질문 없음 · 중복 질문 · 대화의 후속 질문 · 정답 없음 · 핵심 사실 없음은 사유와 함께 제외합니다.
-
-> ⚠️ 연말정산 질문의 근거(국세청 연말정산 안내 등)가 ZIP 에 없으면 "제공된 문서에서 확인할 수 없습니다" 가 정상 답입니다.
+- `eval/golden/` 은 `golden_pipeline/outputs/splits/final2/` 를 그대로 복사한 것입니다(`outputs/` 는 커밋되지 않음). 새 릴리스로 바꿀 때는 다시 복사합니다.
 
 ## OCR (선택, 기본 꺼짐)
 `01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
@@ -367,7 +365,7 @@ ruff check .                              # 함수 복잡도 (C901 ≤ 8, PLR091
 01_preprocessing.ipynb … 05_evaluation.ipynb   파이프라인별 노트북 (설정 · 호출 · 표만)
 config.yaml                설정 (① 전처리 ~ ⑤ 평가 구역)
 eval/
-  golden_set.jsonl         골든 셋 (질문 · 정답 · 핵심 사실)
+  golden/                  골든 릴리스 final2 복사본 — dev.jsonl (03 입력) · test.jsonl (최종 점수용, 읽지 않음) · manifest.json
   eval_questions.yaml      평가 질문 세트 (질문 · 정답 · must_include)
 rag/
   config.py                config.yaml · .env 읽기, jsonl 읽기/쓰기

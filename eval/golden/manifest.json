@@ -1,0 +1,46 @@
+{
+  "version": "final2",
+  "created_at": "2026-10-15T07:13:56+00:00",
+  "code_commit": "45246ccbe27a8bffec26c03542e0f4ff49d579f1",
+  "dev_share": 0.3,
+  "seed": 20261015,
+  "sources": {
+    "numeric": "a16d3420d77ae6a4c7b157a2f45a5ac7fc4fb4222dc7b6658cbbd3b9e9edb46b",
+    "table": "b14c3a14538c06414912c931eb1555dc20d78ffdb2bda2e75a3a7a62980c844a",
+    "condition": "0f4b50fc86cc6804f14a79b9eb4114352894cd27ac3a5c181362837de65bc544",
+    "comparison": "7b4a8ef2bc05a775b489b88f4ce6cbd16e79e20f833b403fd8627f9e86ddce98",
+    "multi_hop": "fea451f0e6d1c36cb318c095656150086a8efd9f627176d4eb73b73b9b61bef3"
+  },
+  "dev": {
+    "count": 396,
+    "documents": 30,
+    "sha256": "67b5a36ed8d4bd670b08c8ee3ec56c98463d7331f9ba75cf9f5682a19ed5cb73",
+    "cells": {
+      "comparison-easy": 20,
+      "comparison-medium": 36,
+      "condition-easy": 25,
+      "condition-medium": 44,
+      "multi_hop-hard": 71,
+      "numeric-easy": 63,
+      "numeric-medium": 41,
+      "table-easy": 6,
+      "table-medium": 90
+    }
+  },
+  "test": {
+    "count": 930,
+    "documents": 68,
+    "sha256": "5de8e8ff6fd4339e3f44b44994f6bb8880ccb4e5f0661470ecfbf5dc1e17baee",
+    "cells": {
+      "comparison-easy": 45,
+      "comparison-medium": 83,
+      "condition-easy": 57,
+      "condition-medium": 110,
+      "multi_hop-hard": 176,
+      "numeric-easy": 144,
+      "numeric-medium": 90,
+      "table-easy": 14,
+      "table-medium": 211
+    }
+  }
+}
