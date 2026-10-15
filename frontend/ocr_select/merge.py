@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from collections import Counter
 from pathlib import Path
 
@@ -15,8 +16,9 @@ from rag.config import read_jsonl, write_jsonl
 
 
 def merge(rows: list[dict], images: list[dict]) -> tuple[list[dict], list[dict], int]:
-    """(합친 결과, 전체 카드, images.jsonl 에 없는 위치 수). 두 사람이 같은 위치를 매겼으면 나중 라벨이 이긴다."""
-    labels = latest_labels(sorted(rows, key=lambda r: r["labelled_at"]))
+    """(합친 결과, 전체 카드, images.jsonl 에 없는 위치 수). 두 사람이 같은 위치를 매겼으면 나중 라벨이 이긴다.
+    labelled_at 은 매긴 컴퓨터의 시간대로 적히므로 문자열이 아니라 시각으로 비교한다."""
+    labels = latest_labels(sorted(rows, key=lambda r: datetime.fromisoformat(r["labelled_at"])))
     all_cards = cards(images, labels, {})
     unknown = len(set(labels) - {c["key"] for c in all_cards})
     return result_rows(all_cards, labels), all_cards, unknown

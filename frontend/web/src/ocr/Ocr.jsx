@@ -12,10 +12,16 @@ export default function Ocr() {
   const [error, setError] = useState(null)
   const [batch, setBatch] = useState(() => Number(new URLSearchParams(location.search).get('batch')) || null)
 
+  // StrictMode 는 개발 중 이 effect 를 두 번 돌린다. 물러난 실행의 늦은 응답이 그 사이 매긴 라벨을 덮지 않게 버린다
   useEffect(() => {
+    let retired = false
     fetch('/ocr-api/images')
-      .then(async (res) => (res.ok ? setCards(await res.json()) : setError(await errorText(res))))
-      .catch(() => setError(UNREACHABLE))
+      .then(async (res) => {
+        const body = res.ok ? await res.json() : await errorText(res)
+        if (!retired) res.ok ? setCards(body) : setError(body)
+      })
+      .catch(() => retired || setError(UNREACHABLE))
+    return () => { retired = true }
   }, [])
 
   // 누르는 즉시 바꿔 보이고, 저장에 실패하면 원래 라벨로 되돌린다.
@@ -41,7 +47,9 @@ export default function Ocr() {
   }
 
   const shown = cards?.filter((c) => c.batch === batch) ?? []
-  const done = shown.filter((c) => c.label !== null).length
+  // 내보내기는 서버에 저장된 라벨만 담으므로, 저장 중인 라벨은 진행 수에서 빼고 내보내기를 잠근다
+  const saving = shown.filter((c) => c.saving).length
+  const done = shown.filter((c) => c.label !== null && !c.saving).length
   return (
     <>
       <header className="bar">
@@ -53,8 +61,10 @@ export default function Ocr() {
                 <button key={n} aria-pressed={batch === n} onClick={() => chooseBatch(n)}>묶음 {n}</button>
               ))}
             </div>
-            {batch && cards && <span className="meta">라벨 {done} / {shown.length}</span>}
-            {batch && <a className="ghost" href={`/ocr-api/export?batch=${batch}`}>결과 내보내기</a>}
+            {batch && cards && <span className="meta">라벨 {done} / {shown.length}{saving > 0 && ` · 저장 중 ${saving}`}</span>}
+            {batch && (saving > 0
+              ? <button className="ghost" disabled>결과 내보내기</button>
+              : <a className="ghost" href={`/ocr-api/export?batch=${batch}`}>결과 내보내기</a>)}
           </div>
         </div>
       </header>
@@ -107,9 +117,8 @@ function where(o) {
   return o.marker_start === null ? `${o.image_name} · 본문 표시 없음` : o.image_name
 }
 
-// doc_id 에 한글 · 괄호가 있어 경로 조각마다 인코딩한다
 function fileUrl(file) {
-  return '/ocr-api/files/' + file.split('/').map(encodeURIComponent).join('/')
+  return '/ocr-api/files/' + encodeURIComponent(file)
 }
 
 const UNREACHABLE = '서버에 연결할 수 없습니다. 실행 창(frontend/start.cmd · start.command)이 닫혔다면 다시 실행하세요.'

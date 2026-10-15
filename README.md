@@ -212,11 +212,11 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다. 문서 100개에 1분 남짓 걸립니다.
 2. 화면 열기: 질문 화면과 같은 실행기(`frontend\start.cmd` · `frontend/start.command`)를 더블클릭하고, 첫 화면 오른쪽 위 `설정` → `OCR 이미지 라벨링` 을 누릅니다 (`http://localhost:5173/ocr.html`). 실행기가 라벨링 화면의 API 서버(포트 8766)도 함께 띄웁니다.
 3. 묶음 고르기: 상단 바에서 맡은 `묶음 1` ~ `묶음 5` 를 누릅니다. 카드를 문서 이름 · 문서 안 위치 순서로 세워 다섯으로 고르게 자른 것이라(209 · 209 · 209 · 209 · 208곳), 같은 `data/rfp.zip` 으로 extract 했다면 누구 컴퓨터에서나 같은 묶음입니다. 고른 묶음은 주소(`?batch=2`)에 남아 새로고침해도 그대로입니다.
-4. 결과 내보내기: 다 매기면 상단 바의 `결과 내보내기` 를 눌러 `ocr_labels_batchN.jsonl` 을 내려받고, 합치는 사람에게 보냅니다.
+4. 결과 내보내기: 다 매기면 상단 바의 `결과 내보내기` 를 눌러 `ocr_labels_batchN.jsonl` 을 내려받고, 합치는 사람에게 보냅니다. 저장 중인 라벨이 있으면 저장이 끝날 때까지 이 버튼이 잠기고, 진행 수는 저장을 마친 라벨만 셉니다.
 5. 합치기 (한 사람): 받은 파일을 모두 넘겨 `.venv\Scripts\python -m frontend.ocr_select.merge ocr_labels_batch1.jsonl ocr_labels_batch2.jsonl ...` 를 실행합니다. 묶음마다 매긴 수와 빠진 위치 수를 출력하고 `artifacts/ocr_labels/merged_labels.jsonl` 에 씁니다. 같은 위치를 두 사람이 매겼으면 `labelled_at` 이 늦은 라벨이 남습니다.
 
 결과 — `artifacts/ocr_labels/`
-- `images/<doc_id>/<파일>`: 꺼낸 그림. extract 를 다시 실행하면 이 폴더만 새로 만듭니다.
+- `images/<그림 해시>.<확장자>`: 꺼낸 그림. 같은 바이트의 그림은 파일 하나입니다. extract 를 다시 실행하면 이 폴더만 새로 만듭니다.
 - `images.jsonl`: 서로 다른 그림 한 줄씩 — `image_sha256`, `file`, `viewable`, `reason`, `occurrences`(위치마다 `doc_id` · `source` · `document_sha256` · `format`, HWP 는 `image_name` · `marker_start` · `repeated_occurrences`, PDF 는 `page` · `image_index` · `xref` · `bbox_points` — CRAFT 기록과 같은 이름). 문서에 들어 있지만 본문에 `[IMAGE]` 표시가 없는 HWP 그림(쪽에 놓이지 않은 그림 등)은 `marker_start` 가 `null` 이고, 01 전처리 · CRAFT 는 이 그림을 보지 않습니다.
 - `labels.jsonl`: 라벨을 누를 때마다 `{image_sha256, label, labelled_at, occurrences}` 한 줄을 덧붙입니다. `occurrences` 에는 매긴 위치 하나가 들어갑니다. 다시 매긴 라벨도 새 줄이고, 위치마다 마지막 줄이 지금 라벨입니다. extract 를 다시 실행해도 지우지 않습니다.
 - `merged_labels.jsonl`: 합친 결과. 매긴 위치마다 한 줄 — `labels.jsonl` 과 같은 모양에 `batch`(묶음 번호)가 더해집니다. 내려받는 `ocr_labels_batchN.jsonl` 도 같은 모양입니다.

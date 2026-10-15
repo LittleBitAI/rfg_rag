@@ -74,6 +74,14 @@ def _pdf_image(doc, xref: int, name: str, location: dict) -> dict:
         return _found(doc.xref_stream_raw(xref), f"{name}.bin", "PDF image decode failed", location)
 
 
+def _bbox_points(page, xref: int) -> list:
+    """그림이 쪽에 놓인 자리. 01 전처리처럼 자리를 못 찾으면 [] 로 두고 그림은 남긴다."""
+    try:
+        return [list(rect) for rect in page.get_image_rects(xref)]
+    except Exception:
+        return []
+
+
 def pdf_images(path: str) -> list[dict]:
     """PDF 쪽마다 page.get_images() 순서대로 그림 하나. 위치 필드는 parsing._image_selection_location 과 같다."""
     import pymupdf
@@ -84,7 +92,7 @@ def pdf_images(path: str) -> list[dict]:
             for image_index, img in enumerate(page.get_images()):
                 xref = img[0]
                 location = {"format": "pdf", "page": page.number + 1, "image_index": image_index, "xref": xref,
-                            "bbox_points": [list(rect) for rect in page.get_image_rects(xref)]}
+                            "bbox_points": _bbox_points(page, xref)}
                 found.append(_pdf_image(doc, xref, f"p{page.number + 1}_{image_index}_x{xref}", location))
     return found
 
@@ -102,7 +110,8 @@ def group_images(found: list[dict]) -> list[dict]:
 
 
 def _document_images(path: str) -> list[dict]:
-    """문서 하나의 그림들을 IMAGES/<doc_id>/ 에 저장하고 group_images 가 받는 항목으로 돌려준다 (같은 그림은 한 번만 저장)."""
+    """문서 하나의 그림들을 IMAGES/<그림 해시>.<확장자> 로 저장하고 group_images 가 받는 항목으로 돌려준다 (같은 그림은 한 번만 저장).
+    doc_id 는 파일 이름만으로 만들어 다른 폴더의 같은 이름 문서끼리 겹치므로 저장 경로에 쓰지 않는다."""
     doc_id = make_doc_id(path)
     document = {"doc_id": doc_id, "source": os.path.basename(path),
                 "document_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
@@ -110,11 +119,12 @@ def _document_images(path: str) -> list[dict]:
     items = []
     for image in images:
         sha = hashlib.sha256(image["data"]).hexdigest()
-        target = IMAGES / doc_id / image["name"]
+        file = sha + Path(image["name"]).suffix
+        target = IMAGES / file
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(image["data"])
-        items.append({"image_sha256": sha, "file": f"{doc_id}/{image['name']}", "reason": image["reason"],
+        items.append({"image_sha256": sha, "file": file, "reason": image["reason"],
                       "occurrence": {**document, **image["location"]}})
     return items
 

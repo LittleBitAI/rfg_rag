@@ -74,6 +74,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   font-size: 15px;
 }
 .ghost:hover { background: var(--surface); }
+.ghost:disabled { color: var(--muted); background: var(--bg); cursor: default; }
 
 .page {
   max-width: var(--container);
