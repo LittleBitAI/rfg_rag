@@ -236,12 +236,16 @@ def rename(topic, version, sources):
     for source in sources:
         release_dir = storage._child(storage._topic_dir(topic) / "releases", source)
         manifest = storage._read_json(release_dir / "manifest.json")
+        if storage._sha256(release_dir / "golden.jsonl") != manifest["golden_sha256"]:
+            raise ValueError(f"출시본 {source} 의 golden.jsonl 이 매니페스트의 SHA-256 과 다릅니다")
         items += storage._read_jsonl(release_dir / "golden.jsonl")
         runs.update(tuple(run.split("/", 1)) for run in manifest["runs"])
         golden[source] = manifest["golden_sha256"]
-    _refuse_duplicates(items)
     docs = {item["candidate_id"]: item["evidence"][0]["doc_sha"] for item in items}
-    return storage.write_release(topic, version, _current_names(items, docs), runs, {"renamed_from": golden})
+    items = _current_names(items, docs)
+    # 이름이 같아진 뒤에 견준다. 옛 이름 · 새 이름 질문은 앞머리만 달라 이름을 바꾸기 전에는 같은 질문으로 보이지 않는다.
+    _refuse_duplicates(items)
+    return storage.write_release(topic, version, items, runs, {"renamed_from": golden})
 
 
 def _current_names(items, docs):

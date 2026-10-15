@@ -9,6 +9,7 @@ from golden_pipeline import adoption, improvement, storage
 from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
+from golden_pipeline.state import transition
 from golden_pipeline.validation import SCREEN_CODES, release, rename, rule_reason, validate
 
 PRICED = {"usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0}
@@ -268,6 +269,25 @@ def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config
     assert not generator.requests and not validator.calls
 
 
+def test_a_resumed_adoption_decides_on_the_code_its_measuring_run_was_made_with(loop_config):
+    # l1-v2 를 answer_mismatch 로 만든 뒤 끊긴다. 그 사이 다른 loop 가 output_format 기록을 더 많게 해도,
+    # 이어 돈 l1 이 output_format 을 다시 골라 answer_mismatch 로 잰 이득으로 채택하면 안 된다.
+    with pytest.raises(ConnectionError):
+        improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=4))
+
+    def not_json(**kwargs):
+        return {"model": "generator-test", "text": "JSON 아님", "input_tokens": 10, "output_tokens": 10}
+
+    improve("numeric", "p3", "l2", loop_config(max_rounds=1), not_json, Validator())
+    related = improvement.related_failures("numeric")
+    assert len(related["output_format"]) > len(related["answer_mismatch"])
+
+    report = improve("numeric", "p3", "l1", loop_config(), Generator(), Validator())
+
+    decision = report["rounds"][1]["adoption"]
+    assert (decision["tried"], decision["adopted"]) == (["answer_mismatch"], ["answer_mismatch"])
+
+
 @pytest.mark.parametrize("collision, run_id, changed", [
     ("standalone_run_of_another_plan", "l1-r1", ["loop_id", "plan_id", "plan_sha256", "round", "start_sha256"]),
     ("standalone_run_after_an_interruption", "l1-r3", ["loop_id", "round", "start_sha256"]),
@@ -450,6 +470,36 @@ def test_a_rename_reissues_releases_under_current_names_without_screening(looped
     manifest = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["release"] == {"renamed_from": {"v1": storage._sha256(first / "golden.jsonl")}}
     assert manifest["runs"] == ["A/l1-r1"]
+
+
+def released_under(version, agency, run_id, make_item):
+    """가기관 문서의 같은 예산 질문을 run 마다 다른 근거 묶음으로 등록하고, agency 이름을 붙여 출시한다."""
+    item = make_item(candidate_id=f"numeric-A-{run_id}-0001", run_id=run_id, bundle_id=f"b-{run_id}",
+                     question=with_document("사업 예산은 얼마인가?", {"agency": agency, "title": "가사업 구축"}))
+    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": f"c-{run_id}"}]
+    accepted = transition(item, "auto_validated", "통과", validator_version="val-0.1", difficulty="easy")
+    storage.write_run("numeric", "A", run_id, [accepted])
+    return storage.write_release("numeric", version, [transition(accepted, "released", "출시")], [("A", run_id)])
+
+
+def test_a_rename_refuses_questions_that_only_become_the_same_under_current_names(evidence_run, make_item):
+    # 옛 이름 · 새 이름 질문은 앞머리만 달라 이름을 바꾸기 전에는 다르다. 바꾼 뒤 같은 질문이 한 출시본에 둘 들어갔다.
+    released_under("old", "옛기관", "r1", make_item)
+    released_under("current", "가기관", "r2", make_item)
+
+    with pytest.raises(ValueError, match="같은 질문"):
+        rename("numeric", "merged", ["old", "current"])
+    assert not (storage.OUTPUTS / "goldens/numeric/releases/merged").exists()
+
+
+def test_a_rename_refuses_a_source_whose_items_differ_from_its_manifest(evidence_run, make_item):
+    # 출시 뒤 잘린 원본을 그대로 다시 내면 손상이 새 출시본으로 굳고, 매니페스트는 원래 파일의 SHA-256 을 주장했다.
+    source = released_under("v1", "가기관", "r1", make_item)
+    (source / "golden.jsonl").write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        rename("numeric", "v2", ["v1"])
+    assert not (storage.OUTPUTS / "goldens/numeric/releases/v2").exists()
 
 
 @pytest.mark.parametrize("run_id", ["l1-v2", "l1-h-final"])

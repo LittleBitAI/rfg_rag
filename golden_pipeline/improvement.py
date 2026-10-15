@@ -251,7 +251,10 @@ def _adopt(topic, plan_id, loop_id, n, config, clients):
     state = _policy(topic, loop_id, n - 1)
     related = related_failures(topic)
     untried = set(related) - set(state["adopted"]) - set(state["retired"])
-    new = sorted(untried, key=lambda code: (-len(related[code]), code))[:1]
+    measured = _measured_codes(topic, loop_id, f"v{n}")
+    # 끊긴 뒤 다른 loop 가 실패 기록 수를 바꾸면 다시 고른 코드가 이미 잰 run 의 코드와 달라진다. 잰 코드로 정한다.
+    new = (sorted(set(measured) - set(state["adopted"])) if measured is not None
+           else sorted(untried, key=lambda code: (-len(related[code]), code))[:1])
     decision = {**state, "tried": new, "gain": None, "floor": None}
     if new:
         candidate = sorted(state["adopted"] + new)
@@ -276,6 +279,14 @@ def _policy(topic, loop_id, n):
         return {"adopted": [], "reference": "v0", "retired": []}
     decided = storage._read_json(_loop_path(topic, loop_id) / f"r{n}-adoption.json")
     return {key: decided[key] for key in ("adopted", "reference", "retired")}
+
+
+def _measured_codes(topic, loop_id, name):
+    """이 loop 가 이미 생성한 run {loop_id}-{name} 의 예방 규칙 코드. 아직 생성하지 않았으면 None."""
+    if not _generated(topic, loop_id, name):
+        return None
+    generated = storage._read_json(storage.run_path(topic, "A", f"{loop_id}-{name}") / "manifest.json")["generation"]
+    return sorted(generated["policy"]["failures"])
 
 
 def _measure(topic, plan_id, loop_id, name, codes, part, config, clients):
