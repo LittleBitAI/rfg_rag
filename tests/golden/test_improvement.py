@@ -411,6 +411,25 @@ def test_a_limit_hit_on_held_out_is_the_stop_reason_even_after_the_rounds_ran_ou
     assert report["held_out"] == {"measured": False, "reason": "call_cap"}
 
 
+def test_a_release_names_each_document_by_the_current_data_list(looped, evidence_run, tmp_path):
+    # 팀이 data_list.csv 의 기관 이름을 고친 뒤에도 앞서 만든 항목이 옛 이름으로 나가면 한 출시본에서 한 문서가 두 이름이 된다.
+    data_list = evidence_run.parent / "data_list.csv"
+    data_list.write_text(data_list.read_text(encoding="utf-8").replace(",나기관", ",새기관"), encoding="utf-8")
+
+    def useful(**kwargs):
+        return {"model": "screen-test", "text": '{"useful": true, "code": null, "reason": "보증금"}',
+                "input_tokens": 10, "output_tokens": 10}
+
+    config = tmp_path / "screen.json"
+    config.write_text(json.dumps({**LOOP["validator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
+    [made] = read_jsonl(run_dir(1) / "accepted.jsonl")
+    release_dir = release("numeric", "v1", [("A", "l1-r1")], config, useful)
+
+    [released] = read_jsonl(release_dir / "golden.jsonl")
+    assert made["question"] == with_document(BOND["question"], {"agency": "나기관", "title": "나사업 운영"})
+    assert released["question"] == with_document(BOND["question"], {"agency": "새기관", "title": "나사업 운영"})
+
+
 @pytest.mark.parametrize("run_id", ["l1-v2", "l1-h-final"])
 def test_a_measuring_run_cannot_be_released(looped, tmp_path, run_id):
     # 출시에서 빠진 항목은 실패 기록이 된다. 정책을 재는 run 을 받으면 그 결과가 다음 정책에 새어 든다.

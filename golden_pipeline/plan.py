@@ -98,7 +98,7 @@ def doc_names(package, docs):
     한 기관에 문서가 여럿이라 기관 이름만으로는 문서를 가리지 못한다.
     """
     with (package.parent / "data_list.csv").open(encoding="utf-8-sig") as f:
-        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주 기관"] for row in csv.DictReader(f)}
+        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주기관"] for row in csv.DictReader(f)}
     names = {}
     for record in evidence._iter_jsonl(package / evidence.RECORDS):
         if record["doc_id"] in docs and record["doc_id"] not in names:

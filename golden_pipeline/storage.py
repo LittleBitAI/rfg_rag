@@ -4,6 +4,7 @@
 """
 import hashlib
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,8 @@ OUTPUTS = PACKAGE / "outputs"
 CONFIGS = PACKAGE / "configs"
 PROMPTS = PACKAGE / "prompts"
 STATE_FILES = {"auto_validated": "accepted.jsonl", "rejected": "rejected.jsonl"}
+# generation.with_document 가 질문 앞에 붙인 문서 이름: "기관의 「사업 이름」 사업에서 ".
+DOCUMENT_PREFIX = re.compile(r"^.*?」 사업에서 ")
 
 
 class OutputPathError(ValueError):
@@ -263,9 +266,12 @@ def _require_same_record(original, item):
     """출시 항목은 run 에 등록된 기록에서 상태만 더 나아간 것이어야 한다.
 
     질문·답·근거·방법·run 을 바꿔 끼우면 카탈로그의 근거 묶음 소유와 출시 매니페스트의 원본 run 이 거짓이 된다.
+    질문은 앞에 붙인 문서 이름만 다를 수 있다. 출시가 그 이름을 지금 data_list.csv 의 이름으로 다시 붙이기 때문이다.
     """
     progress = ("state", "state_history", "validator_version", "difficulty")
-    changed = [name for name in ITEM_FIELDS if name not in progress and item[name] != original[name]]
+    changed = [name for name in ITEM_FIELDS if name not in (*progress, "question") and item[name] != original[name]]
+    if DOCUMENT_PREFIX.sub("", item["question"], count=1) != DOCUMENT_PREFIX.sub("", original["question"], count=1):
+        changed.append("question")
     history = original["state_history"]
     if item["state_history"][:len(history)] != history:
         changed.append("state_history")

@@ -72,7 +72,7 @@ def test_release_refuses_items_not_released_or_not_in_catalog(outputs, make_item
         storage.write_release("numeric", "v1", [unregistered], [("A", "r1")])
 
 
-@pytest.mark.parametrize("field", ["answer", "run_id", "evidence", "difficulty", "state_history"])
+@pytest.mark.parametrize("field", ["question", "answer", "run_id", "evidence", "difficulty", "state_history"])
 def test_release_refuses_content_that_differs_from_its_registered_run(outputs, make_item, field):
     # candidate_id 만 카탈로그와 맞추고 내용·출처를 바꿔 끼운 항목이
     # 출시본과 매니페스트(원본 run)에 그대로 들어가던 결함을 막는다.

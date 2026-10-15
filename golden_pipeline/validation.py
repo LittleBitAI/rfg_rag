@@ -11,7 +11,7 @@ import re
 import unicodedata
 from decimal import Decimal
 
-from golden_pipeline import generation, plan, storage
+from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
@@ -24,8 +24,7 @@ DIFFICULTY_RULE = (
 # Kiwi 는 얼마 를 일반 명사(NNG)로 단다. 의문사는 근거에 있을 수 없으므로 내용 형태소에서 뺀다.
 INTERROGATIVES = ("얼마", "몇", "무엇", "어디", "언제", "누구", "어느")
 VERDICT_FIELDS = ("answerable", "answer", "conditions", "conflict", "comparison")
-# generation.with_document 가 질문 앞에 붙인 문서 이름: "기관의 「사업 이름」 사업에서 ".
-DOCUMENT_PREFIX = re.compile(r"^.*?」 사업에서 ")
+DOCUMENT_PREFIX = storage.DOCUMENT_PREFIX
 # 천 · 만 · 억(NR) 은 수에 곱하는 단위다. 5만원 과 50,000원 은 같은 값이다.
 SCALES = {"십": 10, "백": 100, "천": 1000, "만": 10_000, "억": 10**8, "조": 10**12}
 CONTENT_TAGS = ("NNG", "NNP", "SL", "SN")
@@ -209,8 +208,9 @@ def _release_items(topic, runs):
     """출시의 규칙 검사도 검증 때와 같은 고정 계획에서 인용 근거와 표 머리글만 읽는다.
 
     정책을 재는 run 은 받지 않는다. 출시에서 빠진 항목은 실패 기록이 되므로, 받으면 validation · held-out 결과가 정책에 새어 든다.
+    질문 앞의 문서 이름은 지금 data_list.csv 의 이름으로 다시 붙인다. 팀이 기관 이름을 고쳐도 한 출시본에서 한 문서는 한 이름이다.
     """
-    items, units = [], {}
+    items, units, docs = [], {}, {}
     for method, run_id in runs:
         run_dir = storage.run_path(topic, method, run_id)
         if measuring(run_dir):
@@ -222,7 +222,11 @@ def _release_items(topic, runs):
             raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_id} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
         bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
         units.update((item["candidate_id"], evidence_units(item, bundles[item["bundle_id"]])) for item in accepted)
+        docs.update((item["candidate_id"], bundles[item["bundle_id"]]["doc_sha"]) for item in accepted)
         items.extend(accepted)
+    names = plan.doc_names(evidence.PACKAGE, set(docs.values()))
+    items = [{**item, "question": generation.with_document(DOCUMENT_PREFIX.sub("", item["question"], count=1),
+                                                           names[docs[item["candidate_id"]]])} for item in items]
     return items, units
 
 
