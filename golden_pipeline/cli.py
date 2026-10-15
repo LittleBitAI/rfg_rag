@@ -13,7 +13,7 @@ from pathlib import Path
 import openai
 from dotenv import load_dotenv
 
-from golden_pipeline import evidence, generation, improvement, plan, report, storage, validation
+from golden_pipeline import evidence, generation, improvement, plan, report, split, storage, validation
 from golden_pipeline.schema import TOPICS
 
 
@@ -114,6 +114,10 @@ def _rename(args):
     return validation.rename(args.topic, args.version, args.source)
 
 
+def _split(args):
+    return split.split(args.version)
+
+
 def _report(args):
     rounds = []
     for loop_id in args.a or []:
@@ -206,6 +210,10 @@ def _paid_commands(commands):
     command.add_argument("--version", required=True)
     command.add_argument("--source", action="append", required=True, metavar="VERSION", help="합칠 출시본. 여러 번 줄 수 있음")
     command.set_defaults(handler=_rename)
+
+    command = commands.add_parser("split", help="다섯 주제의 출시본을 문서 단위 dev 30%% · test 70%% 로 (API 호출 없음)")
+    command.add_argument("--version", required=True, help="다섯 주제에 모두 있는 출시본")
+    command.set_defaults(handler=_split)
 
 
 def _record_commands(commands):
