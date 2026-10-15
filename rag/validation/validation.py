@@ -3,6 +3,8 @@
 담당: 검증.  결과(artifacts/eval_set.jsonl)를 04 생성이 답하고 05 평가가 채점한다."""
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import yaml
 
@@ -12,16 +14,34 @@ from ..config import ROOT, read_jsonl
 # ====================================================================================================
 # 평가 항목: 골든 dev 분할 · 평가 질문 → 같은 형식으로 모아 점검
 # ====================================================================================================
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _multi_hop_key_facts(row: dict) -> list[str]:
+    """정답 글이 언급한 근거 표 칸 값 — 05 평가는 사실을 이어진 글자로 찾으므로, 근거 단위마다 따로 찾을 수 있는 값이어야
+    근거를 모두 검색했을 때 만점이 된다. 근거 단위의 첫 칸('요구사항 분류' 같은 이름)과 질문에 이미 있는 값은 뺀다.
+    표 칸 값이 하나도 없는 서술형 정답은 [] 이 되어 점검에서 빠진다."""
+    units = [unit.split(" | ") for unit in re.split(r"^\[E\d+[^\]\n]*\]$", row["context"], flags=re.M)]
+    values = {_squash(cell) for cells in units for cell in (cells[1:] if len(cells) > 1 else cells)}
+    answer, question = _squash(row["answer"]), _squash(row["question"])
+    found = [v for v in values if len(v) > 1 and v in answer and v not in question]
+    return sorted(v for v in found if not any(v != other and v in other for other in found))
+
+
 def _golden_key_facts(row: dict) -> list[str]:
     """주제별 structure 값 — 골든 검증이 근거와 대조한 값이라 문장형 정답보다 답에 그대로 나올 가능성이 높다"""
     topic, s = row["primary_topic"], row["structure"]
     if topic == "numeric":
         return [s["value"] + s["unit"]]
     if topic == "comparison":
-        return [s["values"][s["choice"]]]
+        return [s["choice"]]  # 비교 질문은 모두 '어느 쪽' 을 묻는다. 값은 질문에 이미 적혀 있기도 하다
     if topic == "condition":
         return [s["condition"]]
-    return [row["answer"]]
+    if topic == "multi_hop":
+        return _multi_hop_key_facts(row)
+    # 표 칸 안의 ' | ' 는 칸 구분선이다. 05 평가의 'A|B'(둘 중 하나)로 읽히지 않게 칸마다 따로 요구한다
+    return [part.strip() for part in row["answer"].split(" | ")]
 
 
 def _golden_row(row: dict) -> dict:
