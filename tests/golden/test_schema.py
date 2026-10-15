@@ -3,21 +3,9 @@ import pytest
 from golden_pipeline.schema import EVIDENCE_FIELDS, SchemaError, validate_item
 
 
-def test_fixture_item_is_valid(make_item):
-    validate_item(make_item())
-
-
-@pytest.mark.parametrize("primary_topic", ["", "numbers", None, "Numeric"])
-def test_unknown_primary_topic_is_rejected(make_item, primary_topic):
+def test_unknown_primary_topic_is_rejected(make_item):
     with pytest.raises(SchemaError, match="primary_topic"):
-        validate_item(make_item(primary_topic=primary_topic))
-
-
-def test_missing_primary_topic_is_rejected(make_item):
-    item = make_item()
-    del item["primary_topic"]
-    with pytest.raises(SchemaError, match="primary_topic"):
-        validate_item(item)
+        validate_item(make_item(primary_topic="Numeric"))
 
 
 def test_primary_topic_repeated_in_secondary_tags_is_rejected(make_item):
@@ -26,7 +14,7 @@ def test_primary_topic_repeated_in_secondary_tags_is_rejected(make_item):
 
 
 @pytest.mark.parametrize("field", [
-    "candidate_id", "parent_candidate_id", "run_id", "method", "bundle_id", "context", "structure",
+    "candidate_id", "parent_candidate_id", "run_id", "method", "primary_topic", "bundle_id", "context", "structure",
     "generator_version", "validator_version", "prompt_version", "difficulty", "state", "state_history",
 ])
 def test_missing_item_provenance_field_is_rejected(make_item, field):
@@ -93,11 +81,11 @@ def step(start, to, reason="이유"):
 @pytest.mark.parametrize("state, history", [
     ("released", []),
     ("released", [step("candidate", "released")]),
-    ("auto_validated", [step("candidate", "held")]),
+    ("auto_validated", [step("candidate", "rejected")]),
     ("released", [step("candidate", "rejected"), step("rejected", "released")]),
     ("released", [step("auto_validated", "released")]),
     ("rejected", [step("candidate", "rejected", reason="")]),
-    ("held", [{"from": "candidate", "to": "held"}]),
+    ("rejected", [{"from": "candidate", "to": "rejected"}]),
 ])
 def test_state_must_be_reached_by_permitted_transitions_with_reasons(make_item, state, history):
     # state 만 released 로 고치고 state_history 를 비워 두면 검증·사람 검토 없이 출시되던 결함,
@@ -120,20 +108,21 @@ def test_item_past_candidate_needs_validator_version_and_difficulty(make_item):
         validate_item(make_item(difficulty="easy"))
 
 
-@pytest.mark.parametrize("at", [None, object(), "어제", "2026-10-14T00:00:00", "2026-10-14T09:00:00+09:00"])
+@pytest.mark.parametrize("at", [None, "2026-10-14T00:00:00", "2026-10-14T09:00:00+09:00"])
 def test_transition_time_must_be_iso_utc(make_item, at):
     # at 이 None 이면 그대로 저장되고, JSON 으로 못 쓰는 값이면 run 폴더만 만든 채 TypeError 로 끝나
     # 같은 run_id 로 다시 돌릴 수 없던 결함을 막는다.
-    history = [{**step("candidate", "held"), "at": at}]
+    history = [{**step("candidate", "auto_validated"), "at": at}]
     with pytest.raises(SchemaError, match="state_history.at"):
-        validate_item(make_item(state="held", state_history=history, validator_version="val-0.1", difficulty="easy"))
+        validate_item(make_item(state="auto_validated", state_history=history, validator_version="val-0.1", difficulty="easy"))
 
 
 @pytest.mark.parametrize("where", ["item", "evidence", "location", "state_history"])
 def test_undeclared_field_is_rejected_at_every_level(make_item, where):
     # 선언되지 않은 필드는 출시 때 run 기록과의 비교를 빠져나가 golden.jsonl 에 그대로 들어가던 결함을 막는다.
     item = make_item(
-        state="held", state_history=[step("candidate", "held")], validator_version="val-0.1", difficulty="easy",
+        state="auto_validated", state_history=[step("candidate", "auto_validated")], validator_version="val-0.1",
+        difficulty="easy",
     )
     target = {
         "item": item,

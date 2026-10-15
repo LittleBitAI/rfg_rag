@@ -1,61 +1,126 @@
 """독립 검증과 출시. 검증기는 질문과 근거 단위만 받아 스스로 답하고, 그 답을 후보의 답과 맞춰 본다.
 
 검증기에는 생성기의 대화 · 프롬프트 · 답 · 구조 · 자기 평가를 보내지 않는다. 독립 답과의 비교가 이 단계의 요점이기 때문이다.
-검증한 항목은 run 의 accepted.jsonl (auto_validated) · review.jsonl (held, 사람 검토) · rejected.jsonl 로 가고,
-출시는 auto_validated 항목과 사람이 확인한 held 항목을 releases/{version}/ 로 모은다.
+값과 글자로 같은지 정하지 못한 답(표현만 다른 글 답, 대상을 확인하지 못한 값)은 판정기가 독립 답과 후보 답을 받아
+같은지 정한다. 독립 답은 이미 후보 답을 보지 않고 나왔으므로, 판정기가 둘을 견주어도 독립성은 그대로다.
+모든 후보는 auto_validated(accepted.jsonl) 아니면 rejected(rejected.jsonl) 로 끝난다. 애매한 판정은 실패 코드가 없어
+자기 개선에 쓸 수 없으므로 두지 않는다. 출시는 auto_validated 항목을 releases/{version}/ 로 모은다.
 """
 import json
+import re
 import unicodedata
 from decimal import Decimal
-from pathlib import Path
 
 from golden_pipeline import generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-2"
+VALIDATOR_VERSION = "validation-4"
 DIFFICULTY_RULE = (
-    "difficulty-1: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
-    "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외)가 모두 근거 본문에 그대로 있음. medium = 나머지"
+    "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
+    "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
+    "medium = 나머지"
 )
 # Kiwi 는 얼마 를 일반 명사(NNG)로 단다. 의문사는 근거에 있을 수 없으므로 내용 형태소에서 뺀다.
 INTERROGATIVES = ("얼마", "몇", "무엇", "어디", "언제", "누구", "어느")
 VERDICT_FIELDS = ("answerable", "answer", "conditions", "conflict", "comparison")
-CONFIRMATION_FIELDS = ("candidate_id", "reason")
-# 값은 독립 답과 같지만 어느 값이 어느 대상의 것인지 글로 확인하지 못한 답. 맞을 수도 있어 거절하지 않고 사람에게 넘긴다.
-UNATTRIBUTED = "대상 확인 불가: 값은 같지만 값마다 대상이 독립 답과 같은지 확인하지 못했습니다"
+# generation.with_document 가 질문 앞에 붙인 문서 이름: "기관의 「사업 이름」 사업에서 ".
+DOCUMENT_PREFIX = re.compile(r"^.*?」 사업에서 ")
 # 천 · 만 · 억(NR) 은 수에 곱하는 단위다. 5만원 과 50,000원 은 같은 값이다.
 SCALES = {"십": 10, "백": 100, "천": 1000, "만": 10_000, "억": 10**8, "조": 10**12}
 CONTENT_TAGS = ("NNG", "NNP", "SL", "SN")
 # 값의 대상에는 의존 명사도 든다 (1차년도 의 차 · 년도).
 SUBJECT_TAGS = CONTENT_TAGS + ("NNB",)
+# 쓸모 판정기가 쓸모 없다고 할 때 고르는 실패 코드. 뺀 항목은 이 코드로 실패 기록에 들어가 다음 생성의 예방 규칙이 된다.
+SCREEN_CODES = ("structure_question", "ordinal_reference", "evidence_reference", "copied", "answer_dump",
+                "personal_info", "malformed_question", "invalid_comparison", "useless_answer")
+# 칸이 비어 행의 뜻이 정해지지 않는 표 행: 빈 칸으로 시작하거나 빈 칸이 이어진다 (조직도 · 간트 모양).
+BLANK_CELL = re.compile(r"(^|\n) *\||\| *\|")
 
 
 def validate(topic, method, run_id, config_path, client):
-    """run 의 후보마다 독립 검증기를 불러 auto_validated · held · rejected 로 나눠 쓴다. run 마다 한 번만 한다.
+    """run 의 후보마다 독립 검증기를 불러 auto_validated · rejected 로 나눠 쓴다. run 마다 한 번만 한다.
 
-    client 는 생성과 같은 계약이다: client(model=..., messages=[...]) -> {"model", "text", "input_tokens", "output_tokens"}.
+    client 는 생성과 같은 계약이다: client(model=..., reasoning_effort=..., messages=[...]) -> {"model", "text", "input_tokens", "output_tokens"}.
     """
-    config, config_sha = generation._run_config(config_path)
     run_dir = storage.unvalidated_run(topic, method, run_id)
+    candidates = storage._read_jsonl(run_dir / "candidates.jsonl")
+    survivors = _survivors(topic, method, run_id)
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors)
+    return storage.write_validation(topic, method, run_id, judged, info)
+
+
+def resume_validation(topic, method, run_id, config_path, client):
+    """B · C run 의 검증이 호출 수 한도나 예산에 닿아 남긴 pending 후보만 이어서 검증한다.
+
+    A 의 검증은 자기 개선 loop 가 맡는다. loop 의 round 와 report 가 그 검증 기록을 읽기 때문이다.
+    한 run 의 후보는 같은 기준으로 판정해야 하므로 검증기 버전 · 난도 규칙 · 프롬프트 · 모델 · 단가가
+    앞 기록과 다르면 호출 전에 멈춘다. 앞에서 통과한 같은 run 의 항목도 중복 검사에 넣는다.
+    """
+    if method == "A":
+        raise ValueError("A 의 검증은 자기 개선 loop 가 이어 돕니다")
+    accepted = storage.read_validated(topic, method, run_id)
+    run_dir = storage.run_path(topic, method, run_id)
+    last = storage._read_json(storage.validation_records(run_dir)[-1])
+    if not last["pending"]:
+        raise ValueError(f"이어서 검증할 pending 후보가 없습니다: {topic}/{method}/{run_id}")
+    current = {"validator_version": VALIDATOR_VERSION, "difficulty_rule": DIFFICULTY_RULE,
+               "prompt_sha256": storage._sha256(storage.PROMPTS / "validator.txt"),
+               "run_config": generation._run_config(config_path)[0]}
+    changed = sorted(key for key, value in _criteria(current).items() if _criteria(last)[key] != value)
+    if changed:
+        raise ValueError(f"{topic}/{method}/{run_id} 를 앞서 검증할 때와 기준이 다릅니다: {changed}")
+
+    survivors = _survivors(topic, method, run_id)
+    for item in accepted:
+        for key in _keys(item):
+            survivors.setdefault(key, item["candidate_id"])
+    pending = set(last["pending"])
+    candidates = [item for item in storage._read_jsonl(run_dir / "candidates.jsonl") if item["candidate_id"] in pending]
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors)
+    return storage.continue_validation(topic, method, run_id, judged, info)
+
+
+def _criteria(record):
+    """한 run 의 검증 기준: 검증기 버전 · 난도 규칙 · 프롬프트 SHA-256 과 run 설정의 모델 · 단가 (한도 · 예산은 빼고)."""
+    priced = {key: value for key, value in record["run_config"].items() if key not in ("max_calls", "budget_usd")}
+    return {"validator_version": record["validator_version"], "difficulty_rule": record["difficulty_rule"],
+            "prompt_sha256": record["prompt_sha256"], "run_config": priced}
+
+
+def _judge_run(run_dir, topic, method, config_path, client, candidates, survivors):
+    """candidates 를 차례로 검증해 (판정한 항목, 검증 기록) 을 돌려준다. 한도에 닿으면 남은 후보를 pending 에 남긴다."""
+    config, config_sha = generation._run_config(config_path)
     plan_id, planned, spec = _pinned_plan(run_dir, topic)
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
+    units = {item["candidate_id"]: evidence_units(item, bundles[item["bundle_id"]]) for item in candidates}
     prompt_path = storage.PROMPTS / "validator.txt"
     calls = []
     ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls)
-    survivors = _survivors(topic, method, run_id)
+    judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls)
+    free_rejects = _static_rejections(candidates, spec, units, survivors)
+    rejected_ids = {item["candidate_id"] for item in free_rejects}
+    to_judge = [item for item in candidates if item["candidate_id"] not in rejected_ids]
 
-    judged, pending, status = [], [], "complete"
-    for item in storage._read_jsonl(run_dir / "candidates.jsonl"):
-        units = evidence_units(item, bundles[item["bundle_id"]])
-        if status == "complete":
-            status = _limit(config, calls, _calls_needed(item, units))
-        if status != "complete":
-            pending.append(item["candidate_id"])
-            continue
-        judged.append(judge(item, spec, units, ask, survivors))
+    judged, status = [], "complete"
+    while len(judged) < len(to_judge):
+        rest = to_judge[len(judged):]
+        batch = _batch(config, calls, rest, units)
+        if not batch:
+            needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]])
+            status = generation.limit_reached(config, len(calls), generation._cost(config, calls), needed)
+            break
+        verdicts = generation.parallel(
+            lambda item: _verdict(item, spec, units[item["candidate_id"]], ask, judge, survivors), batch)
+        judged += [_settle(item, verdict, units[item["candidate_id"]], survivors) for item, verdict in zip(batch, verdicts)]
+    unjudged = to_judge[len(judged):]
+    free_rejects += _static_rejections(unjudged, spec, units, survivors)
+    rejected_ids.update(item["candidate_id"] for item in free_rejects)
+    pending = [item["candidate_id"] for item in unjudged if item["candidate_id"] not in rejected_ids]
+    if not pending:
+        status = "complete"
     info = {
-        "run_id": run_id,
+        "run_id": run_dir.name,
         "topic": topic,
         "method": method,
         "validator_version": VALIDATOR_VERSION,
@@ -69,44 +134,110 @@ def validate(topic, method, run_id, config_path, client):
         "run_config_sha256": config_sha,
         "prompt_file": prompt_path.relative_to(storage.PROMPTS).as_posix(),
         "prompt_sha256": storage._sha256(prompt_path),
+        "judge_prompt_sha256": storage._sha256(storage.PROMPTS / "judge.txt"),
         "status": status,
         "pending": pending,
         "cost_usd": generation._cost(config, calls),
         "calls": calls,
     }
-    return storage.write_validation(topic, method, run_id, judged, info)
+    settled = {item["candidate_id"]: item for item in [*free_rejects, *judged]}
+    return [settled[item["candidate_id"]] for item in candidates if item["candidate_id"] in settled], info
+
+
+def _static_rejections(candidates, spec, units, survivors):
+    """호출 한도가 부족해도 무료 검사로 거절할 후보는 실패 기록에 남기도록 먼저 판정한다."""
+    return [_settle(item, ("rejected", reason), units[item["candidate_id"]], survivors)
+            for item in candidates if (reason := _static_reason(item, spec, units[item["candidate_id"]], survivors))]
 
 
 def _pinned_plan(run_dir, topic):
     """생성 run 이 쓴 계획. 생성 뒤에 계획 파일이 바뀌었으면 검증기에 줄 근거가 후보의 근거와 다르므로 멈춘다."""
-    generated = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["generation"]
+    generated = storage._read_json(run_dir / "manifest.json")["generation"]
     planned, plan_sha, spec = generation._plan_for(generated["plan_id"], topic)
     if plan_sha != generated["plan_sha256"]:
         raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_dir.name} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
     return generated["plan_id"], planned, spec
 
 
-def release(topic, version, runs, confirmations=None):
-    """검증한 run 들의 auto_validated 항목과, 사람이 확인한 held 항목을 releases/{version}/ 로 낸다.
+def release(topic, version, runs, config_path, client):
+    """검증한 run 들의 auto_validated 항목 중 쓸모 판정을 통과한 것을 releases/{version}/ 로 낸다. runs 는 [(method, run_id)] 다.
 
-    runs 는 [(method, run_id)], confirmations 는 사람이 쓴 JSONL 파일 경로다. 한 줄은 {"candidate_id", "reason"} 이다.
+    검증은 답이 근거와 맞는지만 본다. 목차 · 쪽 번호 · 표 머리글을 묻는 질문도 답은 맞아 통과하므로,
+    출시 전에 판정기(prompts/screen.txt)가 RFP 를 읽는 사람이 물을 만한 질문인지 참거짓으로 정한다. 사람이 확인하는 단계는 없다.
+    판정 전에 규칙 검사(rule_reason)를 한 번 더 본다. 규칙이 생기기 전에 검증한 run 도 같은 기준으로 내기 위해서다.
+    빠진 항목과 이유 · 실패 코드는 출시 매니페스트에 남기고, improvement.record_screen 이 실패 기록으로 옮긴다.
+    한도에 닿으면 일부만 낸 출시본을 만들지 않고 멈춘다.
     """
-    confirmed = _confirmations(confirmations)
-    items = []
-    for method, run_id in runs:
-        accepted, held = storage.read_validated(topic, method, run_id)
-        items += [transition(item, "released", "자동 검증 통과") for item in accepted]
-        items += [
-            transition(item, "released", f"사람 확인: {confirmed.pop(item['candidate_id'])}")
-            for item in held if item["candidate_id"] in confirmed
-        ]
-    if confirmed:
-        raise ValueError(f"고른 run 의 보류(held) 항목이 아닌 확인이 있습니다: {sorted(confirmed)}")
+    items, units = _release_items(topic, runs)
     _refuse_duplicates(items)
-    info = {"confirmations": None}
-    if confirmations:
-        info["confirmations"] = {"file": Path(confirmations).name, "sha256": storage._sha256(confirmations)}
-    return storage.write_release(topic, version, items, info)
+    config, config_sha = generation._run_config(config_path)
+    prompt_path = storage.PROMPTS / "screen.txt"
+    calls = []
+    screen = _screener(client, config, prompt_path.read_text(encoding="utf-8"), calls)
+    ruled = {item["candidate_id"]: (False, None, rule)
+             for item in items if (rule := rule_reason(item, units[item["candidate_id"]]))}
+    to_screen = [item for item in items if item["candidate_id"] not in ruled]
+    verdicts = []
+    for start in range(0, len(to_screen), generation.WORKERS):
+        batch = to_screen[start:start + generation.WORKERS]
+        # 출력 오류면 한 번 더 부르므로 항목마다 두 번까지 센다.
+        status = generation.limit_reached(config, len(calls), generation._cost(config, calls), 2 * len(batch))
+        if status:
+            raise ValueError(f"쓸모 판정이 한도({status})에 닿아 출시하지 않았습니다: {len(verdicts)}/{len(to_screen)} 판정")
+        verdicts += generation.parallel(screen, batch)
+    judged = {**ruled, **{item["candidate_id"]: verdict for item, verdict in zip(to_screen, verdicts)}}
+    released = [transition(item, "released", "자동 검증 · 쓸모 판정 통과")
+                for item in items if judged[item["candidate_id"]][0]]
+    dropped = [{"candidate_id": item["candidate_id"], "method": item["method"], "run_id": item["run_id"],
+                "question": item["question"],
+                "code": judged[item["candidate_id"]][1], "reason": judged[item["candidate_id"]][2]}
+               for item in items if not judged[item["candidate_id"]][0]]
+    info = {
+        "screen_prompt_sha256": storage._sha256(prompt_path),
+        "run_config": config,
+        "run_config_sha256": config_sha,
+        "model_reported": sorted({call["model"] for call in calls}),
+        "calls": len(calls),
+        "cost_usd": generation._cost(config, calls),
+        "screened": len(to_screen),
+        "dropped": dropped,
+    }
+    return storage.write_release(topic, version, released, runs, info)
+
+
+def _release_items(topic, runs):
+    """출시의 규칙 검사도 검증 때와 같은 고정 계획에서 인용 근거와 표 머리글만 읽는다."""
+    items, units = [], {}
+    for method, run_id in runs:
+        accepted = storage.read_validated(topic, method, run_id)
+        generated = storage._read_json(storage.run_path(topic, method, run_id) / "manifest.json")["generation"]
+        planned, sha = plan.load_plan(generated["plan_id"])
+        if sha != generated["plan_sha256"]:
+            raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_id} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
+        bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
+        units.update((item["candidate_id"], evidence_units(item, bundles[item["bundle_id"]])) for item in accepted)
+        items.extend(accepted)
+    return items, units
+
+
+def _screener(client, config, instructions, calls):
+    """항목 하나를 판정기에 묻고 (쓸모 있는지, 실패 코드, 이유) 를 돌려주는 함수. 출력이 두 번 다 계약을 어기면 쓸모 없다고 본다."""
+    def screen(item):
+        content = json.dumps({"question": item["question"], "answer": item["answer"]}, ensure_ascii=False)
+        verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful)
+        return verdict if error is None else (False, None, f"판정기 출력 오류: {error}")
+    return screen
+
+
+def _parse_useful(text):
+    row, reason = generation._parse(text, ("useful", "code", "reason"))
+    if row is None:
+        return None, reason
+    if not (isinstance(row["useful"], bool) and generation._is_text(row["reason"])):
+        return None, "useful 은 참거짓, reason 은 비어 있지 않은 문자열이어야 합니다"
+    if not (row["code"] is None if row["useful"] else row["code"] in SCREEN_CODES):
+        return None, f"code 는 쓸모 있으면 null, 없으면 {', '.join(SCREEN_CODES)} 중 하나여야 합니다"
+    return (row["useful"], row["code"], row["reason"]), None
 
 
 def validator_input(question, units):
@@ -121,13 +252,30 @@ def evidence_units(item, bundle):
     return plan._with_headers(cited, headers)
 
 
-def judge(item, spec, units, ask, survivors):
-    """후보 하나를 검증해 전이한 항목을 돌려준다. 통과하거나 보류된 항목은 survivors 에 더해 뒤의 중복을 막는다."""
-    to, reason = _verdict(item, spec, units, ask, survivors)
+def _batch(config, calls, candidates, units):
+    """함께 검증할 앞쪽 후보들 (많아야 WORKERS 개). 후보마다 쓸 수 있는 호출 수를 더해 한도 안에 드는 데까지 고른다."""
+    batch, needed = [], 0
+    for item in candidates[:generation.WORKERS]:
+        needed += _calls_needed(item, units[item["candidate_id"]])
+        if generation.limit_reached(config, len(calls), generation._cost(config, calls), needed):
+            break
+        batch.append(item)
+    return batch
+
+
+def _settle(item, verdict, units, survivors):
+    """판정을 항목에 전이로 남긴다. 함께 판정한 앞 후보와 겹치면 중복으로 거절하고, 통과한 항목은 survivors 에 더한다.
+
+    판정은 여러 후보를 함께 돌리므로 그동안 survivors 를 바꾸지 않는다. 같은 묶음 안의 중복은 여기서 차례대로 막는다.
+    """
+    to, reason = verdict
+    duplicate = next((survivors[key] for key in _keys(item) if key in survivors), None)
+    if to == "auto_validated" and duplicate:
+        to, reason = "rejected", f"중복: {duplicate} 와 같은 근거 묶음이나 질문입니다"
     proven = to == "auto_validated" and item["primary_topic"] == "multi_hop"
     level = difficulty(item["question"], units, proven)
     judged = transition(item, to, reason, validator_version=VALIDATOR_VERSION, difficulty=level)
-    if to != "rejected":
+    if to == "auto_validated":
         for key in _keys(item):
             survivors.setdefault(key, item["candidate_id"])
     return judged
@@ -139,22 +287,18 @@ def quantities(text):
     1억 3천만원 처럼 수 단위로 끝난 수 뒤에 이어 쓴 수는 하나로 더한다. 그래서 1억 3천만원 = 130,000,000원 이다.
     수와 단위를 읽는 법(부호, 단위 끝)은 생성의 numeric 검사와 같다.
     """
-    return {pair for pair, _ in facts(text)}
+    return {pair for pair, _, _ in facts(text)}
 
 
 def facts(text):
-    """text 의 (값, 단위) 쌍마다 그 대상을 함께 돌려준다: [((값, 단위), 대상 낱말 집합)].
+    """text 의 (값, 단위) 쌍마다 그 대상과 글자 범위를 함께 돌려준다: [((값, 단위), 대상 낱말 집합, (시작, 끝))].
 
     대상은 단위가 같은 앞 값 뒤부터 이 값 앞까지의 내용 형태소다. A안은 2억원, B안은 1억원 에서 2억원 의 대상은 {A, 안},
     1억원 의 대상은 {B, 안} 이다. 단위가 다른 값끼리는 바뀔 수 없어 경계로 삼지 않는다 (1차년도 1억원 의 대상은 {1, 차, 년도}).
+    글자 범위는 NFC 로 바꾼 text 에서 그 수 표현(부호부터 단위 끝까지)의 자리다.
     """
-    return [(pair, subject) for pair, subject, _ in _spans(text)]
-
-
-def _spans(text):
-    """facts 와 같고, 쌍마다 NFC 로 바꾼 text 에서 그 수 표현(부호부터 단위 끝까지)의 글자 범위 (시작, 끝) 를 더한다."""
     text = unicodedata.normalize("NFC", text)
-    tokens = generation._kiwi().tokenize(text)
+    tokens = generation.tokens(text)
     found, carry, after = [], {}, {}
     for i, token in enumerate(tokens):
         if token.tag != "SN":
@@ -179,12 +323,12 @@ def _spans(text):
 def same_answer(text, independent):
     """독립 답이 text 에 들어 있는지. 수 · 단위는 값과 그 대상으로 맞추고, 수가 없는 답은 글자로 맞춘다 (공백 · 쉼표 차이만 허용).
 
-    True · False 이고, 값은 모두 있지만 어느 값이 어느 대상의 것인지 확인하지 못하면 None 이다 (사람이 볼 일).
+    True · False 이고, 값은 모두 있지만 어느 값이 어느 대상의 것인지 확인하지 못하면 None 이다 (판정기가 정한다).
     그래서 A안 1억원, B안 2억원 은 A안 2억원, B안 1억원 과 값은 같아도 다른 답이고, 1억원, 2억원 은 확인하지 못한 답이다.
     """
     expected = facts(independent)
     if not expected:
-        return _contains(_norm(text), _norm(independent))
+        return _contains(text, independent)
     found = facts(text)
     return _combined([_attributed(fact, expected, found) for fact in expected])
 
@@ -193,7 +337,7 @@ def same_comparison(structure, independent):
     """비교 항목: 후보 structure 의 대상별 값과 고른 대상을 검증기의 comparison 과 맞춘다. True · False · None.
 
     결론(어느 대상을 골랐는지)은 글에서 읽을 수 없어 둘 다 필드로 받는다. 후보의 답 글은 생성 검사에서 structure 와 같게 묶였다.
-    검증기가 comparison 을 주지 않았거나, 대상 이름이 entities 와 꼭 같지 않으면 맞출 기준이 없어 None (held) 이다.
+    검증기가 comparison 을 주지 않았거나, 대상 이름이 entities 와 꼭 같지 않으면 맞출 기준이 없어 None (판정기가 정한다) 이다.
     대상마다 값은 _same_value 로 맞추고 (1억원 = 100,000,000원), 고른 대상은 이름이 같아야 한다 (둘 다 null 도 같다).
     """
     if independent is None:
@@ -213,7 +357,7 @@ def _same_value(value, independent):
 
     필드는 답 글이 아니라 값 하나라서, 담기(부분 문자열)가 아니라 같음을 본다. 미지원 은 지원 을 담지만 반대 뜻이다.
     글이 같으면(공백 · 쉼표 차이만) True, 수 · 단위 값이 다르면 False, 수 표기만 다르면(1억원 = 100,000,000원) True,
-    그 밖(글이 다른 값)은 같은지 글자로 알 수 없어 None (held) 이다.
+    그 밖(글이 다른 값)은 같은지 글자로 알 수 없어 None 이다.
     수가 여럿이면 수를 쓴 차례로 견준다. 집합으로 견주면 구축 1억원, 운영 2억원 과 구축 2억원, 운영 1억원 이 같아진다.
     수 밖의 글이 같은데 차례대로 놓인 수가 다르면 다른 값이다.
     수 밖의 글에는 수 · 단위 쌍으로 읽지 않은 수(제3회 의 3)가 그대로 남는다. 제3회 회의 1억원 과 제4회 회의 1억원 은 같지 않다.
@@ -237,7 +381,7 @@ def _layout(text):
     """
     text = unicodedata.normalize("NFC", text)
     pairs, frame, last = [], [], 0
-    for pair, _, (start, end) in _spans(text):
+    for pair, _, (start, end) in facts(text):
         pairs.append(pair)
         frame.append(text[last:start])
         last = end
@@ -259,48 +403,66 @@ def _attributed(fact, expected, found):
     text 의 대상에 모두 있어야 하고, 다른 값의 대상에 있는 낱말(foreign)이 있으면 다른 대상의 값이다.
     ponytail: 대상은 값 앞에서만 읽는다. 2억원(A안) 처럼 대상을 값 뒤에 쓴 답은 확인하지 못하거나 바뀐 답으로 읽힌다.
     """
-    pair, subject = fact
-    subjects = [other_subject for other, other_subject in found if other == pair]
+    pair, subject, _ = fact
+    subjects = [other_subject for other, other_subject, _ in found if other == pair]
     if not subjects:
         return False
     rivals = [other for other in expected if other is not fact and other[0][1] == pair[1]]
     if not rivals:
         return True
-    own = subject - set().union(*(other_subject for _, other_subject in rivals))
-    foreign = set().union(*(other_subject for other, other_subject in rivals if other != pair)) - subject
+    own = subject - set().union(*(other_subject for _, other_subject, _ in rivals))
+    foreign = set().union(*(other_subject for other, other_subject, _ in rivals if other != pair)) - subject
     if own and any(own <= other_subject and not other_subject & foreign for other_subject in subjects):
         return True
     return False if all(other_subject & foreign for other_subject in subjects) else None
 
 
 def difficulty(question, units, proven_multi_hop):
-    """DIFFICULTY_RULE 대로 easy · medium · hard 를 정한다."""
+    """DIFFICULTY_RULE 대로 easy · medium · hard 를 정한다.
+
+    생성이 질문 앞에 붙인 문서 이름은 근거 본문에 없으므로 떼고 본다. 붙이면 모든 질문이 medium 이 된다.
+    """
     if proven_multi_hop:
         return "hard"
+    question = DOCUMENT_PREFIX.sub("", question, count=1)
     evidence = _norm(" ".join(unit["text"] for unit in units))
-    tokens = generation._kiwi().tokenize(unicodedata.normalize("NFC", question))
-    words = [_norm(t.form) for t in tokens if t.tag in CONTENT_TAGS and t.form not in INTERROGATIVES]
+    words = [_norm(t.form) for t in generation.tokens(question) if t.tag in CONTENT_TAGS and t.form not in INTERROGATIVES]
     return "easy" if all(word in evidence for word in words) else "medium"
 
 
-def _verdict(item, spec, units, ask, survivors):
-    """(갈 상태, 이유). 돈이 들지 않는 검사를 먼저 하고, 그다음 독립 답을 받는다."""
+def _verdict(item, spec, units, ask, judge, survivors):
+    """(갈 상태, 이유). 돈이 들지 않는 검사를 먼저 하고, 그다음 독립 답을 받는다. 상태는 auto_validated 아니면 rejected 다."""
     reason = _static_reason(item, spec, units, survivors)
     if reason:
         return "rejected", reason
     full, error = ask(item["question"], units)
-    if error:
-        return "held", f"검증기 출력 오류: {error}"
-    if full["conflict"]:
-        return "held", "근거 충돌: 검증기가 근거끼리 같은 사실의 값이 다르다고 답했습니다"
-    reason = next((reason for check in ANSWER_CHECKS if (reason := check(item, full))), None)
+    reason = _answer_reason(item, units, full, error, judge)
     if reason:
         return "rejected", reason
-    if _agreement(item, full) is None:
-        return "held", f"{UNATTRIBUTED}: 독립 답 {full['answer']!r}"
     if item["primary_topic"] == "multi_hop":
-        return _single_unit_verdict(item, units, full, ask)
+        return _single_unit_verdict(item, units, full, ask, judge)
     return "auto_validated", "자동 검증 통과"
+
+
+def _answer_reason(item, units, full, error, judge):
+    """독립 답으로 본 거절 이유, 없으면 None. 검증기가 답하지 못했거나 근거가 서로 다르다고 하면 그 질문은 틀린 문제다."""
+    if error:
+        return f"검증기 출력 오류: {error}"
+    if full["conflict"]:
+        return "근거 충돌: 검증기가 근거끼리 같은 사실의 값이 다르다고 답했습니다"
+    reason = next((reason for check in ANSWER_CHECKS if (reason := check(item, full))), None)
+    if reason:
+        return reason
+    missing = [condition for condition in full["conditions"] if not _states(item["answer"], condition)]
+    same, error = _agreed(item, units, full, missing, judge)
+    if error:
+        return f"검증기 출력 오류 (판정기): {error}"
+    if same:
+        return None
+    if missing:
+        return f"조건 · 예외 누락: 독립 답이 단 조건 {missing} 이 답에 없습니다"
+    independent = full["comparison"] if item["primary_topic"] == "comparison" else full["answer"]
+    return f"독립 답과 다릅니다: 독립 답 {independent!r}"
 
 
 def _static_reason(item, spec, units, survivors):
@@ -308,26 +470,49 @@ def _static_reason(item, spec, units, survivors):
     mismatch = generation.check_structure(item["primary_topic"], spec, item, cited)
     if mismatch:
         return f"유형 불일치: {mismatch}"
-    relation = _table_relation(item, units) if item["primary_topic"] == "table" else _condition_relation(item)
+    rule = rule_reason(item, units)
+    if rule:
+        return rule
+    check = RELATIONS.get(item["primary_topic"])
+    relation = check(item, units) if check else None
     if relation:
         return relation
     duplicate = next((survivors[key] for key in _keys(item) if key in survivors), None)
     return f"중복: {duplicate} 와 같은 근거 묶음이나 질문입니다" if duplicate else None
 
 
-def _single_unit_verdict(item, units, full, ask):
+def rule_reason(item, units):
+    """독립 답과 맞아 검증을 통과하지만 평가에 쓸 수 없던 꼴이면 그 이유, 아니면 None. 돈이 들지 않아 검증 앞과 출시 앞에서 본다."""
+    topic, question = item["primary_topic"], DOCUMENT_PREFIX.sub("", item["question"]).strip()
+    if topic == "numeric" and re.fullmatch(
+            r"(?:사업의\s*)?(?:값과 단위|수치와 단위|첫 번째 값)(?:은|는)?\s*(?:(?:무엇|얼마)인가)?[?？]?", question):
+        return "모호한 대상: 질문이 '값과 단위' · '첫 번째 값' 처럼 대상을 이름으로 가리키지 않습니다"
+    if topic == "table" and "\n" in question:
+        return "끊긴 질문: 질문에 줄바꿈이 있습니다"
+    if topic == "table" and any(BLANK_CELL.search(unit["text"]) for unit in units if plan._table_row(unit) is not None):
+        return "빈 칸 표: 인용한 표 행이나 머리글에 빈 칸으로 시작하거나 빈 칸이 이어진 행이 있습니다"
+    if topic == "condition" and "(조건:" in item["answer"]:
+        return "답 덧붙임: 답에 '(조건: …)' 이 붙었습니다"
+    # 생성 검사도 choice 를 요구하지만, 그 전에 검증한 run 을 출시할 때 여기서 걸러진다.
+    if topic == "comparison" and item["structure"].get("choice") is None:
+        return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
+    if topic == "multi_hop" and len({ref["chunk_id"] for ref in item["evidence"]}) < 2:
+        return "multi_hop 아님: 인용한 근거가 모두 한 청크 안에 있습니다"
+    return None
+
+
+def _single_unit_verdict(item, units, full, ask, judge):
     """multi_hop 은 근거 단위를 하나씩만 줬을 때 어느 것으로도 독립 답이 나오지 않아야 한다 (머리글 행은 그 표 행에 붙여 준다)."""
     headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
     for unit in units:
         if plan._table_row(unit) == 0:
             continue
         single, error = ask(item["question"], plan._with_headers([unit], headers))
+        if not error and single["answerable"]:
+            same, error = _settled(item["question"], units, full["answer"], single["answer"], judge)
         if error:
-            return "held", f"검증기 출력 오류 (근거 {unit['label']} 단독): {error}"
-        same = single["answerable"] and same_answer(single["answer"], full["answer"])
-        if same is None:
-            return "held", f"{UNATTRIBUTED} (근거 {unit['label']} 단독): 답 {single['answer']!r}"
-        if same:
+            return "rejected", f"검증기 출력 오류 (근거 {unit['label']} 단독): {error}"
+        if single["answerable"] and same:
             return "rejected", f"multi_hop 아님: 근거 {unit['label']} 하나로 답이 나옵니다"
     return "auto_validated", "자동 검증 통과: 근거 하나만으로는 답이 나오지 않습니다"
 
@@ -348,24 +533,34 @@ def _numeric_answer(item, full):
     return None
 
 
-def _same_as_independent(item, full):
-    # 대상을 확인하지 못한 답(None)은 여기서 거절하지 않고, 다른 거절 검사를 마친 뒤 held 로 보낸다.
-    if _agreement(item, full) is False:
-        independent = full["comparison"] if item["primary_topic"] == "comparison" else full["answer"]
-        return f"독립 답과 다릅니다: 독립 답 {independent!r}"
-    return None
+def _agreed(item, units, full, missing, judge):
+    """후보 답이 독립 답과 같은지 (참거짓, 출력 오류). 비교 항목은 글 대신 대상별 값과 고른 대상을 맞춘다.
+
+    값 · 글자로 정하지 못하면 판정기가 정한다. 독립 답이 단 조건이 답에 글자 그대로 없을 때(missing)도 판정기가 정한다.
+    검증기는 질문과 상관없는 조건까지 달기도 해서, 글자로만 보면 맞는 답이 조건 누락으로 쌓인다.
+    """
+    if missing:
+        independent = f"{full['answer']} (조건 · 예외: {'; '.join(missing)})"
+        return judge(item["question"], units, independent, item["answer"])
+    if item["primary_topic"] != "comparison":
+        return _settled(item["question"], units, full["answer"], item["answer"], judge)
+    same = same_comparison(item["structure"], full["comparison"])
+    if same is None:
+        independent = json.dumps(full["comparison"] or full["answer"], ensure_ascii=False)
+        return judge(item["question"], units, independent, item["answer"])
+    return same, None
 
 
-def _agreement(item, full):
-    """후보 답이 독립 답과 같은지: True · False · None. 비교 항목은 글 대신 대상별 값과 고른 대상을 맞춘다."""
-    if item["primary_topic"] == "comparison":
-        return same_comparison(item["structure"], full["comparison"])
-    return same_answer(item["answer"], full["answer"])
+def _settled(question, units, independent, answer, judge):
+    """answer 가 독립 답과 같은지 (참거짓, 출력 오류).
 
-
-def _conditions_stated(item, full):
-    missing = [condition for condition in full["conditions"] if not _states(item["answer"], condition)]
-    return f"조건 · 예외 누락: 독립 답이 단 조건 {missing} 이 답에 없습니다" if missing else None
+    수 · 단위가 다르면 다르다. 대상을 확인하지 못한 값, 그리고 수가 없는 글 답이 글자로 다를 때는 표현만 다를 수 있어
+    판정기가 정한다.
+    """
+    same = same_answer(answer, independent)
+    if same is None or (same is False and not facts(independent)):
+        return judge(question, units, independent, answer)
+    return same, None
 
 
 def _not_copied(item, full):
@@ -373,17 +568,13 @@ def _not_copied(item, full):
     # 질문에 값이 모두 있으면 대상을 확인하지 못했어도(None) 답을 내준 것이다.
     if same_answer(item["question"], full["answer"]) is False:
         return None
-    if _norm(full["answer"]) in {_norm(entity) for entity in _entities(item) or []}:
+    entities = item["structure"]["entities"] if item["primary_topic"] == "comparison" else []
+    if _norm(full["answer"]) in {_norm(entity) for entity in entities}:
         return None
     return f"복사형: 질문에 답 {full['answer']!r} 이 들어 있습니다"
 
 
-def _entities(item):
-    """비교 항목이 견주는 대상 이름 (구조의 entities). 다른 주제는 None 이다."""
-    return item["structure"]["entities"] if item["primary_topic"] == "comparison" else None
-
-
-ANSWER_CHECKS = (_answerable, _numeric_answer, _same_as_independent, _conditions_stated, _not_copied)
+ANSWER_CHECKS = (_answerable, _numeric_answer, _not_copied)
 
 
 def _table_relation(item, units):
@@ -395,12 +586,13 @@ def _table_relation(item, units):
     return None if _states(item["answer"], cell) else f"표 관계: {row} · {column} 칸은 {cell!r} 인데 답에 없습니다"
 
 
-def _condition_relation(item):
+def _condition_relation(item, units):
     """조건 주제의 답은 그 조건 · 예외 문구를 함께 밝혀야 한다 (주제 명세 requires)."""
-    condition = item["structure"]["condition"] if item["primary_topic"] == "condition" else None
-    if condition is None or _states(item["answer"], condition):
-        return None
-    return f"조건 · 예외 누락: 답에 조건 {condition!r} 이 없습니다"
+    condition = item["structure"]["condition"]
+    return None if _states(item["answer"], condition) else f"조건 · 예외 누락: 답에 조건 {condition!r} 이 없습니다"
+
+
+RELATIONS = {"table": _table_relation, "condition": _condition_relation}
 
 
 def _cell(units, row, column):
@@ -420,7 +612,7 @@ def _cell(units, row, column):
 
 
 def _states(answer, phrase):
-    return _contains(_norm(answer), _norm(phrase))
+    return _contains(answer, phrase)
 
 
 def _scale(tokens, i):
@@ -461,7 +653,7 @@ def _refuse_duplicates(items):
 
 
 def _survivors(topic, method, run_id):
-    """카탈로그로 찾은 같은 주제 · 방식의 다른 run 에서 검증을 통과했거나 보류된 항목의 중복 키.
+    """카탈로그로 찾은 같은 주제 · 방식의 다른 run 에서 검증을 통과한 항목의 중복 키.
 
     거절된 항목은 넣지 않는다. 같은 근거로 다시 만든 항목(자기 개선)이 중복으로 막히지 않게 하기 위해서다.
     다른 방식(A · B · C)은 같은 계획을 받아 같은 근거 묶음을 쓰는 것이 비교의 전제라 중복으로 보지 않는다.
@@ -473,19 +665,37 @@ def _survivors(topic, method, run_id):
     survivors = {}
     for other in sorted(runs):
         if (storage.run_path(topic, method, other) / "validation.json").exists():
-            accepted, held = storage.read_validated(topic, method, other)
-            for item in accepted + held:
+            for item in storage.read_validated(topic, method, other):
                 for key in _keys(item):
                     survivors.setdefault(key, item["candidate_id"])
     return survivors
 
 
 def _asker(client, config, instructions, calls):
-    """질문과 근거 단위로 검증기를 한 번 부르고 (답, None) 또는 (None, 출력 오류) 를 돌려주는 함수."""
+    """질문과 근거 단위로 검증기를 부르고 (답, None) 또는 (None, 출력 오류) 를 돌려주는 함수."""
     def ask(question, units):
         content = json.dumps(validator_input(question, units), ensure_ascii=False)
-        messages = [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
-        response = client(model=config["model"], messages=messages)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict)
+    return ask
+
+
+def _judger(client, config, instructions, calls):
+    """독립 답(answer_a)과 후보 답(answer_b)이 같은 답인지 판정기에 묻고 (참거짓, None) 또는 (None, 출력 오류) 를 돌려주는 함수.
+
+    판정기는 질문 · 근거 · 두 답만 받는다. 독립 답은 후보 답을 보지 않고 나왔으므로, 판정기는 견주기만 한다.
+    """
+    def judge(question, units, independent, answer):
+        content = json.dumps({**validator_input(question, units), "answer_a": independent, "answer_b": answer},
+                             ensure_ascii=False)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_same)
+    return judge
+
+
+def _reply(client, config, instructions, content, calls, question, units, parse):
+    """한 번 부르고, 출력이 계약에 맞지 않으면 한 번 더 부른다. 두 번 다 어기면 (None, 출력 오류)."""
+    messages = [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
+    for _ in range(2):
+        response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
         calls.append({
             "question": question,
             "labels": [unit["label"] for unit in units],
@@ -493,8 +703,17 @@ def _asker(client, config, instructions, calls):
             "input_tokens": response["input_tokens"],
             "output_tokens": response["output_tokens"],
         })
-        return _parse_verdict(response["text"])
-    return ask
+        parsed, error = parse(response["text"])
+        if error is None:
+            return parsed, None
+    return None, error
+
+
+def _parse_same(text):
+    row, reason = generation._parse(text, ("same",))
+    if row is not None and not isinstance(row["same"], bool):
+        return None, "same 은 참거짓이어야 합니다"
+    return (row["same"], None) if row is not None else (None, reason)
 
 
 def _parse_verdict(text):
@@ -527,31 +746,10 @@ def _valid_comparison(comparison):
 
 
 def _calls_needed(item, units):
-    """후보 하나에 쓸 수 있는 최대 호출 수: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 한 번 더."""
+    """후보 하나에 드는 호출 수: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 한 번 더.
+
+    한 후보의 검증을 도중에 끊지 않도록 후보를 시작하기 전에 이만큼을 한도와 견준다.
+    ponytail: 출력 오류의 다시 묻기 · 판정기 호출은 세지 않아 그만큼 한도를 넘을 수 있다. 정확히 막아야 하면 최대치로 센다.
+    """
     singles = sum(plan._table_row(unit) != 0 for unit in units) if item["primary_topic"] == "multi_hop" else 0
     return 1 + singles
-
-
-def _limit(config, calls, needed):
-    """한 후보의 검증을 도중에 끊지 않도록 후보를 시작하기 전에 호출 수 한도와 예산을 본다."""
-    if len(calls) + needed > config["max_calls"]:
-        return "call_cap"
-    # ponytail: 예산은 후보 사이에만 본다. 마지막 후보의 호출만큼 넘을 수 있다.
-    if generation._cost(config, calls) >= config["budget_usd"]:
-        return "budget"
-    return "complete"
-
-
-def _confirmations(path):
-    """사람이 held 항목을 확인한 기록. 한 줄이 정확히 {candidate_id, reason} 이고 이유는 비어 있지 않아야 한다."""
-    if path is None:
-        return {}
-    confirmed = {}
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
-        if not isinstance(row, dict) or set(row) != set(CONFIRMATION_FIELDS) or not generation._is_text(row["reason"]):
-            raise ValueError(f"확인 기록 한 줄은 정확히 {CONFIRMATION_FIELDS} 이고 reason 이 있어야 합니다: {line}")
-        confirmed[row["candidate_id"]] = row["reason"]
-    return confirmed

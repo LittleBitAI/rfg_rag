@@ -3,32 +3,43 @@
 A · B · C 는 같은 계획 파일을 읽으므로 같은 근거 묶음과 같은 컨텍스트를 받는다.
 근거 묶음은 근거 어댑터가 eligible 로 판정한 단위로만 만든다.
 """
-import argparse
+import csv
 import hashlib
 import json
 import re
+import unicodedata
 from collections import defaultdict
+from pathlib import Path
 
 from golden_pipeline import evidence, storage
 from golden_pipeline.schema import EVIDENCE_FIELDS, TOPICS
 
+# 줄 끝에 쪽 번호가 붙은 목차 줄 (1. 용역개요 02). 목차로 만든 질문은 RFP 내용을 묻지 않는다.
+TOC_LINE = re.compile(r"\S\s+\d{1,3}\s*$")
 
-def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE):
-    """근거 어댑터 run 의 eligible 단위로 주제별 근거 묶음을 골라 outputs/plans/{plan_id}.json 에 쓴다."""
+
+def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE, skip_plans=()):
+    """근거 어댑터 run 의 eligible 단위로 주제별 근거 묶음을 골라 outputs/plans/{plan_id}.json 에 쓴다.
+
+    skip_plans 의 계획이 쓴 단위는 넣지 않는다. 묶음은 늘 같은 순서로 고르므로, 빼지 않으면 앞 계획의 묶음이 다시 뽑힌다.
+    """
     unknown = sorted(set(counts) - set(TOPICS))
     if unknown or not all(isinstance(n, int) and n > 0 for n in counts.values()):
         raise ValueError(f"counts 는 주제 {TOPICS} 별 양의 정수여야 합니다: {counts}")
     path = storage._child(storage.OUTPUTS / "plans", f"{plan_id}.json")
     run_dir = storage._child(storage.OUTPUTS / "evidence", evidence_run)
-    pinned = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["pinned_sha256"]
+    pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
     _check_package(package, pinned)
-    units = eligible_units(run_dir, package)
+    units = [unit for unit in eligible_units(run_dir, package) if not _is_toc(unit["text"])]
+    names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
-    bundles, used = [], set()
+    bundles = []
+    skipped = {skipped_id: load_plan(skipped_id) for skipped_id in skip_plans}
+    used = {unit["unit_id"] for planned, _ in skipped.values() for bundle in planned["bundles"] for unit in bundle["units"]}
     # 한 단위는 한 주제의 묶음에만 들어간다. 카탈로그가 같은 근거 묶음을 두 주제에 두지 않기 때문이다.
     for topic, (spec, _) in specs.items():
-        chosen = _pick(_groups(topic, spec, units, used, max_context_chars), counts[topic])
+        chosen = _pick(_groups(topic, spec, units, used, max_context_chars, names), counts[topic])
         used.update(unit["unit_id"] for bundle in chosen for unit in bundle["units"])
         bundles += chosen
 
@@ -37,6 +48,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         "created_at": storage._now(),
         "code_commit": storage._code_commit(),
         "evidence_run": evidence_run,
+        "skipped_plans": {skipped_id: sha for skipped_id, (_, sha) in skipped.items()},
         "v11_manifest_sha256": pinned["manifest.json"],
         "topic_specs": {topic: sha for topic, (_, sha) in specs.items()},
         "max_context_chars": max_context_chars,
@@ -54,15 +66,13 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
 def load_plan(plan_id):
     """계획과 그 파일의 SHA-256 을 돌려준다. run 매니페스트는 이 해시로 어떤 계획을 썼는지 남긴다."""
     path = storage._child(storage.OUTPUTS / "plans", f"{plan_id}.json")
-    return json.loads(path.read_text(encoding="utf-8")), storage._sha256(path)
+    return storage._read_json(path), storage._sha256(path)
 
 
 def topic_spec(topic):
     """주제 명세(configs/topics/{topic}.json)와 그 파일의 SHA-256."""
-    if topic not in TOPICS:
-        raise ValueError(f"topic 은 {TOPICS} 중 하나여야 합니다: {topic!r}")
     path = storage.CONFIGS / "topics" / f"{topic}.json"
-    return json.loads(path.read_text(encoding="utf-8")), storage._sha256(path)
+    return storage._read_json(path), storage._sha256(path)
 
 
 def eligible_units(run_dir, package):
@@ -78,6 +88,30 @@ def eligible_units(run_dir, package):
     for unit in units:
         unit["text"] = _unit_text(unit["ref"], elements[unit["ref"]["element_id"]])
     return [unit for unit in units if unit["text"].strip()]
+
+
+def doc_names(package, docs):
+    """문서 SHA → {"agency": 발주 기관, "title": 사업 이름}. 문서 98개 가운데 어느 문서의 질문인지 밝히는 데 쓴다.
+
+    v11 레코드의 source_paths 첫 파일 이름("기관_사업명.hwp")으로 패키지 옆 data_list.csv 의 정리된 발주 기관을 찾고,
+    사업 이름은 파일 이름의 _ 뒤에서 앞머리 [재공고] 같은 표시를 뺀 것이다. 파일 이름이 잘려 사업 이름도 잘려 있을 수 있다.
+    한 기관에 문서가 여럿이라 기관 이름만으로는 문서를 가리지 못한다.
+    """
+    with (package.parent / "data_list.csv").open(encoding="utf-8-sig") as f:
+        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주 기관"] for row in csv.DictReader(f)}
+    names = {}
+    for record in evidence._iter_jsonl(package / evidence.RECORDS):
+        if record["doc_id"] in docs and record["doc_id"] not in names:
+            # 원본 파일 이름 일부는 한글이 자모로 풀린 NFD 라 csv 의 NFC 이름과 맞지 않는다.
+            file = Path(unicodedata.normalize("NFC", record["source_paths"][0]))
+            title = re.sub(r"^(\[[^\]]*\])+", "", file.stem.split("_", 1)[-1]).strip()
+            names[record["doc_id"]] = {"agency": agencies[file.name], "title": title}
+    return names
+
+
+def _is_toc(text):
+    lines = [line for line in text.splitlines() if line.strip()]
+    return len(lines) >= 2 and 2 * sum(bool(TOC_LINE.search(line)) for line in lines) >= len(lines)
 
 
 def _check_package(package, pinned):
@@ -107,7 +141,7 @@ def _unit_text(ref, element):
     return " | ".join(cell["text"] for cell in element["cells"] if cell["row"] == location["row"])
 
 
-def _groups(topic, spec, units, used, max_context_chars):
+def _groups(topic, spec, units, used, max_context_chars, names):
     """문서마다 주제에 맞는 단위를 패키지 순서대로 bundle_units 개씩 묶는다. 컨텍스트가 한도를 넘는 묶음은 버린다."""
     # 다른 주제가 이미 가진 머리글 행은 붙이지 않는다. 그 표의 나머지 행은 묶음이 되지 못한다.
     headers = {unit["ref"]["element_id"]: unit for unit in units if _table_row(unit) == 0 and unit["unit_id"] not in used}
@@ -122,10 +156,30 @@ def _groups(topic, spec, units, used, max_context_chars):
     size = spec["bundle_units"]
     groups = {}
     for doc, doc_units in sorted(by_doc.items()):
-        chunks = [_with_headers(doc_units[i:i + size], headers) for i in range(0, len(doc_units) - size + 1, size)]
-        bundles = [_bundle(topic, chunk) for chunk in chunks if chunk]
+        if topic == "multi_hop":
+            windows = _spanning(doc_units, size)
+        else:
+            windows = [doc_units[i:i + size] for i in range(0, len(doc_units) - size + 1, size)]
+        windows = [_with_headers(window, headers) for window in windows]
+        bundles = [_bundle(topic, window, names[doc]) for window in windows if window]
         groups[doc] = [b for b in bundles if len(b["context"]) <= max_context_chars]
     return groups
+
+
+def _spanning(units, size):
+    """이어진 단위 size 개씩 묶되, 청크 둘 이상에 걸친 묶음만 낸다 (multi_hop).
+
+    한 청크 안의 단위만 받은 생성기는 청크 둘을 이어야 하는 질문을 만들 수 없어 그 묶음은 늘 거절된다.
+    """
+    windows, start = [], 0
+    while start + size <= len(units):
+        window = units[start:start + size]
+        if len({unit["ref"]["chunk_id"] for unit in window}) >= 2:
+            windows.append(window)
+            start += size
+        else:
+            start += 1
+    return windows
 
 
 def _with_headers(chunk, headers):
@@ -156,15 +210,25 @@ def _pick(groups, count):
     return chosen
 
 
-def _bundle(topic, units):
+def _bundle(topic, units, doc):
+    """근거 묶음. doc 은 그 문서의 발주 기관 · 사업 이름이고, 생성이 질문 앞에 붙인다."""
     labelled = [{"label": f"E{i}", **unit} for i, unit in enumerate(units, 1)]
     ids = "\n".join(unit["unit_id"] for unit in units)
+    chunks = list(dict.fromkeys(unit["ref"]["chunk_id"] for unit in units))
+
+    def header(unit):
+        # multi_hop 은 청크 둘을 이어야 하는데, 라벨만으로는 생성기가 어느 근거가 같은 청크인지 알 수 없다.
+        if topic != "multi_hop":
+            return unit["label"]
+        return f"{unit['label']} · 청크 {chunks.index(unit['ref']['chunk_id']) + 1}"
+
     return {
         "bundle_id": "b-" + hashlib.sha256(ids.encode("utf-8")).hexdigest()[:16],
         "topic": topic,
         "doc_sha": units[0]["ref"]["doc_sha"],
+        "doc": doc,
         "units": labelled,
-        "context": "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in labelled),
+        "context": "\n\n".join(f"[{header(unit)}]\n{unit['text']}" for unit in labelled),
     }
 
 
@@ -173,18 +237,3 @@ def _coverage(bundles):
     for bundle in bundles:
         coverage[bundle["topic"]][bundle["doc_sha"]] += 1
     return {topic: dict(docs) for topic, docs in coverage.items()}
-
-
-def main():
-    parser = argparse.ArgumentParser(description="주제별 분포 계획 (API 호출 없음)")
-    parser.add_argument("plan_id")
-    parser.add_argument("evidence_run", help="golden_pipeline/outputs/evidence 아래 근거 어댑터 run_id")
-    parser.add_argument("--count", nargs=2, action="append", metavar=("TOPIC", "N"), required=True)
-    parser.add_argument("--max-context-chars", type=int, required=True)
-    args = parser.parse_args()
-    counts = {topic: int(n) for topic, n in args.count}
-    print(make_plan(args.plan_id, args.evidence_run, counts, args.max_context_chars))
-
-
-if __name__ == "__main__":
-    main()

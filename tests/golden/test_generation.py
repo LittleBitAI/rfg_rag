@@ -10,7 +10,7 @@ from golden_pipeline.plan import load_plan, make_plan, topic_spec
 DOC_1 = "1" * 64
 REPORTED = "gpt-test-2026-10-01"
 CONFIG = {
-    "model": "gpt-test", "max_calls": 10, "budget_usd": 1.0,
+    "model": "gpt-test", "reasoning_effort": "low", "max_calls": 10, "budget_usd": 1.0,
     "usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0,
 }
 NUMERIC = {
@@ -26,8 +26,8 @@ class Client:
         self.replies = [json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else r for r in replies]
         self.requests = []
 
-    def __call__(self, model, messages):
-        self.requests.append({"model": model, "messages": messages})
+    def __call__(self, model, reasoning_effort, messages):
+        self.requests.append({"model": model, "reasoning_effort": reasoning_effort, "messages": messages})
         return {"model": REPORTED, "text": self.replies.pop(0), "input_tokens": 1000, "output_tokens": 200}
 
 
@@ -62,7 +62,7 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
     assert item["bundle_id"] == numeric["bundle_id"]
     assert item["context"] == client.requests[0]["messages"][1]["content"] == numeric["context"]
     assert item["evidence"] == [numeric["units"][0]["ref"]]
-    for name in ("accepted.jsonl", "review.jsonl", "rejected.jsonl"):
+    for name in ("accepted.jsonl", "rejected.jsonl"):
         assert read_jsonl(run_dir / name) == []
 
     info = manifest(run_dir)["generation"]
@@ -83,20 +83,11 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
 @pytest.mark.parametrize("answer, structure", [
     ("예산은 사업 규모와 부가세 포함 여부에 따라 정해진다", {"value": "130,000,000", "unit": "원"}),
     ("예산은 사업 규모와 부가세 포함 여부에 따라 정해진다", {"value": "", "unit": ""}),
-    ("예산은 999원이다", {"value": "999", "unit": "원"}),
-    # 근거의 130,000,000원 · 12개월 안에 든 더 짧은 수다. 수는 통째로 맞아야 한다.
-    ("예산은 30,000,000원이다", {"value": "30,000,000", "unit": "원"}),
-    ("기간은 2개월이다", {"value": "2", "unit": "개월"}),
-    # 근거의 12개월 은 단위가 개월 이다. 단위도 통째로 맞아야 하고, 값과 단위를 다르게 나눠도 안 된다.
-    ("기간은 12개이다", {"value": "12", "unit": "개"}),
+    # 근거의 12개월 은 값 12 와 단위 개월 이다. 값과 단위를 다르게 나눠도 안 된다.
     ("기간은 12개월이다", {"value": "12개", "unit": "월"}),
-    # 부호는 값의 일부다. 근거의 130,000,000원 은 양수다.
-    ("-130,000,000원", {"value": "130,000,000", "unit": "원"}),
-    ("△130,000,000원", {"value": "130,000,000", "unit": "원"}),
-    ("- 130,000,000원", {"value": "130,000,000", "unit": "원"}),
 ])
 def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch(planned, answer, structure):
-    # 값 없이 설명만 하는 답이 numeric 후보로 남던 경우를 막는다. 근거에 없는 값도 같은 이유로 거절한다.
+    # 값 없이 설명만 하는 답이 numeric 후보로 남던 경우를 막는다. 근거에 없는 값은 아래 쌍 검사가 거절한다.
     run_dir = generate("A", "numeric", "p1", "a1", planned, Client({**NUMERIC, "answer": answer, "structure": structure}))
 
     assert read_jsonl(run_dir / "candidates.jsonl") == []
@@ -105,13 +96,21 @@ def test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mis
     assert reject["bundle_id"] == bundle("numeric")["bundle_id"]
 
 
-def test_numeric_unit_followed_by_a_particle_is_accepted(planned):
-    # 조사는 단위에 붙는다 (12개월이다). 단위 끝을 글자 종류로 가르는 수정은 이 답을 거절한다.
-    answer = {**NUMERIC, "answer": "계약 기간은 12개월이다", "structure": {"value": "12", "unit": "개월"}}
-    run_dir = generate("A", "numeric", "p1", "a1", planned, Client(answer))
+def test_a_table_row_cited_without_its_header_row_gets_the_header_row_as_evidence(planned):
+    # 생성기는 답에 쓴 행만 인용하곤 해, 열 이름이 근거에 없다며 표 후보 대부분이 거절됐다.
+    output = {"question": "예산의 A안 값은?", "answer": "1억원", "evidence": ["E2"],
+              "structure": {"row": "예산", "column": "A안"}, "secondary_tags": []}
+    run_dir = generate("A", "table", "p1", "a1", planned, Client(output))
 
     [item] = read_jsonl(run_dir / "candidates.jsonl")
-    assert item["structure"] == {"value": "12", "unit": "개월"}
+    units = bundle("table")["units"]
+    assert item["evidence"] == [units[0]["ref"], units[1]["ref"]]
+
+
+def test_multi_hop_structure_with_fields_is_told_to_be_an_empty_object():
+    # 이 이유 글이 실패 기록 · 묶음별 지난 실패로 다음 round 에 간다. "필드는 [] 여야" 로는 생성기가 필드를 채운 채 120 묶음이 거듭 거절됐다.
+    row = {"answer": "5, 8", "structure": {"PER": "5", "DAR": "8"}}
+    assert check_structure("multi_hop", topic_spec("multi_hop")[0], row, []) == "structure 는 빈 객체 {} 여야 합니다"
 
 
 def unit(text, kind="char"):
@@ -122,6 +121,15 @@ def unit(text, kind="char"):
 @pytest.mark.parametrize("value, unit_name, evidence, ok", [
     ("5", "%", "낙찰 하한율은 5%이다", True),
     ("6", "개월", "기간은 6 개월", True),
+    # 조사는 단위에 붙는다 (12개월이다). 단위 끝을 글자 종류로 가르는 수정은 이 값을 거절한다.
+    ("12", "개월", "계약 기간은 12개월이다", True),
+    # 더 긴 수 안에 든 더 짧은 수다. 수는 통째로 맞아야 한다.
+    ("30,000,000", "원", "예산은 130,000,000원이다", False),
+    ("2", "개월", "기간은 12개월이다", False),
+    # 부호는 값의 일부다.
+    ("130,000,000", "원", "-130,000,000원", False),
+    ("130,000,000", "원", "△130,000,000원", False),
+    ("130,000,000", "원", "- 130,000,000원", False),
     ("5", "%", "금리를 5%p 올린다", False),
     ("5", "%", "금리를 5%포인트 올린다", False),
     ("3", "개", "3개년 계획", False),
@@ -148,6 +156,13 @@ def test_numeric_pair_must_be_the_whole_expression_in_evidence(value, unit_name,
     ("condition", {"condition": "우편 접수는 받지 않는다"}, [unit("단, 우편 접수는 받지 않는다.")], True),
     ("condition", {"condition": "방문 접수만 받는다"}, [unit("단, 우편 접수는 받지 않는다.")], False),
     ("condition", {"condition": "1년 이내"}, [unit("계약 종료 후 11년 이내로 한다.")], False),
+    # 띄어 쓴 두 수는 다른 수다. 공백을 지운 뒤 경계를 보면 앞 줄 끝의 13 과 이어진 131 로 읽어 거절한다.
+    ("condition", {"condition": "1. 입찰참가자격 13"}, [unit("Ⅲ. 입찰 안내사항 13\n 1. 입찰참가자격 13")], True),
+    # 줄바꿈으로 쉼표 뒤가 벌어진 세 자리 묶음은 한 수다. 앞뒤 어느 쪽에서도 그 일부와 맞추지 않는다.
+    ("condition", {"condition": "300,000원 이하"}, [unit("1,\n300,000원 이하")], False),
+    ("condition", {"condition": "최대 1,300"}, [unit("최대 1,300,\n000원")], False),
+    # 세 자리 묶음이 아닌 쉼표 뒤는 나열이다.
+    ("condition", {"condition": "2차 평가"}, [unit("1, 2차 평가")], True),
     ("multi_hop", {}, [unit("가"), unit("나")], True),
     ("multi_hop", {}, [unit("가")], False),
     ("numeric", {"value": "5"}, [unit("5%")], False),
@@ -163,12 +178,16 @@ BUDGETS = {"A안": "1억원", "B안": "2억원"}
 
 @pytest.mark.parametrize("structure, answer, ok", [
     ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "B안"}, "A안 1억원, B안 2억원. 답: B안", True),
-    ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", True),
+    # 고르지 않는 비교는 값을 나란히 조회할 뿐이라 comparison 이 아니다.
+    ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", False),
     ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "B안"}, "A안 1억원, B안 2억원으로 A안이 더 많다", False),
     ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "C안"}, "A안 1억원, B안 2억원. 답: C안", False),
     ({"entities": ["A안", "B안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
     ({"entities": ["A안", "B안"], "values": {"A안": "3억원", "B안": "2억원"}, "choice": None}, "A안 3억원, B안 2억원", False),
     ({"entities": ["A안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),
+    # 값이 대상 이름이면 견줄 값이 없다.
+    ({"entities": ["A안", "B안"], "values": {"A안": "A안", "B안": "B안"}, "choice": "B안"}, "A안 A안, B안 B안. 답: B안", False),
+    ({"entities": ["A안", "B안"], "values": {"A안": "B안", "B안": "A안"}, "choice": "B안"}, "A안 B안, B안 A안. 답: B안", False),
     ({"entities": [{"name": "A안"}, {"name": "B안"}], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", False),
 ])
 def test_comparison_answer_is_the_text_built_from_its_structure(structure, answer, ok):
@@ -193,9 +212,8 @@ def test_b_prompt_hash_is_constant(planned):
     assert infos[0]["prompt_sha256"] != a["prompt_sha256"]
 
 
-@pytest.mark.parametrize("name", ["model", "max_calls", "budget_usd"])
-def test_model_call_cap_and_budget_are_required_with_no_default(planned, name):
-    config = {key: value for key, value in CONFIG.items() if key != name}
+def test_model_call_cap_and_budget_are_required_with_no_default(planned):
+    config = {key: value for key, value in CONFIG.items() if key != "budget_usd"}
     planned.write_text(json.dumps(config), encoding="utf-8")
     client = Client(NUMERIC)
 

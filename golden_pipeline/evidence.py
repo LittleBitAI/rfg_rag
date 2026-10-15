@@ -4,7 +4,6 @@
 근거 단위마다 자동 승인 가능(eligible) 또는 보류(held)를 이유와 함께 별도 판정 기록으로 남긴다.
 패키지는 고치지 않으며, 패키지의 verify_package.py · load_retriever_inputs.py 를 import 하거나 실행하지 않는다.
 """
-import argparse
 import csv
 import json
 import re
@@ -33,6 +32,7 @@ OCR_SCOPES = {
 }
 SHA256 = re.compile(r"[0-9a-f]{64}")
 GRID_UNVERIFIED = "원본 그리드 참고 파일은 검증되지 않았습니다 (매니페스트 original_grid_file)"
+GRID_FILE_REASON = "그리드 레코드에 검증 상태 필드가 없고, 패키지 노트북 7절이 원본 구조를 증명하지 않는 참고 근거라고 적음"
 
 
 class PackageMismatch(ValueError):
@@ -45,7 +45,6 @@ def run(run_id, copy, package=PACKAGE, raw=RAW):
     hashes = pin(package, copy)
     pkg = load(package)
     counts, excluded, included = check_counts(pkg)
-    grid_file = grid_file_verdict(pkg["grids"])
     pairs = [pair for chunk in included for pair in chunk_units(chunk, pkg)]
     pairs += [pair for grid in pkg["grids"] for pair in grid_units(grid, pkg)]
     units = [unit for unit, _ in pairs]
@@ -67,7 +66,9 @@ def run(run_id, copy, package=PACKAGE, raw=RAW):
         "pinned_sha256": hashes,
         "counts": counts,
         "excluded_chunks": excluded,
-        "original_grid_file": grid_file,
+        # v11 의 그리드 레코드에는 검증 상태 필드가 없고, 패키지 노트북 7절은 이 파일을
+        # 모든 표의 원본 구조를 증명하지 않는 일부 근거라고 적는다. 그래서 셀 단위는 모두 GRID_UNVERIFIED 로 보류한다.
+        "original_grid_file": {"verified": False, "tables": len(pkg["grids"]), "reason": GRID_FILE_REASON},
         "raw_links": _raw_counts(raw_links),
         "units": _unit_counts(units, judgments),
     })
@@ -82,7 +83,7 @@ def pin(package, copy):
         if sha != other:
             raise PackageMismatch(f"두 사본의 {name} SHA-256 이 다릅니다: {sha} != {other}")
         hashes[name] = sha
-    declared = json.loads((Path(package) / "manifest.json").read_text(encoding="utf-8"))["files"]
+    declared = storage._read_json(Path(package) / "manifest.json")["files"]
     for name in PINNED[1:]:
         if declared[name]["sha256"] != hashes[name]:
             raise PackageMismatch(f"{name} SHA-256 이 manifest.json 의 선언과 다릅니다")
@@ -92,7 +93,7 @@ def pin(package, copy):
 def load(package):
     package = Path(package)
     pkg = {
-        "manifest": json.loads((package / "manifest.json").read_text(encoding="utf-8")),
+        "manifest": storage._read_json(package / "manifest.json"),
         "chunks": list(_iter_jsonl(package / CHUNKS)),
         "elements": {e["element_id"]: _element(e) for e in _iter_jsonl(package / ELEMENTS)},
         "records": {r["record_id"]: _record(r) for r in _iter_jsonl(package / RECORDS)},
@@ -126,23 +127,6 @@ def check_counts(pkg):
     if counts != declared:
         raise PackageMismatch(f"파일에서 센 수 {counts} 가 manifest.json {declared} 과 다릅니다")
     return counts, excluded, included
-
-
-def grid_file_verdict(grids):
-    """원본 그리드 참고 파일이 검증된 것인지 확인한다.
-
-    v11 의 그리드 레코드에는 검증 상태 필드가 없고, 패키지 노트북 7절은 이 파일을
-    모든 표의 원본 구조를 증명하지 않는 일부 근거라고 적는다. 그래서 검증되지 않은 것으로 기록한다.
-    검증 필드가 생긴 파일은 읽는 법을 정하기 전까지 멈춘다 (SHA 를 고정했으므로 v11 에서는 일어나지 않는다).
-    """
-    fields = sorted({name for grid in grids for name in grid if "verif" in name or "status" in name})
-    if fields:
-        raise PackageMismatch(f"원본 그리드 파일에 검증 필드가 있습니다. 읽는 법을 먼저 정하세요: {fields}")
-    return {
-        "verified": False,
-        "tables": len(grids),
-        "reason": "그리드 레코드에 검증 상태 필드가 없고, 패키지 노트북 7절이 원본 구조를 증명하지 않는 참고 근거라고 적음",
-    }
 
 
 def chunk_units(chunk, pkg):
@@ -424,15 +408,3 @@ def _iter_jsonl(path):
         for line in f:
             if line.strip():
                 yield json.loads(line)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="v11 패키지 근거 어댑터 (읽기 전용)")
-    parser.add_argument("run_id")
-    parser.add_argument("copy", help="내려받은 압축의 안쪽 RFP_Preprocessing_Final_v11_Team 폴더")
-    args = parser.parse_args()
-    print(run(args.run_id, args.copy))
-
-
-if __name__ == "__main__":
-    main()

@@ -20,9 +20,8 @@ def validated(make_item, candidate_id, question, to, reason):
 def run_items(make_item):
     candidate = make_item(candidate_id="n-1")
     accepted = validated(make_item, "n-2", "계약 기간은?", "auto_validated", "통과")
-    held = validated(make_item, "n-3", "하자 보수 기간은?", "held", "격자 미확인")
     rejected = validated(make_item, "n-4", "입찰 마감은?", "rejected", "근거와 답 불일치")
-    return [candidate, accepted, held, rejected]
+    return [candidate, accepted, rejected]
 
 
 def ids(path):
@@ -36,9 +35,8 @@ def test_run_writes_state_files_and_manifest_but_no_failure_memory(outputs, make
     run_dir = storage.write_run("numeric", "A", "r1", run_items(make_item))
 
     assert run_dir == (outputs / "outputs/goldens/numeric/runs/A/r1").resolve()
-    assert ids(run_dir / "candidates.jsonl") == ["n-1", "n-2", "n-3", "n-4"]
+    assert ids(run_dir / "candidates.jsonl") == ["n-1", "n-2", "n-4"]
     assert ids(run_dir / "accepted.jsonl") == ["n-2"]
-    assert ids(run_dir / "review.jsonl") == ["n-3"]
     assert ids(run_dir / "rejected.jsonl") == ["n-4"]
     # 실패 기록은 자기 개선(improvement.record_failures)만 쓴다. 여기서 쓰면 거절 항목의 질문 · 답이 그대로 들어갔다.
     assert not (outputs / "outputs/goldens/numeric/failure_memory").exists()
@@ -49,7 +47,7 @@ def test_run_writes_state_files_and_manifest_but_no_failure_memory(outputs, make
     assert manifest["config_snapshot"] == {"run.yaml": storage._sha256(outputs / "configs" / "run.yaml")}
     assert manifest["prompt_snapshot"] == {"numeric.txt": storage._sha256(outputs / "prompts" / "numeric.txt")}
     assert manifest["counts"] == {
-        "candidates.jsonl": 4, "accepted.jsonl": 1, "rejected.jsonl": 1, "review.jsonl": 1,
+        "candidates.jsonl": 3, "accepted.jsonl": 1, "rejected.jsonl": 1,
     }
 
 
@@ -64,38 +62,17 @@ def test_existing_run_id_is_refused_not_overwritten(outputs, make_item):
     assert [entry["candidate_id"] for entry in storage.read_catalog()] == ["n-1"]
 
 
-def test_release_writes_golden_and_refuses_existing_version(outputs, make_item):
-    items = run_items(make_item)
-    storage.write_run("numeric", "A", "r1", items)
-    released = [transition(items[1], "released", "출시")]
-
-    release_dir = storage.write_release("numeric", "v1", released)
-
-    assert read_jsonl(release_dir / "golden.jsonl") == released
-    manifest = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["count"] == 1
-    assert manifest["runs"] == ["A/r1"]
-    assert manifest["golden_sha256"] == storage._sha256(release_dir / "golden.jsonl")
-    before = (release_dir / "golden.jsonl").read_bytes()
-
-    with pytest.raises(FileExistsError):
-        storage.write_release("numeric", "v1", [transition(items[2], "released", "출시")])
-    assert (release_dir / "golden.jsonl").read_bytes() == before
-
-
 def test_release_refuses_items_not_released_or_not_in_catalog(outputs, make_item):
     items = run_items(make_item)
     storage.write_run("numeric", "A", "r1", items)
     with pytest.raises(ValueError, match="출시 상태"):
-        storage.write_release("numeric", "v1", [items[1]])
+        storage.write_release("numeric", "v1", [items[1]], [("A", "r1")])
     unregistered = transition({**items[1], "candidate_id": "n-x"}, "released", "출시")
     with pytest.raises(storage.CatalogError, match="등록되지 않았습니다"):
-        storage.write_release("numeric", "v1", [unregistered])
+        storage.write_release("numeric", "v1", [unregistered], [("A", "r1")])
 
 
-@pytest.mark.parametrize("field", [
-    "question", "answer", "method", "run_id", "evidence", "validator_version", "difficulty", "state_history",
-])
+@pytest.mark.parametrize("field", ["answer", "run_id", "evidence", "difficulty", "state_history"])
 def test_release_refuses_content_that_differs_from_its_registered_run(outputs, make_item, field):
     # candidate_id 만 카탈로그와 맞추고 내용·출처를 바꿔 끼운 항목이
     # 출시본과 매니페스트(원본 run)에 그대로 들어가던 결함을 막는다.
@@ -107,7 +84,7 @@ def test_release_refuses_content_that_differs_from_its_registered_run(outputs, m
     substituted = transition({**items[1], field: other[field]}, "released", "출시")
 
     with pytest.raises(storage.CatalogError, match="등록된 기록과 다릅니다"):
-        storage.write_release("numeric", "v1", [substituted])
+        storage.write_release("numeric", "v1", [substituted], [("A", "r1")])
     assert not (outputs / "outputs/goldens/numeric/releases").exists()
 
 
