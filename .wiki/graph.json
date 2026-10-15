@@ -45,6 +45,8 @@
   }
  ],
  "orphans": [
+  "docs/research/review-feature-eval-golden-input-f4-1.md",
+  "docs/research/review-feature-eval-golden-input-f4-2.md",
   "docs/research/review-feature-golden-data-generation-f1-1.md",
   "docs/research/review-feature-golden-data-generation-f1-2.md",
   "docs/research/review-feature-golden-data-self-improvement-f2-1.md",
@@ -52,12 +54,12 @@
   "docs/research/review-feature-golden-data-validation-f1-2.md"
  ],
  "counts": {
-  "docs": 9,
+  "docs": 11,
   "linked": 4,
   "read": 0,
-  "orphans": 5,
+  "orphans": 7,
   "pages": 1,
-  "decisions": 32,
-  "injectable_decisions": 6
+  "decisions": 38,
+  "injectable_decisions": 7
  }
 }

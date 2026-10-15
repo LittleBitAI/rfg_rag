@@ -45,7 +45,8 @@ def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddin
 
 _DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
 _UNITS = "원|초|분|시간|개월|년|월|일|명|개|건|회|%|조|항|호|차|점|장|단계"
-_NUMBER = re.compile(rf"(?<![\d.,]){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*(?:\s*(?:{_UNITS}))?")
+# '글자-' 바로 뒤 숫자는 SFR-009 같은 식별자의 일부라 수량이 아니다 — 'SFR-009\n분류' 가 9분이 되지 않게
+_NUMBER = re.compile(rf"(?<![\d.,])(?<![^\W\d_]-){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*(?:\s*(?:{_UNITS}))?")
 _NUMBER_PART = re.compile(rf"({_DIGITS})?([억만천백])|({_DIGITS})")
 _MULTIPLIERS = {"억": 100_000_000, "만": 10_000, "천": 1_000, "백": 100}
 _TIME = r"(?:\d{1,2}:\d{2}|(?:오전|오후)\s*\d{1,2}시(?:\s*\d{1,2}분)?)"
@@ -133,8 +134,11 @@ def _canonical_text(text: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 def _negated(text: str, start: int, end: int) -> bool:
-    return (start > 0 and text[start - 1] in "미불비"
-            or re.search(r"않|제외|별도|없", text[end:end + 6]) is not None)
+    if start > 0 and text[start - 1] in "미불비" or re.search(r"않|제외|없", text[end:end + 6]):
+        return True
+    # '별도' 는 '부가세 별도' 처럼 말이 끝날 때만 부정이다. '별도 시건장치' · '별도로' 처럼 뒤를 꾸미면 '따로' 다
+    separate = re.search(r"별도", text[end:end + 6])
+    return separate is not None and not re.match(r"\s*\w", text[end + separate.end():])
 
 
 def _fact_pattern(fact: str) -> str:
@@ -148,7 +152,8 @@ def _fact_pattern(fact: str) -> str:
             parts.append(re.escape(token))
         cursor = end
     parts.append(re.escape(_plain_text(fact, cursor, len(fact))[0]))
-    return "".join(parts)
+    # 식별자 숫자는 글자 그대로 찾으므로 앞뒤에 숫자가 더 붙으면 다른 값이다 (SFR-009 ≠ SFR-0091)
+    return ("(?<!\\d)" if fact[:1].isdigit() else "") + "".join(parts) + ("(?!\\d)" if fact[-1:].isdigit() else "")
 
 
 def _fact_matches(fact: str, hay: str, positions: list[tuple[int, int]], text: str) -> bool:
