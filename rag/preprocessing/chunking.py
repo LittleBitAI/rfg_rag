@@ -1,8 +1,11 @@
 """① 전처리 — 청크 분할: 본문은 RecursiveCharacterTextSplitter(문서 단위 연결 + 페이지·섹션 추적), 표는 행 단위 분할(헤더 반복).
-담당: 전처리.  결과(artifacts/chunks.jsonl · docs.jsonl)를 02 검색과 03 검증이 읽는다."""
+담당: 전처리.  결과(artifacts/chunks.jsonl · docs.jsonl)를 02 검색과 03 검증이 읽는다.
+문서 하나를 나눌 때마다 artifacts/chunked/ 에 저장해, 중간에 끊겨도 다시 실행하면 끝낸 문서는 건너뛴다."""
 from __future__ import annotations
 
 import bisect
+import hashlib
+import json
 import re
 import statistics
 import unicodedata
@@ -114,21 +117,50 @@ def _doc_pieces(doc: dict, splitter, size: int, table_size: int) -> list[tuple[s
     return pieces
 
 
-def chunk_documents(docs: list[dict], ccfg: dict) -> list[dict]:
-    """청크마다 머리말 '문서: <제목> | p.N | 섹션: 1. 사업개요 > 1.1 …' 을 붙인다 (text = 머리말 + body)"""
+def _chunk_doc(doc: dict, splitter, ccfg: dict, size: int, table_size: int) -> list[dict]:
+    """문서 1개 → 청크들. 청크마다 머리말 '문서: <제목> | p.N | 섹션: 1. 사업개요 > 1.1 …' 을 붙인다 (text = 머리말 + body)"""
+    pieces = [p for p in _doc_pieces(doc, splitter, size, table_size) if len(p[0].strip()) >= int(ccfg["min_chunk_chars"])]
+    chunks = []
+    for i, (text, page, kind, section) in enumerate(pieces):
+        header = f"문서: {doc['title']}" + (f" | p.{page}" if page else "") + (f" | 섹션: {section}" if section else "")
+        chunks.append({"chunk_id": f"{doc['doc_id']}::c{i:05d}", "doc_id": doc["doc_id"], "source": doc["source"],
+                       "title": doc["title"], "doc_type": doc["doc_type"], "page": page, "kind": kind,
+                       "section": section, "text": header + "\n" + text.strip(), "body": text.strip()})
+    return chunks
+
+
+def _write_jsonl_atomic(rows: list[dict], path: Path):
+    """임시 파일에 쓴 뒤 바꿔치기한다. 쓰는 도중 노트북이 꺼져도 반쯤 쓰인 파일이 남지 않는다"""
+    tmp = path.with_suffix(".tmp")
+    write_jsonl(rows, tmp)
+    tmp.replace(path)
+
+
+def _chunk_cache_file(cache_dir: Path, doc: dict, ccfg: dict) -> Path:
+    """문서 하나의 청크 저장 파일. 파싱 결과(문서 내용)와 청킹 설정이 모두 같을 때만 같은 이름이 되므로,
+    01 파싱을 다시 하거나 CHUNK_SIZE 등을 바꾸면 옛 결과를 쓰지 않는다"""
+    key = json.dumps({"chunking": ccfg, "doc": doc}, sort_keys=True, ensure_ascii=False)
+    return cache_dir / f"{doc['doc_id']}_{hashlib.sha1(key.encode()).hexdigest()[:8]}.jsonl"
+
+
+def chunk_documents(docs: list[dict], ccfg: dict, cache_dir: Path) -> list[dict]:
+    """문서마다 청크로 나누고 cache_dir 에 저장한다. 다시 실행하면 저장된 문서는 읽기만 하고 남은 문서부터 이어서 나눈다."""
     size = int(ccfg["chunk_size"])
     table_size = int(size * float(ccfg["table_size_factor"]))
     splitter = RecursiveCharacterTextSplitter(chunk_size=size, chunk_overlap=round(size * float(ccfg["overlap_ratio"])),
                                               separators=SEPARATORS, is_separator_regex=True, keep_separator="start",
                                               add_start_index=True, strip_whitespace=True)
-    chunks = []
+    chunks, reused = [], 0
     for doc in docs:
-        pieces = [p for p in _doc_pieces(doc, splitter, size, table_size) if len(p[0].strip()) >= int(ccfg["min_chunk_chars"])]
-        for i, (text, page, kind, section) in enumerate(pieces):
-            header = f"문서: {doc['title']}" + (f" | p.{page}" if page else "") + (f" | 섹션: {section}" if section else "")
-            chunks.append({"chunk_id": f"{doc['doc_id']}::c{i:05d}", "doc_id": doc["doc_id"], "source": doc["source"],
-                           "title": doc["title"], "doc_type": doc["doc_type"], "page": page, "kind": kind,
-                           "section": section, "text": header + "\n" + text.strip(), "body": text.strip()})
+        cache_file = _chunk_cache_file(cache_dir, doc, ccfg)
+        if cache_file.exists():
+            chunks += read_jsonl(cache_file)
+            reused += 1
+            continue
+        doc_chunks = _chunk_doc(doc, splitter, ccfg, size, table_size)
+        _write_jsonl_atomic(doc_chunks, cache_file)
+        chunks += doc_chunks
+    print(f"청크 분할: 문서 {len(docs)}개 중 저장된 결과 {reused}개, 새로 분할 {len(docs) - reused}개 → 청크 {len(chunks)}개")
     return chunks
 
 
@@ -164,8 +196,8 @@ def load_v11_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
 
 def save_chunks(docs: list[dict], chunks: list[dict], out_dir: Path):
     """02 검색·03 검증으로 넘기는 파일: chunks.jsonl, docs.jsonl(기관 라우팅용 문서 목록 — 레코드 제외)"""
-    write_jsonl(chunks, out_dir / "chunks.jsonl")
-    write_jsonl([{k: v for k, v in d.items() if k != "records"} for d in docs], out_dir / "docs.jsonl")
+    _write_jsonl_atomic(chunks, out_dir / "chunks.jsonl")
+    _write_jsonl_atomic([{k: v for k, v in d.items() if k != "records"} for d in docs], out_dir / "docs.jsonl")
 
 
 def chunk_summary(chunks: list[dict]) -> pd.DataFrame:

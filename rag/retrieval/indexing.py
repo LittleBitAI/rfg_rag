@@ -2,6 +2,7 @@
 담당: 검색.  retrieval.py 가 여기서 저장한 색인(artifacts/index/)을 읽어 검색한다."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -101,12 +102,48 @@ class KiwiTokenizer:
         return [self._keep(toks, text) for toks, text in zip(analyzed, texts)]
 
 
+# 임베딩을 이 개수씩 나눠 저장한다 — 끊기면 마지막 묶음 하나만 다시 계산한다
+_PART_SIZE = 1000
+
+
+def _part_file(ckpt_dir: Path, ecfg: dict, texts: list[str]) -> Path:
+    """임베딩 묶음 하나의 저장 파일. 모델 · 최대 길이 · 청크 본문이 모두 같을 때만 같은 이름이 되므로,
+    01 을 다시 돌려 청크가 바뀌거나 임베딩 설정을 바꾸면 그 묶음은 새로 계산한다"""
+    key = json.dumps({"model": ecfg["model"], "max_seq_length": int(ecfg["max_seq_length"]), "texts": texts},
+                     ensure_ascii=False)
+    return ckpt_dir / f"{hashlib.sha1(key.encode()).hexdigest()[:16]}.npy"
+
+
+def _embed_with_checkpoint(embedder: Embedder, texts: list[str], ecfg: dict, ckpt_dir: Path) -> np.ndarray:
+    """묶음마다 임베딩을 ckpt_dir 에 저장한다. 다시 실행하면 저장된 묶음은 읽기만 하고 남은 묶음부터 이어서 계산한다.
+    임시 파일에 쓴 뒤 바꿔치기해서, 쓰는 도중 끊겨도 반쯤 쓰인 파일이 남지 않는다."""
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    parts = [texts[i: i + _PART_SIZE] for i in range(0, len(texts), _PART_SIZE)]
+    files = [_part_file(ckpt_dir, ecfg, part) for part in parts]
+    vectors = []
+    for k, (part, file) in enumerate(zip(parts, files), 1):
+        if file.exists():
+            vectors.append(np.load(file))
+            print(f"임베딩 ({k}/{len(parts)}) 청크 {len(part)}개 — 저장된 결과")
+            continue
+        vectors.append(embedder.encode(part, progress=True))
+        tmp = file.with_suffix(".tmp")
+        with open(tmp, "wb") as f:
+            np.save(f, vectors[-1])
+        tmp.replace(file)
+        print(f"임베딩 ({k}/{len(parts)}) 청크 {len(part)}개 — 저장")
+    for stale in set(ckpt_dir.glob("*.npy")) - set(files):  # 예전 청크의 묶음은 지워 디스크가 쌓이지 않게
+        stale.unlink()
+    return np.concatenate(vectors)
+
+
 def build_index(chunks: list[dict], cfg: dict, out_dir: Path) -> dict:
-    """청크 → out_dir/faiss.index (정확 검색 IndexFlatIP) + out_dir/bm25_tokens.json (청크별 형태소)"""
+    """청크 → out_dir/faiss.index (정확 검색 IndexFlatIP) + out_dir/bm25_tokens.json (청크별 형태소).
+    임베딩은 out_dir/checkpoint/ 에 묶음별로 저장해, 중간에 끊겨도 다시 실행하면 이어서 만든다."""
     out_dir.mkdir(parents=True, exist_ok=True)
     texts = [c["text"] for c in chunks]
     embedder = Embedder(cfg["embedding"])
-    vectors = embedder.encode(texts, progress=True)
+    vectors = _embed_with_checkpoint(embedder, texts, cfg["embedding"], out_dir / "checkpoint")
     index = faiss.IndexFlatIP(vectors.shape[1])
     index.add(vectors)
     faiss.write_index(index, str(out_dir / "faiss.index"))
