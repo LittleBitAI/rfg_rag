@@ -1,7 +1,8 @@
 """A 의 자기 개선. round 마다 A 생성 → 독립 검증 → 거절을 실패 기록(failure_memory)으로 남기고, 다음 round 의 A 프롬프트에 그 예방 규칙을 붙인다.
 
 실패 기록에는 고친 답을 사실로 넣지 않는다. 검증하지 않은 답이 다음 후보에 사실처럼 들어가면 오염되기 때문이다.
-그래서 기록 항목은 실패 코드, 보존된 실패(rejected.jsonl 의 한 줄)를 가리키는 참조, 코드마다 정해 둔 예방 규칙과 그 버전만 갖는다.
+그래서 기록 항목은 실패 코드, 보존된 실패(rejected.jsonl 의 한 줄, 또는 출시 매니페스트에 남은 뺀 항목)를 가리키는 참조,
+코드마다 정해 둔 예방 규칙과 그 버전만 갖는다.
 B · C 는 실패 기록을 읽지 않는다. 이 모듈은 A run 만 다룬다.
 기준(주제 명세, 검증기 프롬프트 · 버전, 난도 규칙)은 바꾸지 않는다. 목표에 못 미치면 모자란 수를 보고한다.
 """
@@ -11,7 +12,7 @@ import threading
 
 from golden_pipeline import generation, plan, storage, validation
 
-PREVENTION_VERSION = "prevention-4"
+PREVENTION_VERSION = "prevention-8"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
 FAILURE_CODES = (
     ("JSON 이 아닙니다", "output_format"),
@@ -26,9 +27,17 @@ FAILURE_CODES = (
     ("근거만으로 답할 수 없습니다", "unanswerable"),
     ("독립 답과 다릅니다", "answer_mismatch"),
     ("복사형", "copied"),
+    # 같은 앞말의 not_multi_hop 보다 먼저 맞춘다. 근거는 둘 이상 이었지만 청크가 하나였던 실패다.
+    ("multi_hop 아님: 인용한 근거가 모두 한 청크", "single_chunk"),
     ("multi_hop 아님", "not_multi_hop"),
     ("검증기 출력 오류", "validator_output"),
     ("근거 충돌", "evidence_conflict"),
+    ("모호한 대상", "ordinal_reference"),
+    ("끊긴 질문", "malformed_question"),
+    ("빈 칸 표", "broken_table"),
+    ("답 덧붙임", "answer_dump"),
+    ("비교 아님", "invalid_comparison"),
+    ("판정기 출력 오류", "validator_output"),
 )
 # 규칙 글을 바꾸면 PREVENTION_VERSION 을 올린다. 기록 항목은 쓸 때의 버전을 남긴다.
 PREVENTION_RULES = {
@@ -44,8 +53,19 @@ PREVENTION_RULES = {
     "answer_mismatch": "답은 근거에서 바로 읽히는 값과 단위를 그대로 쓰고, 계산하거나 바꿔 쓰지 않는다.",
     "copied": "질문에 답의 값을 넣지 않는다.",
     "not_multi_hop": "근거 하나만으로는 답이 나오지 않고 둘 이상을 이어야 답이 나오는 질문을 만든다.",
-    "validator_output": "질문은 근거만 읽고 짧은 답 하나로 답할 수 있게 묻는다.",
+    "single_chunk": "evidence 에 청크 번호가 다른 근거를 함께 넣고, 그 근거들을 이어야 답이 나오게 묻는다.",
+    "validator_output":"질문은 근거만 읽고 짧은 답 하나로 답할 수 있게 묻는다.",
     "evidence_conflict": "근거끼리 값이 다르게 적힌 사실은 묻지 않는다.",
+    # 아래는 검증을 통과했지만 규칙 검사(validation.rule_reason) · 출시 쓸모 판정이 뺀 실패의 코드다 (record_screen).
+    "useless_answer": "답이 '방문 후 열람 가능' · '없음' 같은 안내 문구나 빈 값이 되는 질문은 만들지 않는다.",
+    "ordinal_reference": "대상을 순번('1행' · '번호 3' · '연번 2'), '둘 중', '첫 번째 값' · '값과 단위' 로 가리키지 말고 이름으로 가리킨다.",
+    "broken_table": "병합 셀 · 빈 칸 · 밀린 열이 있어 칸의 뜻이 하나로 정해지지 않는 표 행은 묻지 않는다.",
+    "answer_dump": "답에는 묻는 내용만 쓰고, 근거 원문이나 '(조건: …)' 같은 덧붙임을 붙이지 않는다.",
+    "invalid_comparison": "같은 종류의 대상끼리만 비교하고, 표 머리글 · 합계와 그 부분 · 서로 다른 속성(예: 인원과 기간)은 비교하지 않는다.",
+    "malformed_question": "질문은 끊기지 않은 완결된 한 문장으로 쓴다.",
+    "personal_info": "사람 이름 · 연락처 · 결재란을 묻지 않는다.",
+    "structure_question": "목차 번호 · 항목 위치 · 표 형식을 묻지 말고 내용을 묻는다.",
+    "evidence_reference": "질문자는 근거를 보지 못하므로 'E1 · E2' · '근거들' · '이 요구사항' 처럼 근거를 가리키지 말고 이름으로 묻는다.",
 }
 LOOP_CONFIG = ("max_rounds", "max_calls", "budget_usd", "generator", "validator")
 # 생성기 · 검증기마다 모델 · 추론 강도 · 단가. 호출 수 한도와 예산은 loop 전체의 값에서 남은 만큼을 round 마다 넘긴다.
@@ -102,6 +122,31 @@ def record_failures(topic, run_id):
     return path
 
 
+def record_screen(topic, version):
+    """출시에서 규칙 검사 · 쓸모 판정이 뺀 A 항목을 failure_memory/screen_{version}.jsonl 로 남긴다.
+
+    검증을 통과해도 출시에서 빠진 항목은 다음 생성이 피해야 할 실패다. 기록에 넣지 않으면 생성기가 같은 실패를 되풀이한다.
+    항목은 출시 매니페스트의 dropped 에서만 만들고, record_failures 처럼 코드 · 참조 · 예방 규칙만 남긴다.
+    판정기가 코드를 고른 항목은 그 코드를, 규칙 검사 · 판정기 출력 오류로 빠진 항목은 이유 문구의 코드를 쓴다.
+    """
+    release_dir = storage._child(storage._topic_dir(topic) / "releases", version)
+    dropped = storage._read_json(release_dir / "manifest.json")["release"]["dropped"]
+    entries = []
+    for row in (row for row in dropped if row["method"] == "A"):
+        code = row["code"] or failure_code(row["reason"])
+        entries.append({
+            "entry_id": f"screen-{version}:{len(entries) + 1}",
+            "failure_code": code,
+            "evidence": {"release": version, "run": f"A/{row['run_id']}", "candidate_id": row["candidate_id"]},
+            "prevention_rule": PREVENTION_RULES[code],
+            "rule_version": PREVENTION_VERSION,
+        })
+    path = storage._child(storage._topic_dir(topic) / "failure_memory", f"screen_{version}.jsonl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    storage._write_jsonl(path, entries)
+    return path
+
+
 def failure_code(reason):
     code = next((code for prefix, code in FAILURE_CODES if reason.startswith(prefix)), None)
     if code is None:
@@ -115,9 +160,10 @@ def _reason(row):
 
 
 def related_failures(topic):
-    """주제의 A 실패 기록을 실패 코드별로 묶은 {코드: [entry_id]}. 다른 주제와 B · C 의 기록은 없다."""
+    """주제의 A 실패 기록과 출시에서 빠진 A 항목의 기록을 실패 코드별로 묶은 {코드: [entry_id]}. 다른 주제와 B · C 의 기록은 없다."""
     related = {}
-    for path in sorted((storage._topic_dir(topic) / "failure_memory").glob("A_*.jsonl")):
+    folder = storage._topic_dir(topic) / "failure_memory"
+    for path in sorted([*folder.glob("A_*.jsonl"), *folder.glob("screen_*.jsonl")]):
         for entry in storage._read_jsonl(path):
             related.setdefault(entry["failure_code"], []).append(entry["entry_id"])
     return related

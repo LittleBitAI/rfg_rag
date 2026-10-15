@@ -178,7 +178,8 @@ BUDGETS = {"A안": "1억원", "B안": "2억원"}
 
 @pytest.mark.parametrize("structure, answer, ok", [
     ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "B안"}, "A안 1억원, B안 2억원. 답: B안", True),
-    ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", True),
+    # 고르지 않는 비교는 값을 나란히 조회할 뿐이라 comparison 이 아니다.
+    ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": None}, "A안 1억원, B안 2억원", False),
     ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "B안"}, "A안 1억원, B안 2억원으로 A안이 더 많다", False),
     ({"entities": ["A안", "B안"], "values": BUDGETS, "choice": "C안"}, "A안 1억원, B안 2억원. 답: C안", False),
     ({"entities": ["A안", "B안"], "values": {"A안": "1억원"}, "choice": None}, "A안 1억원", False),

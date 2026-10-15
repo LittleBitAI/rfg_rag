@@ -49,7 +49,8 @@ class FakeAPI:
         if system == SCREEN:
             # 출시 전 쓸모 판정: 보증금 질문은 쓸모 없다고 본다.
             useful = "보증금" not in json.loads(user)["question"]
-            text = json.dumps({"useful": useful, "reason": "판정 이유"}, ensure_ascii=False)
+            text = json.dumps({"useful": useful, "code": None if useful else "useless_answer", "reason": "판정 이유"},
+                              ensure_ascii=False)
         elif user.startswith("{"):
             text = self._verdict(json.loads(user))
         elif "130,000,000원" in user:
@@ -246,7 +247,9 @@ def test_a_resumed_audit_judges_only_the_pending_candidates_and_releases(planned
     run_dir = storage.run_path("numeric", "C", "c1")
     first_text = (run_dir / "validation.json").read_text(encoding="utf-8")
     first = json.loads(first_text)
-    assert first["status"] == "call_cap" and len(first["pending"]) == 2
+    assert (first["status"], first["pending"], first["counts"]) == (
+        "call_cap", ["numeric-C-c1-0003"], {"auto_validated": 1, "rejected": 1},
+    )
 
     golden("resume", "--topic", "numeric", "--method", "C", "--id", "c1", "--max-calls", "10", "--budget", "1")
 
@@ -257,7 +260,7 @@ def test_a_resumed_audit_judges_only_the_pending_candidates_and_releases(planned
               for row in read_jsonl(run_dir / name) if "candidate_id" in row]
     ids = [row["candidate_id"] for row in judged]
     assert len(ids) == len(set(ids)) == 3
-    # 앞에서 통과한 같은 run 의 항목도 중복 검사에 든다.
+    # 중복은 첫 검증에서 무료로 거절되고 재개 때 다시 판정하지 않는다.
     [duplicate] = [row for row in judged if row["state"] == "rejected"]
     assert duplicate["question"].endswith(f"사업에서 {reworded['question']}")
     assert duplicate["state_history"][-1]["reason"].startswith("중복")

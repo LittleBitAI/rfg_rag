@@ -15,7 +15,7 @@ from golden_pipeline import generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-3"
+VALIDATOR_VERSION = "validation-4"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -31,6 +31,11 @@ SCALES = {"십": 10, "백": 100, "천": 1000, "만": 10_000, "억": 10**8, "조"
 CONTENT_TAGS = ("NNG", "NNP", "SL", "SN")
 # 값의 대상에는 의존 명사도 든다 (1차년도 의 차 · 년도).
 SUBJECT_TAGS = CONTENT_TAGS + ("NNB",)
+# 쓸모 판정기가 쓸모 없다고 할 때 고르는 실패 코드. 뺀 항목은 이 코드로 실패 기록에 들어가 다음 생성의 예방 규칙이 된다.
+SCREEN_CODES = ("structure_question", "ordinal_reference", "evidence_reference", "copied", "answer_dump",
+                "personal_info", "malformed_question", "invalid_comparison", "useless_answer")
+# 칸이 비어 행의 뜻이 정해지지 않는 표 행: 빈 칸으로 시작하거나 빈 칸이 이어진다 (조직도 · 간트 모양).
+BLANK_CELL = re.compile(r"(^|\n) *\||\| *\|")
 
 
 def validate(topic, method, run_id, config_path, client):
@@ -93,10 +98,13 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     calls = []
     ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls)
     judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls)
+    free_rejects = _static_rejections(candidates, spec, units, survivors)
+    rejected_ids = {item["candidate_id"] for item in free_rejects}
+    to_judge = [item for item in candidates if item["candidate_id"] not in rejected_ids]
 
     judged, status = [], "complete"
-    while len(judged) < len(candidates):
-        rest = candidates[len(judged):]
+    while len(judged) < len(to_judge):
+        rest = to_judge[len(judged):]
         batch = _batch(config, calls, rest, units)
         if not batch:
             needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]])
@@ -105,7 +113,12 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
         verdicts = generation.parallel(
             lambda item: _verdict(item, spec, units[item["candidate_id"]], ask, judge, survivors), batch)
         judged += [_settle(item, verdict, units[item["candidate_id"]], survivors) for item, verdict in zip(batch, verdicts)]
-    pending = [item["candidate_id"] for item in candidates[len(judged):]]
+    unjudged = to_judge[len(judged):]
+    free_rejects += _static_rejections(unjudged, spec, units, survivors)
+    rejected_ids.update(item["candidate_id"] for item in free_rejects)
+    pending = [item["candidate_id"] for item in unjudged if item["candidate_id"] not in rejected_ids]
+    if not pending:
+        status = "complete"
     info = {
         "run_id": run_dir.name,
         "topic": topic,
@@ -127,7 +140,14 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
         "cost_usd": generation._cost(config, calls),
         "calls": calls,
     }
-    return judged, info
+    settled = {item["candidate_id"]: item for item in [*free_rejects, *judged]}
+    return [settled[item["candidate_id"]] for item in candidates if item["candidate_id"] in settled], info
+
+
+def _static_rejections(candidates, spec, units, survivors):
+    """호출 한도가 부족해도 무료 검사로 거절할 후보는 실패 기록에 남기도록 먼저 판정한다."""
+    return [_settle(item, ("rejected", reason), units[item["candidate_id"]], survivors)
+            for item in candidates if (reason := _static_reason(item, spec, units[item["candidate_id"]], survivors))]
 
 
 def _pinned_plan(run_dir, topic):
@@ -144,26 +164,34 @@ def release(topic, version, runs, config_path, client):
 
     검증은 답이 근거와 맞는지만 본다. 목차 · 쪽 번호 · 표 머리글을 묻는 질문도 답은 맞아 통과하므로,
     출시 전에 판정기(prompts/screen.txt)가 RFP 를 읽는 사람이 물을 만한 질문인지 참거짓으로 정한다. 사람이 확인하는 단계는 없다.
-    빠진 항목과 이유는 출시 매니페스트에 남긴다. 한도에 닿으면 일부만 낸 출시본을 만들지 않고 멈춘다.
+    판정 전에 규칙 검사(rule_reason)를 한 번 더 본다. 규칙이 생기기 전에 검증한 run 도 같은 기준으로 내기 위해서다.
+    빠진 항목과 이유 · 실패 코드는 출시 매니페스트에 남기고, improvement.record_screen 이 실패 기록으로 옮긴다.
+    한도에 닿으면 일부만 낸 출시본을 만들지 않고 멈춘다.
     """
-    items = [item for method, run_id in runs for item in storage.read_validated(topic, method, run_id)]
+    items, units = _release_items(topic, runs)
     _refuse_duplicates(items)
     config, config_sha = generation._run_config(config_path)
     prompt_path = storage.PROMPTS / "screen.txt"
     calls = []
     screen = _screener(client, config, prompt_path.read_text(encoding="utf-8"), calls)
+    ruled = {item["candidate_id"]: (False, None, rule)
+             for item in items if (rule := rule_reason(item, units[item["candidate_id"]]))}
+    to_screen = [item for item in items if item["candidate_id"] not in ruled]
     verdicts = []
-    for start in range(0, len(items), generation.WORKERS):
-        batch = items[start:start + generation.WORKERS]
+    for start in range(0, len(to_screen), generation.WORKERS):
+        batch = to_screen[start:start + generation.WORKERS]
         # 출력 오류면 한 번 더 부르므로 항목마다 두 번까지 센다.
         status = generation.limit_reached(config, len(calls), generation._cost(config, calls), 2 * len(batch))
         if status:
-            raise ValueError(f"쓸모 판정이 한도({status})에 닿아 출시하지 않았습니다: {len(verdicts)}/{len(items)} 판정")
+            raise ValueError(f"쓸모 판정이 한도({status})에 닿아 출시하지 않았습니다: {len(verdicts)}/{len(to_screen)} 판정")
         verdicts += generation.parallel(screen, batch)
+    judged = {**ruled, **{item["candidate_id"]: verdict for item, verdict in zip(to_screen, verdicts)}}
     released = [transition(item, "released", "자동 검증 · 쓸모 판정 통과")
-                for item, (useful, _) in zip(items, verdicts) if useful]
-    dropped = [{"candidate_id": item["candidate_id"], "question": item["question"], "reason": reason}
-               for item, (useful, reason) in zip(items, verdicts) if not useful]
+                for item in items if judged[item["candidate_id"]][0]]
+    dropped = [{"candidate_id": item["candidate_id"], "method": item["method"], "run_id": item["run_id"],
+                "question": item["question"],
+                "code": judged[item["candidate_id"]][1], "reason": judged[item["candidate_id"]][2]}
+               for item in items if not judged[item["candidate_id"]][0]]
     info = {
         "screen_prompt_sha256": storage._sha256(prompt_path),
         "run_config": config,
@@ -171,28 +199,45 @@ def release(topic, version, runs, config_path, client):
         "model_reported": sorted({call["model"] for call in calls}),
         "calls": len(calls),
         "cost_usd": generation._cost(config, calls),
-        "screened": len(items),
+        "screened": len(to_screen),
         "dropped": dropped,
     }
-    return storage.write_release(topic, version, released, info)
+    return storage.write_release(topic, version, released, runs, info)
+
+
+def _release_items(topic, runs):
+    """출시의 규칙 검사도 검증 때와 같은 고정 계획에서 인용 근거와 표 머리글만 읽는다."""
+    items, units = [], {}
+    for method, run_id in runs:
+        accepted = storage.read_validated(topic, method, run_id)
+        generated = storage._read_json(storage.run_path(topic, method, run_id) / "manifest.json")["generation"]
+        planned, sha = plan.load_plan(generated["plan_id"])
+        if sha != generated["plan_sha256"]:
+            raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_id} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
+        bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
+        units.update((item["candidate_id"], evidence_units(item, bundles[item["bundle_id"]])) for item in accepted)
+        items.extend(accepted)
+    return items, units
 
 
 def _screener(client, config, instructions, calls):
-    """항목 하나를 판정기에 묻고 (쓸모 있는지, 이유) 를 돌려주는 함수. 출력이 두 번 다 계약을 어기면 쓸모 없다고 본다."""
+    """항목 하나를 판정기에 묻고 (쓸모 있는지, 실패 코드, 이유) 를 돌려주는 함수. 출력이 두 번 다 계약을 어기면 쓸모 없다고 본다."""
     def screen(item):
         content = json.dumps({"question": item["question"], "answer": item["answer"]}, ensure_ascii=False)
         verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful)
-        return verdict if error is None else (False, f"판정기 출력 오류: {error}")
+        return verdict if error is None else (False, None, f"판정기 출력 오류: {error}")
     return screen
 
 
 def _parse_useful(text):
-    row, reason = generation._parse(text, ("useful", "reason"))
+    row, reason = generation._parse(text, ("useful", "code", "reason"))
     if row is None:
         return None, reason
     if not (isinstance(row["useful"], bool) and generation._is_text(row["reason"])):
         return None, "useful 은 참거짓, reason 은 비어 있지 않은 문자열이어야 합니다"
-    return (row["useful"], row["reason"]), None
+    if not (row["code"] is None if row["useful"] else row["code"] in SCREEN_CODES):
+        return None, f"code 는 쓸모 있으면 null, 없으면 {', '.join(SCREEN_CODES)} 중 하나여야 합니다"
+    return (row["useful"], row["code"], row["reason"]), None
 
 
 def validator_input(question, units):
@@ -425,12 +470,35 @@ def _static_reason(item, spec, units, survivors):
     mismatch = generation.check_structure(item["primary_topic"], spec, item, cited)
     if mismatch:
         return f"유형 불일치: {mismatch}"
+    rule = rule_reason(item, units)
+    if rule:
+        return rule
     check = RELATIONS.get(item["primary_topic"])
     relation = check(item, units) if check else None
     if relation:
         return relation
     duplicate = next((survivors[key] for key in _keys(item) if key in survivors), None)
     return f"중복: {duplicate} 와 같은 근거 묶음이나 질문입니다" if duplicate else None
+
+
+def rule_reason(item, units):
+    """독립 답과 맞아 검증을 통과하지만 평가에 쓸 수 없던 꼴이면 그 이유, 아니면 None. 돈이 들지 않아 검증 앞과 출시 앞에서 본다."""
+    topic, question = item["primary_topic"], DOCUMENT_PREFIX.sub("", item["question"]).strip()
+    if topic == "numeric" and re.fullmatch(
+            r"(?:사업의\s*)?(?:값과 단위|수치와 단위|첫 번째 값)(?:은|는)?\s*(?:(?:무엇|얼마)인가)?[?？]?", question):
+        return "모호한 대상: 질문이 '값과 단위' · '첫 번째 값' 처럼 대상을 이름으로 가리키지 않습니다"
+    if topic == "table" and "\n" in question:
+        return "끊긴 질문: 질문에 줄바꿈이 있습니다"
+    if topic == "table" and any(BLANK_CELL.search(unit["text"]) for unit in units if plan._table_row(unit) is not None):
+        return "빈 칸 표: 인용한 표 행이나 머리글에 빈 칸으로 시작하거나 빈 칸이 이어진 행이 있습니다"
+    if topic == "condition" and "(조건:" in item["answer"]:
+        return "답 덧붙임: 답에 '(조건: …)' 이 붙었습니다"
+    # 생성 검사도 choice 를 요구하지만, 그 전에 검증한 run 을 출시할 때 여기서 걸러진다.
+    if topic == "comparison" and item["structure"].get("choice") is None:
+        return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
+    if topic == "multi_hop" and len({ref["chunk_id"] for ref in item["evidence"]}) < 2:
+        return "multi_hop 아님: 인용한 근거가 모두 한 청크 안에 있습니다"
+    return None
 
 
 def _single_unit_verdict(item, units, full, ask, judge):

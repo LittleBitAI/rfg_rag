@@ -9,7 +9,7 @@ from golden_pipeline import improvement, storage
 from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
-from golden_pipeline.validation import release, validate
+from golden_pipeline.validation import SCREEN_CODES, release, rule_reason, validate
 
 PRICED = {"usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0}
 LOOP = {
@@ -171,6 +171,59 @@ def test_a_retried_bundle_is_told_its_own_failed_question_and_why_but_not_an_ans
     assert manifest(2)["policy"]["notes"][manifest(2)["bundle_ids"][0]] == budget[budget.index(note):]
 
 
+def test_an_item_the_release_screen_drops_reaches_the_next_loops_first_round_without_its_question(
+        looped, loop_config, tmp_path):
+    # 검증을 통과했어도 출시에서 빠진 항목이 실패 기록에 없으면, 다음 생성이 같은 실패를 되풀이한다.
+    # 판정기가 고를 수 있는 코드에 예방 규칙이 없으면 유료 출시 뒤에 기록이 멈춘다.
+    assert set(SCREEN_CODES) <= set(PREVENTION_RULES)
+    [accepted] = read_jsonl(run_dir(1) / "accepted.jsonl")
+
+    def useless(model, reasoning_effort, messages):
+        text = '{"useful": false, "code": "ordinal_reference", "reason": "순번으로 가리킨다"}'
+        return {"model": "screen-test", "text": text, "input_tokens": 10, "output_tokens": 10}
+
+    screen = tmp_path / "screen.json"
+    screen.write_text(json.dumps({**LOOP["validator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
+    release_dir = release("numeric", "v1", [("A", "l1-r1")], screen, useless)
+    path = improvement.record_screen("numeric", "v1")
+    assert accepted["question"] not in path.read_text(encoding="utf-8")
+    manifest = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["runs"] == ["A/l1-r1"] and manifest["count"] == 0
+    assert manifest["release"]["dropped"][0]["run_id"] == "l1-r1"
+    for name, sha in manifest["sources"]["A/l1-r1"].items():
+        assert sha == storage._sha256(run_dir(1) / name)
+    assert read_jsonl(path)[0]["evidence"] == {
+        "release": "v1", "run": "A/l1-r1", "candidate_id": accepted["candidate_id"],
+    }
+
+    generator = Generator()
+    improve("numeric", "p3", "l2", loop_config(), generator, Validator())
+
+    policy = json.loads((storage.run_path("numeric", "A", "l2-r1") / "manifest.json").read_text(encoding="utf-8"))
+    assert policy["generation"]["policy"]["failures"]["ordinal_reference"] == ["screen-v1:1"]
+    assert PREVENTION_RULES["ordinal_reference"] in generator.requests[0][0]["content"]
+
+
+@pytest.mark.parametrize("topic, field, value, code", [
+    ("numeric", "question", "사업의 값과 단위는?", "ordinal_reference"),
+    ("table", "question", "구분\n예산은 얼마인가?", "malformed_question"),
+    ("table", "table_text", " | 1억원", "broken_table"),
+    ("condition", "answer", "가능 (조건: 사전 승인)", "answer_dump"),
+    ("comparison", "structure", {"choice": None}, "invalid_comparison"),
+    ("multi_hop", "evidence", [{"chunk_id": "c1"}, {"chunk_id": "c1"}], "single_chunk"),
+])
+def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_failure_code(topic, field, value, code):
+    # 검증은 답이 근거와 맞는지만 봐서 이 꼴은 통과하지만 평가에 쓸 수 없었다. 코드가 없으면 다음 생성이 배우지 못한다.
+    item = {"primary_topic": topic, "question": "사업 예산은 얼마인가?", "answer": "1억원",
+            "context": "[E1]\n예산 | 1억원", "evidence": [{"chunk_id": "c1"}, {"chunk_id": "c2"}],
+            "structure": {"choice": "A안"}}
+    units = [{"text": "예산 | 1억원", "ref": {"location": {"kind": "table", "row": 1}}}]
+    assert rule_reason(item, units) is None
+    if field == "table_text":
+        units[0]["text"] = value
+    assert improvement.failure_code(rule_reason({**item, field: value}, units)) == code
+
+
 @pytest.mark.parametrize("limits, reason, rounds", [
     ({}, "max_rounds", 3),
     ({"max_calls": 4}, "call_cap", 1),
@@ -278,7 +331,7 @@ def test_b_and_c_code_paths_never_read_failure_memory(looped, monkeypatch, tmp_p
         raise AssertionError("B · C 경로가 실패 기록 모듈을 불렀습니다")
 
     def useful(model, reasoning_effort, messages):
-        return {"model": "screen-test", "text": '{"useful": true, "reason": "예산"}', "input_tokens": 10, "output_tokens": 10}
+        return {"model": "screen-test", "text": '{"useful": true, "code": null, "reason": "예산"}', "input_tokens": 10, "output_tokens": 10}
 
     generator = Generator()
     with monkeypatch.context() as patch:
