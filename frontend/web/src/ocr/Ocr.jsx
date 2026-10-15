@@ -87,7 +87,9 @@ function Card({ card, onLabel }) {
 }
 
 function where(o) {
-  const at = o.format === 'pdf' ? `p.${o.page} · ${o.image_index + 1}번째 그림` : o.image_name
+  // marker_start 가 null 이면 문서에 들어 있지만 본문에 표시가 없는 그림 — 01 전처리가 보지 않는다
+  const hwp = o.marker_start === null ? `${o.image_name} · 본문 표시 없음` : o.image_name
+  const at = o.format === 'pdf' ? `p.${o.page} · ${o.image_index + 1}번째 그림` : hwp
   return `${o.source} · ${at}${o.craft ? ` · ${o.craft}` : ''}`
 }
 

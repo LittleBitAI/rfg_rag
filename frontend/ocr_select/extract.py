@@ -42,18 +42,20 @@ def _hwp_reason(path: str) -> str | None:
 
 
 def hwp_images(path: str) -> list[dict]:
-    """HWP/HWPX 의 [IMAGE: 이름] 표시마다 그림 하나. marker_start 는 parsing._hwp_text 가 정리한 본문 기준이라 CRAFT 기록과 같다."""
+    """HWP/HWPX 의 [IMAGE: 이름] 표시마다 그림 하나. marker_start 는 parsing._hwp_text 가 정리한 본문 기준이라 CRAFT 기록과 같다.
+    라이브러리가 꺼냈지만 본문에 표시가 없는 그림(쪽에 놓이지 않은 BinData, 머리말 · 글상자 속 그림 등)도
+    marker_start=None 으로 싣는다. 01 전처리와 CRAFT 는 이 그림을 보지 않는다."""
     with tempfile.TemporaryDirectory(prefix="ocr_labels_") as image_dir:
         text = repair_md_tables(clean_tab_garbage(_hwp_raw_text(path, image_dir)))
-        marks = list(_IMG_MARK.finditer(text))
-        counts = Counter((m.group(1) or "").strip() for m in marks)
+        marks = [((m.group(1) or "").strip(), m.start()) for m in _IMG_MARK.finditer(text)]
+        counts = Counter(name for name, _ in marks)
+        marks += [(name, None) for name in sorted(os.listdir(image_dir)) if name not in counts]
         found = []
-        for m in marks:
-            name = (m.group(1) or "").strip()
+        for name, start in marks:
             file = os.path.join(image_dir, name)
             if not os.path.isfile(file):  # 파일이 없는 표시는 CRAFT 도 그림 없이 오류로만 남긴다
                 continue
-            location = {"format": "hwp", "image_name": name, "marker_start": m.start(),
+            location = {"format": "hwp", "image_name": name, "marker_start": start,
                         "repeated_occurrences": counts[name]}
             found.append(_found(Path(file).read_bytes(), name, _hwp_reason(file), location))
     return found
