@@ -77,17 +77,51 @@ def _coverage(row: dict, facts: list[str], field_names: set[str]) -> float:
     return covered / (covered + left)
 
 
+def _starts(text: str, part: str) -> list[int]:
+    return [m.start() for m in re.finditer(re.escape(part), text)]
+
+
+def _copied(value: str, answer: str, question: str) -> bool:
+    """정답 속 value 가 모두 질문을 옮긴 자리인가 — 앞이나 뒤로 한 글자 늘려도 질문에 있다 (공백 무시).
+    379 의 '요구사항 분류: 기능' 은 ':기능' · '기능지' 모두 질문에 없어 옮긴 자리가 아니다"""
+    v, a, q = (re.sub(r"\s+", "", t) for t in (value, answer, question))
+    return all((s > 0 and a[s - 1:s + len(v)] in q) or (s + len(v) < len(a) and a[s:s + len(v) + 1] in q)
+               for s in _starts(a, v))
+
+
+def _inside_longer(value: str, answer: str, found: list[str]) -> bool:
+    """정답 속 value 가 모두 더 긴 값 안에만 나오는가 — 343 의 '데이터' 는 '데이터 설계 요구사항' 밖에도 나온다"""
+    spans = [(s, s + len(other)) for other in found if value != other and value in other for s in _starts(answer, other)]
+    return all(any(b <= s and s + len(value) <= e for b, e in spans) for s in _starts(answer, value))
+
+
+def _asked_value_in_question(row: dict, field_names: set[str], answer: str, question: str) -> bool:
+    """질문이 묻는 항목(이름의 끝 낱말이 질문에 있음)의 값이 질문에도 있고, 정답 쪽은 질문을 옮긴 자리가 아니다.
+    질문이 조건으로 준 값(367 의 'SFR-021 요구사항의')인지 묻는 값(379 의 분류 '기능' — 질문의 '지도기반 기능')인지
+    글만으로는 가를 수 없어, 이런 행은 사실을 만들지 않고 뺀다"""
+    for cells in _raw_cells(row["context"]):
+        label = _squash(cells[0])
+        if len(cells) < 2 or label not in field_names or label.split()[-1] not in question:
+            continue
+        for value in (item for cell in cells[1:] for item in _cell_items(cell)):
+            if len(value) > 1 and value in answer and value in question and not _copied(value, answer, question):
+                return True
+    return False
+
+
 def _multi_hop_key_facts(row: dict, field_names: set[str]) -> list[str]:
     """정답 글이 언급한 근거 표 칸 값 · 칸 속 글머리 항목 — 05 평가는 사실을 이어진 글자로 찾으므로, 근거 단위마다
     따로 찾을 수 있는 값이어야 근거를 모두 검색했을 때 만점이 된다. 항목 이름과 질문에 이미 있는 값은 뺀다.
     정답을 바꿔 말해 사실이 정답의 60% 를 못 덮으면 [] — 답의 일부만으로 만점이 나지 않게 점검에서 뺀다.
     (dev 에서 덮지 못한 행은 0.54 이하, 다 덮은 행은 0.60 이상이었다)"""
     answer, question = _squash(row["answer"]), _squash(row["question"])
+    if _asked_value_in_question(row, field_names, answer, question):
+        return []
     # 여러 칸 행의 첫 칸은 줄로 나누지 않는다 — '세부\n내용' 처럼 이름이 줄바꿈된 칸이다
     values = {item for cells in _raw_cells(row["context"]) for i, cell in enumerate(cells)
               for item in (_cell_items(cell) if i or len(cells) == 1 else [_squash(cell)])} - field_names
     found = [v for v in values if (len(v) > 1 or v.isdigit()) and v in answer and v not in question]
-    facts = [v for v in found if not any(v != other and v in other for other in found)]
+    facts = [v for v in found if not _inside_longer(v, answer, found)]
     facts = [f for f in (_quantity(v, answer) if re.fullmatch(r"[\d,.]+", v) else v for v in facts) if f]
     return sorted(facts) if facts and _coverage(row, facts, field_names) >= 0.6 else []
 

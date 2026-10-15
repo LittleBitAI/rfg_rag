@@ -23,6 +23,16 @@ def test_numbers_require_whole_values_and_matching_units(fact, text, expected):
     assert _key_fact_ratio([fact], text) == expected
 
 
+@pytest.mark.parametrize("fact,text,expected", [
+    ("SFR-009", "고유번호: SFR-009\n분류: 성능 요구사항", 1),
+    ("SFR-상담-001", "고유번호 SFR-상담-001 분류", 1),
+    ("SFR-009", "SFR-0091", 0),
+])
+def test_identifier_digits_are_not_quantities(fact, text, expected):
+    """식별자 끝 숫자 뒤에 '분류' 같은 낱말이 와도 단위(분)로 읽지 않는다"""
+    assert _key_fact_ratio([fact], text) == expected
+
+
 AMOUNT_FORMS = [
     ["1억 3천만원", "130백만원", "1.3억원", "130,000,000원"],
     ["2억 5천만원", "250,000,000원", "2.5억원"],

@@ -120,7 +120,24 @@ The extractor never identifies which values are asked for. It only removes value
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, still a draft: these are measurements on eval/golden/dev.jsonl, not a verified rule. The fix is the commit right after 3be41ab on feature/eval-golden-input; it changes rag/validation/validation.py, rag/evaluation/evaluation.py, tests/test_eval_items.py, tests/test_key_fact_matching.py and README.md.
+
+- Reproduced at 3be41ab: row 379's facts were ['SFR-003', '지도기반 통계결과 가시화', '지도기반 통계결과 출력(인쇄, 다운로드)'], and the reviewer's incomplete answer scored 1.0. Row 370 (F6) scored 0.5 against its own reference.
+- Step 1 (audit). Every multi_hop value that appears in the answer but is dropped by a filter was listed and hand-marked. Asked-for values lost:
+  - question filter: 379 기능, 377 데이터;
+  - containment filter: 343 데이터, 366 데이터, 389 데이터.
+
+  Everything else the filters dropped was supplied by the question or was a label: 327 PER-002 / 성능 일반, 351 SFR-015, 367 SFR-021, 374, 380, 388 class names, 394 생년월일, 고유번호 / 배점 / 산출물 and similar. Rows 366 and 389 were not in the page's prediction.
+- Step 2 (occurrence rule):
+  - For the containment filter (line 90) it matched the hand marks exactly. 343, 366 and 389 keep 데이터, and row 352's bullet items stay redundant inside the whole cell. Adopted (_inside_longer).
+  - For the question filter (line 89) it did not separate. Besides 379 기능 and 377 데이터, it would also keep nine supplied values or labels: 335 고유번호, 337/365 배점, 348, 351 SFR-015, 363, 366 산출물, 367 SFR-021, 371, 388.
+  - The label alternative (keep a question-shared value when the question names its field) also misfired, on 351, 367, 388 and 395.
+  - So, as the protocol says, the ambiguous rows are dropped instead (_asked_value_in_question). A row is dropped when a value of a field the question names (field name's last word in the question) appears in both question and answer and its answer occurrence is not copied from the question. Newly dropped: 379 and 367; 351, 377 and 388 were already out.
+- Step 3: test_bundled_dev_key_facts_score_the_requested_answer now checks, over every kept multi_hop row, that each 'label: value' answer item whose value equals a context cell or bullet item is a fact. Against the 3be41ab loader it fails at row 343 (데이터); after the fix it passes. The row-379 pin now expects [], and row 330 carries the inline-bullet pin.
+- Step 4: making _coverage count question words that are found context values changed no row's facts. Deliberately removing 데이터 from 343, 366 or 389 leaves coverage at 0.75, 0.84 and 0.93 either way, so the guard cannot see a missing short value. The change was not adopted. The guard still only catches answers it covers poorly, not single short values.
+- Step 5: every kept multi_hop fact scores 1 against its own context. The pins 270, 333, 335, 336, 362, 393, 348 and 387 hold. Kept dev questions are 372, against 374 at 3be41ab (379 and 367 dropped).
+- F6, same commit: rag/evaluation/evaluation.py no longer reads digits right after '<letter>-' as a quantity. In 'SFR-009\n분류', 009 was read as 9 minutes. A fact that starts or ends with a digit must not run into more digits (SFR-009 ≠ SFR-0091). tests/test_key_fact_matching.py::test_identifier_digits_are_not_quantities fails on the old evaluator and passes now. The dev test now asserts that every kept item, across all topics, scores 1 against its own reference answer.
+- Limit that remains: short kept values such as 데이터 are matched by any answer containing that text (S2, S6). Extraction cannot make them independently checkable under the literal matcher.
 
 ## Unresolved limits
 
