@@ -374,7 +374,7 @@ validate(topic, method, run_id, config_path, client)
 | 순서 | 검사 | 걸리면 |
 |---|---|---|
 | 1 | 주제 구조 (`check_structure`, 생성과 같은 검사) | `rejected` `유형 불일치` |
-| 1 | 규칙 검사 (`rule_reason`, 아래 출시에서도 다시 봄): 답은 맞지만 평가에 쓸 수 없던 꼴. numeric 질문의 `값과 단위` · `수치와 단위` · `첫 번째 값`, table 질문의 줄바꿈, table 근거의 빈 칸 행(빈 칸으로 시작하거나 이어짐), condition 답의 `(조건:` 덧붙임, comparison 의 `choice` 없음 (1 이 먼저 막지만 그 전에 검증한 run 을 출시할 때 걸림), multi_hop 근거가 모두 한 청크 | `rejected` `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `multi_hop 아님` |
+| 1 | 규칙 검사 (`rule_reason`, 아래 출시에서도 다시 봄): 답은 맞지만 평가에 쓸 수 없던 꼴. 대상을 이름으로 밝히지 않은 numeric 질문의 `값과 단위` · `수치와 단위` · `첫 번째 값`, table 질문의 줄바꿈, 인용한 표 행·머리글의 빈 칸(빈 칸으로 시작하거나 이어짐), condition 답의 `(조건:` 덧붙임, comparison 의 `choice` 없음 (1 이 먼저 막지만 그 전에 검증한 run 을 출시할 때 걸림), multi_hop 근거가 모두 한 청크. 무료 검사는 호출 한도 확인 전에 모든 후보에 적용합니다 | `rejected` `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `multi_hop 아님` |
 | 2 | 표: 인용한 표에서 행 이름 · 열 이름이 만나는 칸의 값이 답에 있음 | `rejected` `표 관계` |
 | 2 | 조건: 구조의 조건 · 예외 문구가 답에 있음 | `rejected` `조건 · 예외 누락` |
 | 3 | 같은 주제 · 같은 방식에서 이미 통과한 항목과 근거 묶음이나 질문(공백 · 쉼표 무시)이 같음 | `rejected` `중복` |
@@ -507,7 +507,8 @@ A run 의 실패 기록은 `record_failures` 가 그 run 의 `rejected.jsonl` �
 
 검증을 통과했지만 출시에서 빠진 항목도 다음 생성이 피해야 할 실패입니다. 사람이 읽고 정하는 단계는 없습니다.
 `release` 명령은 출시본을 쓴 뒤 `record_screen` 으로 매니페스트 `release.dropped` 의 A 항목을 `failure_memory/screen_{version}.jsonl` 에 같은 꼴로 씁니다.
-`entry_id` 는 `screen-{version}:{n}`, `evidence` 는 `{release, candidate_id}` 이고, 질문 · 답은 넣지 않습니다.
+`entry_id` 는 `screen-{version}:{n}`, `evidence` 는 `{release, run, candidate_id}` 이고, 질문 · 답은 넣지 않습니다.
+출시 매니페스트는 항목이 모두 빠진 run 을 포함한 모든 입력 run 의 파일 해시를 고정합니다.
 코드는 판정기가 고른 `code`, 규칙 검사 · 판정기 출력 오류로 빠진 항목은 이유 문구의 코드입니다.
 
 | 출시 실패 코드 | 빠진 이유 |
@@ -556,7 +557,7 @@ release(topic, version, [(method, run_id), ...], config_path, client)
 출시 전에 먼저 검증의 규칙 검사(`rule_reason`)를 다시 봅니다. 규칙이 생기기 전에 검증한 run 도 같은 기준으로 내기 위해서입니다.
 그다음 판정기(`prompts/screen.txt`)가 질문 · 답만 받아 RFP 를 읽는 사람이 물을 만한 질문인지 `{"useful": 참거짓, "code", "reason"}` 으로 정합니다.
 `code` 는 쓸모 있으면 `null`, 없으면 위 출시 실패 코드 중 하나입니다 (`SCREEN_CODES`).
-출력이 두 번 다 계약을 어기면 쓸모 없다고 봅니다. 빠진 항목은 `candidate_id` · 방식 · 질문 · 코드 · 이유와 함께 매니페스트 `release.dropped` 에,
+출력이 두 번 다 계약을 어기면 쓸모 없다고 봅니다. 빠진 항목은 `candidate_id` · 방식 · `run_id` · 질문 · 코드 · 이유와 함께 매니페스트 `release.dropped` 에,
 판정 설정 · 프롬프트 SHA-256 · 호출 수 · 비용은 `release` 에 남습니다. CLI 는 다른 유료 명령처럼 모델 · 추론 강도 · 단가 · 한도를 받고,
 한도에 닿으면 일부만 판정한 출시본을 만들지 않고 멈춥니다.
 2026-10-15 실제 표본(비교 40 · 표 30)에서 `low` 는 같은 기준을 들쭉날쭉 적용해, 출시에는 `high` 를 씁니다.

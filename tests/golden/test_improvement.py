@@ -184,9 +184,17 @@ def test_an_item_the_release_screen_drops_reaches_the_next_loops_first_round_wit
 
     screen = tmp_path / "screen.json"
     screen.write_text(json.dumps({**LOOP["validator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
-    release("numeric", "v1", [("A", "l1-r1")], screen, useless)
+    release_dir = release("numeric", "v1", [("A", "l1-r1")], screen, useless)
     path = improvement.record_screen("numeric", "v1")
     assert accepted["question"] not in path.read_text(encoding="utf-8")
+    manifest = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["runs"] == ["A/l1-r1"] and manifest["count"] == 0
+    assert manifest["release"]["dropped"][0]["run_id"] == "l1-r1"
+    for name, sha in manifest["sources"]["A/l1-r1"].items():
+        assert sha == storage._sha256(run_dir(1) / name)
+    assert read_jsonl(path)[0]["evidence"] == {
+        "release": "v1", "run": "A/l1-r1", "candidate_id": accepted["candidate_id"],
+    }
 
     generator = Generator()
     improve("numeric", "p3", "l2", loop_config(), generator, Validator())
@@ -199,7 +207,7 @@ def test_an_item_the_release_screen_drops_reaches_the_next_loops_first_round_wit
 @pytest.mark.parametrize("topic, field, value, code", [
     ("numeric", "question", "사업의 값과 단위는?", "ordinal_reference"),
     ("table", "question", "구분\n예산은 얼마인가?", "malformed_question"),
-    ("table", "context", "[E1]\n | 1억원", "broken_table"),
+    ("table", "table_text", " | 1억원", "broken_table"),
     ("condition", "answer", "가능 (조건: 사전 승인)", "answer_dump"),
     ("comparison", "structure", {"choice": None}, "invalid_comparison"),
     ("multi_hop", "evidence", [{"chunk_id": "c1"}, {"chunk_id": "c1"}], "not_multi_hop"),
@@ -209,8 +217,11 @@ def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_fai
     item = {"primary_topic": topic, "question": "사업 예산은 얼마인가?", "answer": "1억원",
             "context": "[E1]\n예산 | 1억원", "evidence": [{"chunk_id": "c1"}, {"chunk_id": "c2"}],
             "structure": {"choice": "A안"}}
-    assert rule_reason(item) is None
-    assert improvement.failure_code(rule_reason({**item, field: value})) == code
+    units = [{"text": "예산 | 1억원", "ref": {"location": {"kind": "table", "row": 1}}}]
+    assert rule_reason(item, units) is None
+    if field == "table_text":
+        units[0]["text"] = value
+    assert improvement.failure_code(rule_reason({**item, field: value}, units)) == code
 
 
 @pytest.mark.parametrize("limits, reason, rounds", [

@@ -15,7 +15,7 @@ from golden_pipeline import generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-3"
+VALIDATOR_VERSION = "validation-4"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -98,10 +98,13 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     calls = []
     ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls)
     judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls)
+    free_rejects = _static_rejections(candidates, spec, units, survivors)
+    rejected_ids = {item["candidate_id"] for item in free_rejects}
+    to_judge = [item for item in candidates if item["candidate_id"] not in rejected_ids]
 
     judged, status = [], "complete"
-    while len(judged) < len(candidates):
-        rest = candidates[len(judged):]
+    while len(judged) < len(to_judge):
+        rest = to_judge[len(judged):]
         batch = _batch(config, calls, rest, units)
         if not batch:
             needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]])
@@ -110,7 +113,7 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
         verdicts = generation.parallel(
             lambda item: _verdict(item, spec, units[item["candidate_id"]], ask, judge, survivors), batch)
         judged += [_settle(item, verdict, units[item["candidate_id"]], survivors) for item, verdict in zip(batch, verdicts)]
-    pending = [item["candidate_id"] for item in candidates[len(judged):]]
+    pending = [item["candidate_id"] for item in to_judge[len(judged):]]
     info = {
         "run_id": run_dir.name,
         "topic": topic,
@@ -132,7 +135,14 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
         "cost_usd": generation._cost(config, calls),
         "calls": calls,
     }
-    return judged, info
+    settled = {item["candidate_id"]: item for item in [*free_rejects, *judged]}
+    return [settled[item["candidate_id"]] for item in candidates if item["candidate_id"] in settled], info
+
+
+def _static_rejections(candidates, spec, units, survivors):
+    """호출 한도가 부족해도 무료 검사로 거절할 후보는 실패 기록에 남기도록 먼저 판정한다."""
+    return [_settle(item, ("rejected", reason), units[item["candidate_id"]], survivors)
+            for item in candidates if (reason := _static_reason(item, spec, units[item["candidate_id"]], survivors))]
 
 
 def _pinned_plan(run_dir, topic):
@@ -153,13 +163,14 @@ def release(topic, version, runs, config_path, client):
     빠진 항목과 이유 · 실패 코드는 출시 매니페스트에 남기고, improvement.record_screen 이 실패 기록으로 옮긴다.
     한도에 닿으면 일부만 낸 출시본을 만들지 않고 멈춘다.
     """
-    items = [item for method, run_id in runs for item in storage.read_validated(topic, method, run_id)]
+    items, units = _release_items(topic, runs)
     _refuse_duplicates(items)
     config, config_sha = generation._run_config(config_path)
     prompt_path = storage.PROMPTS / "screen.txt"
     calls = []
     screen = _screener(client, config, prompt_path.read_text(encoding="utf-8"), calls)
-    ruled = {item["candidate_id"]: (False, None, rule) for item in items if (rule := rule_reason(item))}
+    ruled = {item["candidate_id"]: (False, None, rule)
+             for item in items if (rule := rule_reason(item, units[item["candidate_id"]]))}
     to_screen = [item for item in items if item["candidate_id"] not in ruled]
     verdicts = []
     for start in range(0, len(to_screen), generation.WORKERS):
@@ -172,7 +183,8 @@ def release(topic, version, runs, config_path, client):
     judged = {**ruled, **{item["candidate_id"]: verdict for item, verdict in zip(to_screen, verdicts)}}
     released = [transition(item, "released", "자동 검증 · 쓸모 판정 통과")
                 for item in items if judged[item["candidate_id"]][0]]
-    dropped = [{"candidate_id": item["candidate_id"], "method": item["method"], "question": item["question"],
+    dropped = [{"candidate_id": item["candidate_id"], "method": item["method"], "run_id": item["run_id"],
+                "question": item["question"],
                 "code": judged[item["candidate_id"]][1], "reason": judged[item["candidate_id"]][2]}
                for item in items if not judged[item["candidate_id"]][0]]
     info = {
@@ -185,7 +197,22 @@ def release(topic, version, runs, config_path, client):
         "screened": len(to_screen),
         "dropped": dropped,
     }
-    return storage.write_release(topic, version, released, info)
+    return storage.write_release(topic, version, released, runs, info)
+
+
+def _release_items(topic, runs):
+    """출시의 규칙 검사도 검증 때와 같은 고정 계획에서 인용 근거와 표 머리글만 읽는다."""
+    items, units = [], {}
+    for method, run_id in runs:
+        accepted = storage.read_validated(topic, method, run_id)
+        generated = storage._read_json(storage.run_path(topic, method, run_id) / "manifest.json")["generation"]
+        planned, sha = plan.load_plan(generated["plan_id"])
+        if sha != generated["plan_sha256"]:
+            raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_id} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
+        bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
+        units.update((item["candidate_id"], evidence_units(item, bundles[item["bundle_id"]])) for item in accepted)
+        items.extend(accepted)
+    return items, units
 
 
 def _screener(client, config, instructions, calls):
@@ -438,7 +465,7 @@ def _static_reason(item, spec, units, survivors):
     mismatch = generation.check_structure(item["primary_topic"], spec, item, cited)
     if mismatch:
         return f"유형 불일치: {mismatch}"
-    rule = rule_reason(item)
+    rule = rule_reason(item, units)
     if rule:
         return rule
     check = RELATIONS.get(item["primary_topic"])
@@ -449,15 +476,16 @@ def _static_reason(item, spec, units, survivors):
     return f"중복: {duplicate} 와 같은 근거 묶음이나 질문입니다" if duplicate else None
 
 
-def rule_reason(item):
+def rule_reason(item, units):
     """독립 답과 맞아 검증을 통과하지만 평가에 쓸 수 없던 꼴이면 그 이유, 아니면 None. 돈이 들지 않아 검증 앞과 출시 앞에서 본다."""
-    topic, question = item["primary_topic"], item["question"]
-    if topic == "numeric" and re.search(r"값과 단위|수치와 단위|첫 번째 값", question):
+    topic, question = item["primary_topic"], DOCUMENT_PREFIX.sub("", item["question"]).strip()
+    if topic == "numeric" and re.fullmatch(
+            r"(?:사업의\s*)?(?:값과 단위|수치와 단위|첫 번째 값)(?:은|는)?\s*(?:(?:무엇|얼마)인가)?[?？]?", question):
         return "모호한 대상: 질문이 '값과 단위' · '첫 번째 값' 처럼 대상을 이름으로 가리키지 않습니다"
     if topic == "table" and "\n" in question:
         return "끊긴 질문: 질문에 줄바꿈이 있습니다"
-    if topic == "table" and BLANK_CELL.search(item["context"]):
-        return "빈 칸 표: 근거 표에 빈 칸으로 시작하거나 빈 칸이 이어진 행이 있습니다"
+    if topic == "table" and any(BLANK_CELL.search(unit["text"]) for unit in units if plan._table_row(unit) is not None):
+        return "빈 칸 표: 인용한 표 행이나 머리글에 빈 칸으로 시작하거나 빈 칸이 이어진 행이 있습니다"
     if topic == "condition" and "(조건:" in item["answer"]:
         return "답 덧붙임: 답에 '(조건: …)' 이 붙었습니다"
     # 생성 검사도 choice 를 요구하지만, 그 전에 검증한 run 을 출시할 때 여기서 걸러진다.

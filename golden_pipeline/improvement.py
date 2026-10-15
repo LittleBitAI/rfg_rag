@@ -134,7 +134,7 @@ def record_screen(topic, version):
         entries.append({
             "entry_id": f"screen-{version}:{len(entries) + 1}",
             "failure_code": code,
-            "evidence": {"release": version, "candidate_id": row["candidate_id"]},
+            "evidence": {"release": version, "run": f"A/{row['run_id']}", "candidate_id": row["candidate_id"]},
             "prevention_rule": PREVENTION_RULES[code],
             "rule_version": PREVENTION_VERSION,
         })

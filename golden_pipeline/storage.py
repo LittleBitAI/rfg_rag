@@ -173,10 +173,10 @@ def read_validated(topic, method, run_id):
     return _read_jsonl(run_dir / "accepted.jsonl")
 
 
-def write_release(topic, version, items, info=None):
+def write_release(topic, version, items, runs, info=None):
     """출시 상태 항목을 releases/{version}/golden.jsonl 과 출시 매니페스트로 쓴다.
 
-    매니페스트에는 원본 run 마다 그 run 파일들의 SHA-256 을, release 에는 출시를 만든 쪽의 기록(info)을 남긴다.
+    매니페스트에는 입력 run 전부의 파일 SHA-256 을 남긴다. 항목이 모두 빠진 run 도 실패 기록의 출처이기 때문이다.
     """
     for item in items:
         validate_item(item)
@@ -193,7 +193,7 @@ def write_release(topic, version, items, info=None):
 
     golden = release_dir / "golden.jsonl"
     _write_jsonl(golden, items)
-    runs = {(item["method"], item["run_id"]) for item in items}
+    runs = set(runs) | {(item["method"], item["run_id"]) for item in items}
     _write_json(release_dir / "manifest.json", {
         "version": version,
         "topic": topic,

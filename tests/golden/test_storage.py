@@ -66,10 +66,10 @@ def test_release_refuses_items_not_released_or_not_in_catalog(outputs, make_item
     items = run_items(make_item)
     storage.write_run("numeric", "A", "r1", items)
     with pytest.raises(ValueError, match="출시 상태"):
-        storage.write_release("numeric", "v1", [items[1]])
+        storage.write_release("numeric", "v1", [items[1]], [("A", "r1")])
     unregistered = transition({**items[1], "candidate_id": "n-x"}, "released", "출시")
     with pytest.raises(storage.CatalogError, match="등록되지 않았습니다"):
-        storage.write_release("numeric", "v1", [unregistered])
+        storage.write_release("numeric", "v1", [unregistered], [("A", "r1")])
 
 
 @pytest.mark.parametrize("field", ["answer", "run_id", "evidence", "difficulty", "state_history"])
@@ -84,7 +84,7 @@ def test_release_refuses_content_that_differs_from_its_registered_run(outputs, m
     substituted = transition({**items[1], field: other[field]}, "released", "출시")
 
     with pytest.raises(storage.CatalogError, match="등록된 기록과 다릅니다"):
-        storage.write_release("numeric", "v1", [substituted])
+        storage.write_release("numeric", "v1", [substituted], [("A", "r1")])
     assert not (outputs / "outputs/goldens/numeric/releases").exists()
 
 

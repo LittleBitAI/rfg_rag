@@ -189,6 +189,9 @@ TABLE = {"question": "A안의 예산은?", "answer": "1억원", "evidence": ["E1
 @pytest.mark.parametrize("topic, row, verdicts, state, reason", [
     pytest.param("numeric", NUMERIC, {"*": verdict("1억 3천만원", ["부가세 포함"])}, "auto_validated", "자동 검증 통과",
                  id="numeric-passes"),
+    pytest.param("numeric", {**NUMERIC, "question": "사업 예산의 값과 단위는 무엇인가?"},
+                 {"*": verdict("1억 3천만원", ["부가세 포함"])}, "auto_validated", "자동 검증 통과",
+                 id="named-numeric-target-passes"),
     pytest.param("numeric", NUMERIC, {"*": verdict("13,000,000원", ["부가세 포함"])}, "rejected", "독립 답과 다릅니다",
                  id="numeric-value-differs"),
     pytest.param("condition", CONDITION, {"*": verdict("11월 3일까지", ["우편 접수는 받지 않는다"])}, "auto_validated",
@@ -385,6 +388,23 @@ def test_release_collects_only_accepted_items_and_refuses_an_existing_version(ju
     assert (release_dir / "golden.jsonl").read_bytes() == before
 
 
+def test_uncited_blank_table_rows_do_not_reject_validation_or_release(config):
+    # 묶음의 비고 행이 비어 있어도 인용한 예산 행과 머리글은 명확하다.
+    planned = load_plan("p1")[0]
+    table = next(group for group in planned["bundles"] if group["topic"] == "table")
+    table["units"][2]["text"] = "비고 | | 별도"
+    table["context"] = "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in table["units"])
+    storage._write_json(storage.OUTPUTS / "plans" / "p1.json", planned)
+    generate("A", "table", "p1", "a1", config, Generator(TABLE))
+    validator = Validator({"*": verdict("1억원")})
+
+    run_dir = validate("table", "A", "a1", config, validator)
+    release_dir = release("table", "v1", [("A", "a1")], config, Screener())
+
+    assert len(read_jsonl(run_dir / "accepted.jsonl")) == len(validator.requests) == 1
+    assert len(read_jsonl(release_dir / "golden.jsonl")) == 1
+
+
 @pytest.mark.parametrize("reply, code, reason", [
     (json.dumps({"useful": False, "code": "structure_question", "reason": "쪽 번호를 묻는다"}, ensure_ascii=False),
      "structure_question", "쪽 번호를 묻는다"),
@@ -440,4 +460,31 @@ def test_run_is_validated_once_and_the_call_cap_leaves_candidates_pending(config
     assert validated(run_dir) == {}
     with pytest.raises(FileExistsError, match="이미 검증한"):
         validate("multi_hop", "A", "a1", config, validator)
+    assert validator.requests == []
+
+
+def test_free_rejections_are_recorded_even_after_a_candidate_blocked_by_the_call_cap(config, tmp_path):
+    # 앞 후보는 유료 호출이 필요해 pending 이어도 뒤 후보의 무료 거절과 실패 코드는 남아야 한다.
+    planned = load_plan("p2")[0]
+    group = planned["bundles"][0]
+    group["units"][2]["ref"]["chunk_id"] = group["units"][1]["ref"]["chunk_id"]
+    storage._write_json(storage.OUTPUTS / "plans" / "p2.json", planned)
+    rows = [MULTI_HOP, {**MULTI_HOP, "question": "이 두 근거를 이으면 몇 년인가?", "evidence": ["E2", "E3"]}]
+    export = tmp_path / "multi.jsonl"
+    export.write_text("".join(json.dumps({**row, "bundle_id": group["bundle_id"]}, ensure_ascii=False) + "\n"
+                              for row in rows), encoding="utf-8")
+    sidecar = tmp_path / "sidecar.json"
+    sidecar.write_text("{}", encoding="utf-8")
+    import_c("multi_hop", "p2", "c1", [export], sidecar)
+    capped = tmp_path / "capped.json"
+    capped.write_text(json.dumps({**CONFIG, "max_calls": 1}), encoding="utf-8")
+    validator = Validator({"*": verdict("2년")})
+
+    run_dir = validate("multi_hop", "C", "c1", capped, validator)
+
+    record = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))
+    [rejected] = read_jsonl(run_dir / "rejected.jsonl")
+    assert (record["status"], record["pending"], record["calls"]) == ("call_cap", ["multi_hop-C-c1-0001"], [])
+    assert rejected["candidate_id"] == "multi_hop-C-c1-0002"
+    assert rejected["state_history"][-1]["reason"].startswith("multi_hop 아님")
     assert validator.requests == []
