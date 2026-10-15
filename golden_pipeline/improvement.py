@@ -41,6 +41,7 @@ FAILURE_CODES = (
     ("판정기 출력 오류", "validator_output"),
     ("대상 문서에 있음", "present_in_target"),
     ("전제가 문서에 있음", "premise_in_document"),
+    ("근거 지칭", "evidence_reference"),
 )
 # 규칙 글을 바꾸면 PREVENTION_VERSION 을 올린다. 기록 항목은 쓸 때의 버전을 남긴다.
 PREVENTION_RULES = {

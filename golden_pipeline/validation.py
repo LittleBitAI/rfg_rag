@@ -36,6 +36,8 @@ SCREEN_CODES = ("structure_question", "ordinal_reference", "evidence_reference",
                 "personal_info", "malformed_question", "invalid_comparison", "useless_answer")
 # 칸이 비어 행의 뜻이 정해지지 않는 표 행: 빈 칸으로 시작하거나 빈 칸이 이어진다 (조직도 · 간트 모양).
 BLANK_CELL = re.compile(r"(^|\n) *\||\| *\|")
+# unanswerable 생성기는 다른 문서의 근거 라벨([E1 · 머리글 행])을 질문에 옮겨 적곤 한다. 질문자는 근거를 보지 못한다.
+EVIDENCE_LABEL = re.compile(r"(?<![A-Za-z])E\d+(?!\d)|머리글 행")
 # unanswerable 검증기에 주는 대상 문서의 근거 단위 수.
 BEST_MATCHING = 5
 
@@ -562,6 +564,8 @@ def rule_reason(item, units):
         return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
     if topic == "multi_hop" and len({ref["chunk_id"] for ref in item["evidence"]}) < 2:
         return "multi_hop 아님: 인용한 근거가 모두 한 청크 안에 있습니다"
+    if topic == "unanswerable" and EVIDENCE_LABEL.search(question):
+        return "근거 지칭: 질문에 'E1' · '머리글 행' 같은 근거 라벨이 있습니다"
     return None
 
 
