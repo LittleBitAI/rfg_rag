@@ -1,10 +1,12 @@
-"""OCR 라벨링 화면: 같은 그림 묶기, 위치마다 카드 하나와 라벨 · CRAFT 기록의 마지막 줄 우선, 1~3 밖 라벨 거부, images/ 밖 파일 차단."""
+"""OCR 라벨링 화면: 같은 그림 묶기, 위치마다 카드 하나와 라벨 · CRAFT 기록의 마지막 줄 우선, 문서 순서 다섯 묶음,
+묶음 결과 합치기, 1~3 밖 라벨 거부, images/ 밖 파일 차단."""
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from frontend.ocr_select import server
 from frontend.ocr_select.extract import group_images
+from frontend.ocr_select.merge import merge
 
 DOC = {"doc_id": "a_1", "source": "a.hwp", "document_sha256": "doc-a"}
 LOGO_1 = {**DOC, "format": "hwp", "image_name": "BIN1.png", "marker_start": 10, "repeated_occurrences": 1}
@@ -46,15 +48,48 @@ def test_one_card_per_location_with_its_last_label_and_last_craft_row():
     out = server.cards(images, labels, server.craft_verdicts(craft_rows))
 
     assert [(c["image_sha256"], c["occurrence"]) for c in out] == [
-        ("s1", LOGO_1), ("s1", PAGE_IMG), ("s2", {**LOGO_1, "image_name": "BIN2.wmf"})]
-    assert [c["label"] for c in out] == [3, 1, None]
-    assert [c["craft"] for c in out] == ["OCR_CANDIDATE", "OCR_UNNECESSARY", None]
+        ("s1", LOGO_1), ("s2", {**LOGO_1, "image_name": "BIN2.wmf"}), ("s1", PAGE_IMG)]
+    assert [c["label"] for c in out] == [3, None, 1]
+    assert [c["craft"] for c in out] == ["OCR_CANDIDATE", None, "OCR_UNNECESSARY"]
     assert len({c["key"] for c in out}) == 3
 
 
 def test_same_hwp_image_twice_in_one_document_gets_two_keys():
     again = {**LOGO_1, "marker_start": 500, "repeated_occurrences": 2}
     assert server.occurrence_key(LOGO_1) != server.occurrence_key(again)
+
+
+def test_cards_cut_into_five_even_batches_in_document_order():
+    # 11곳: b.pdf 7쪽 (뒤섞어 넣음) + a.hwp 표시 3곳 + 본문 표시 없는 그림 1곳 → a.hwp 먼저, 표시 없는 그림은 그 문서 끝
+    pages = [{**PAGE_IMG, "page": p} for p in (5, 1, 7, 2, 6, 3, 4)]
+    hwp = [{**LOGO_1, "marker_start": m} for m in (300, 20, 100)]
+    unmarked = {**LOGO_1, "image_name": "BIN0.png", "marker_start": None, "repeated_occurrences": 0}
+    images = [{"image_sha256": "s1", "occurrences": pages[:4] + [unmarked]},
+              {"image_sha256": "s2", "occurrences": hwp + pages[4:]}]
+
+    out = server.cards(images, {}, {})
+
+    assert [(c["occurrence"]["source"], c["occurrence"].get("marker_start"), c["occurrence"].get("page"))
+            for c in out[:5]] == [("a.hwp", 20, None), ("a.hwp", 100, None), ("a.hwp", 300, None),
+                                  ("a.hwp", None, None), ("b.pdf", None, 1)]
+    assert [c["occurrence"]["page"] for c in out[4:]] == [1, 2, 3, 4, 5, 6, 7]
+    assert [c["batch"] for c in out] == [1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+
+
+def test_merge_keeps_the_later_label_per_location_and_counts_unknown_locations():
+    images = [{"image_sha256": "s1", "occurrences": [LOGO_1, PAGE_IMG]}]
+    rows = [  # 두 사람의 파일을 이어 붙인 것 — 파일 순서가 아니라 labelled_at 이 늦은 라벨이 이긴다
+        {"image_sha256": "s1", "label": 1, "labelled_at": "2026-10-15T10:00:00+09:00", "occurrences": [LOGO_1]},
+        {"image_sha256": "s1", "label": 2, "labelled_at": "2026-10-15T12:00:00+09:00", "occurrences": [PAGE_IMG]},
+        {"image_sha256": "s1", "label": 3, "labelled_at": "2026-10-15T09:00:00+09:00", "occurrences": [LOGO_1]},
+        {"image_sha256": "s9", "label": 3, "labelled_at": "2026-10-15T09:00:00+09:00",
+         "occurrences": [{**PAGE_IMG, "document_sha256": "doc-z"}]},
+    ]
+
+    merged, all_cards, unknown = merge(rows, images)
+
+    assert [(r["occurrences"], r["label"], r["batch"]) for r in merged] == [([LOGO_1], 1, 1), ([PAGE_IMG], 2, 3)]
+    assert len(all_cards) == 2 and unknown == 1
 
 
 @pytest.mark.parametrize("label", [0, 4, "1", None])
