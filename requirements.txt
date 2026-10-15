@@ -44,3 +44,4 @@ python-dotenv>=1.0
 ipykernel>=6            # 노트북 실행 커널
 ruff>=0.12              # 함수 복잡도 검사 (pyproject.toml)
 pytest>=8               # 게이트 (tests/)
+easyocr==1.7.2
