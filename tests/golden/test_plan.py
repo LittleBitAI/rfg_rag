@@ -89,6 +89,21 @@ def test_header_row_owned_by_an_earlier_topic_is_not_inserted_again():
     assert _groups("table", topic_spec("table")[0], rows, used, 2000, NAMES)[DOC_1] == []
 
 
+def char_unit(unit_id, chunk_id):
+    location = {"kind": "char", "start": 0, "end": 1}
+    return {"unit_id": unit_id, "ref": {"doc_sha": DOC_1, "chunk_id": chunk_id, "element_id": f"e-{unit_id}",
+                                        "location": location}, "text": f"본문 {unit_id}"}
+
+
+def test_multi_hop_bundles_cross_a_chunk_boundary():
+    # 한 청크 안의 단위만 받은 묶음은 청크 둘을 잇는 질문이 나올 수 없어, 늘 거절되면서 생성 · 검증 호출만 쓴다.
+    units = [char_unit(f"a{n}", "chunk-a") for n in (1, 2, 3, 4)] + [char_unit(f"b{n}", "chunk-b") for n in (1, 2)]
+
+    [bundle] = _groups("multi_hop", topic_spec("multi_hop")[0], units, set(), 2000, NAMES)[DOC_1]
+
+    assert [u["unit_id"] for u in bundle["units"]] == ["a3", "a4", "b1"]
+
+
 @pytest.mark.parametrize("header_eligible", [True, False])
 def test_table_rows_are_bundled_with_their_header_row_or_left_out(header_eligible):
     rows = six_rows()

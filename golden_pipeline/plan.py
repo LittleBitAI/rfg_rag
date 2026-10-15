@@ -156,10 +156,30 @@ def _groups(topic, spec, units, used, max_context_chars, names):
     size = spec["bundle_units"]
     groups = {}
     for doc, doc_units in sorted(by_doc.items()):
-        chunks = [_with_headers(doc_units[i:i + size], headers) for i in range(0, len(doc_units) - size + 1, size)]
-        bundles = [_bundle(topic, chunk, names[doc]) for chunk in chunks if chunk]
+        if topic == "multi_hop":
+            windows = _spanning(doc_units, size)
+        else:
+            windows = [doc_units[i:i + size] for i in range(0, len(doc_units) - size + 1, size)]
+        windows = [_with_headers(window, headers) for window in windows]
+        bundles = [_bundle(topic, window, names[doc]) for window in windows if window]
         groups[doc] = [b for b in bundles if len(b["context"]) <= max_context_chars]
     return groups
+
+
+def _spanning(units, size):
+    """이어진 단위 size 개씩 묶되, 청크 둘 이상에 걸친 묶음만 낸다 (multi_hop).
+
+    한 청크 안의 단위만 받은 생성기는 청크 둘을 이어야 하는 질문을 만들 수 없어 그 묶음은 늘 거절된다.
+    """
+    windows, start = [], 0
+    while start + size <= len(units):
+        window = units[start:start + size]
+        if len({unit["ref"]["chunk_id"] for unit in window}) >= 2:
+            windows.append(window)
+            start += size
+        else:
+            start += 1
+    return windows
 
 
 def _with_headers(chunk, headers):

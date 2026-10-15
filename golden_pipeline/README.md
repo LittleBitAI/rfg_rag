@@ -246,6 +246,8 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
    단위 본문은 패키지 `final_elements.jsonl` 에서 읽습니다 (글자 span 은 그 구간, 표 행은 칸을 ` | ` 로 이은 것).
 3. 주제 순서(`numeric` → `table` → `condition` → `comparison` → `multi_hop`)대로, 주제 명세의 `pattern` · `table_only` 에 맞는 단위를
    문서마다 패키지 순서로 `bundle_units` 개씩 묶습니다. 컨텍스트가 `--max-context-chars` 를 넘는 묶음은 버립니다.
+   multi_hop 은 청크 둘 이상에 걸친 묶음만 냅니다 (`_spanning`). 이어진 단위는 대개 한 표의 이웃 행이라
+   그대로 묶으면 절반 넘게(night 계획 300개 중 162개) 한 청크 안에 들었고, 그 묶음의 후보 431개는 하나도 출시되지 못했습니다.
    한 단위는 한 주제의 묶음에만 들어갑니다 (카탈로그가 같은 근거를 두 주제에 두지 않기 때문).
    표 행이 든 묶음에는 그 표의 머리글 행(논리 표 0행)을 맨 앞에 붙입니다. 열 이름 없이는 칸을 가리킬 수 없기 때문입니다.
    머리글 행이 `eligible` 이 아니거나 앞 주제의 묶음이 이미 가졌으면 그 묶음을 버립니다.
