@@ -16,7 +16,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-4"
+VALIDATOR_VERSION = "validation-5"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
