@@ -18,10 +18,20 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _raw_cells(context: str) -> list[list[str]]:
+    """골든 근거 글 → 근거 단위([E1] …)마다 ' | ' 로 나눈 표 칸 (줄바꿈 그대로)"""
+    return [unit.split(" | ") for unit in re.split(r"^\[E\d+[^\]\n]*\]$", context, flags=re.M)]
+
+
 def _cells(context: str) -> list[list[str]]:
-    """골든 근거 글 → 근거 단위([E1] …)마다 ' | ' 로 나눈 표 칸"""
-    return [[_squash(cell) for cell in unit.split(" | ")]
-            for unit in re.split(r"^\[E\d+[^\]\n]*\]$", context, flags=re.M)]
+    return [[_squash(cell) for cell in cells] for cells in _raw_cells(context)]
+
+
+def _cell_items(cell: str) -> list[str]:
+    """칸 전체와 그 안의 글머리 항목(줄, 또는 한 줄 안의 ' o ' ' - ' 등으로 이어 적힌 항목) — 칸 하나에 사실 여럿이
+    적힌 경우, 정답이 그중 일부만 옮겨도 그 항목들이 따로 사실이 된다. 쉼표로는 나누지 않는다(2,150 · 이름 속 쉼표)"""
+    items = re.split(r"\n|(?:^|\s)(?:[◦○●•·∘ㅇo*\-‑–]|\d+[.)])(?=\s)", cell)
+    return [_squash(cell)] + [_squash(item) for item in items]
 
 
 def _field_names(rows: list[dict]) -> set[str]:
@@ -32,7 +42,8 @@ def _field_names(rows: list[dict]) -> set[str]:
         for cells in _cells(row.get("context") or ""):
             if len(cells) > 1:
                 docs.setdefault(cells[0], set()).update(ref["doc_sha"] for ref in row["evidence"])
-    return {name for name, shas in docs.items() if len(shas) >= 3}
+    # 행 번호(1 · 2 · 3)도 첫 칸으로 되풀이되지만 이름이 아니다 — 배점 4 같은 값을 지운다
+    return {name for name, shas in docs.items() if len(shas) >= 3 and re.search(r"[^\W\d_]", name)}
 
 
 def _quantity(number: str, answer: str) -> str | None:
@@ -44,16 +55,41 @@ def _quantity(number: str, answer: str) -> str | None:
     return f"{number}|{number}{found[1]}" if found[1] else number
 
 
+_ENDINGS = re.compile(r"은|는|이|가|을|를|의|에|와|과|및|로|로는|으로|이며|이고|이다|하며|한다|함|등|그")
+
+
+def _letters(text: str) -> int:
+    return len(re.findall(r"[가-힣A-Za-z0-9]", text))
+
+
+def _coverage(row: dict, facts: list[str], field_names: set[str]) -> float:
+    """정답 글자 중 사실이 덮는 몫. 항목 이름 · 'X:' 꼴 이름 · 질문에 있는 낱말 · 조사뿐인 낱말은 셈에서 뺀다"""
+    answer = _squash(row["answer"])
+    rest = answer
+    for fact in sorted({alt for f in facts for alt in f.split("|")}, key=len, reverse=True):
+        rest = rest.replace(fact, " ")
+    covered = _letters(answer) - _letters(rest)
+    for word in sorted(field_names | set(_squash(row["question"]).split()), key=len, reverse=True):
+        if len(word) > 1:
+            rest = rest.replace(word, " ")
+    rest = re.sub(r"[^\s:;.]+(?: [^\s:;.]+)?\s*:", " ", rest)
+    left = sum(_letters(w) for w in re.findall(r"[가-힣A-Za-z0-9‧/]+", rest) if not _ENDINGS.fullmatch(w))
+    return covered / (covered + left)
+
+
 def _multi_hop_key_facts(row: dict, field_names: set[str]) -> list[str]:
-    """정답 글이 언급한 근거 표 칸 값 — 05 평가는 사실을 이어진 글자로 찾으므로, 근거 단위마다 따로 찾을 수 있는 값이어야
-    근거를 모두 검색했을 때 만점이 된다. 항목 이름과 질문에 이미 있는 값은 뺀다.
-    표 칸 값이 하나도 없는 서술형 정답은 [] 이 되어 점검에서 빠진다."""
+    """정답 글이 언급한 근거 표 칸 값 · 칸 속 글머리 항목 — 05 평가는 사실을 이어진 글자로 찾으므로, 근거 단위마다
+    따로 찾을 수 있는 값이어야 근거를 모두 검색했을 때 만점이 된다. 항목 이름과 질문에 이미 있는 값은 뺀다.
+    정답을 바꿔 말해 사실이 정답의 60% 를 못 덮으면 [] — 답의 일부만으로 만점이 나지 않게 점검에서 뺀다.
+    (dev 에서 덮지 못한 행은 0.54 이하, 다 덮은 행은 0.60 이상이었다)"""
     answer, question = _squash(row["answer"]), _squash(row["question"])
-    values = {cell for cells in _cells(row["context"]) for cell in cells} - field_names
-    found = [v for v in values if len(v) > 1 and v in answer and v not in question]
+    # 여러 칸 행의 첫 칸은 줄로 나누지 않는다 — '세부\n내용' 처럼 이름이 줄바꿈된 칸이다
+    values = {item for cells in _raw_cells(row["context"]) for i, cell in enumerate(cells)
+              for item in (_cell_items(cell) if i or len(cells) == 1 else [_squash(cell)])} - field_names
+    found = [v for v in values if (len(v) > 1 or v.isdigit()) and v in answer and v not in question]
     facts = [v for v in found if not any(v != other and v in other for other in found)]
-    facts = [_quantity(v, answer) if re.fullmatch(r"[\d,.]+", v) else v for v in facts]
-    return sorted(f for f in facts if f)
+    facts = [f for f in (_quantity(v, answer) if re.fullmatch(r"[\d,.]+", v) else v for v in facts) if f]
+    return sorted(facts) if facts and _coverage(row, facts, field_names) >= 0.6 else []
 
 
 def _golden_key_facts(row: dict, field_names: set[str]) -> list[str]:

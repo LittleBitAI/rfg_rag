@@ -118,7 +118,18 @@ The fact unit is fixed to a whole table cell, while golden answers state facts a
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, still a draft: these are measurements on eval/golden/dev.jsonl, not a verified rule. The fix is the commit right after 441c05b on feature/eval-golden-input; it changes rag/validation/validation.py, tests/test_eval_items.py and README.md.
+
+- Reproduced at 7a71cdf: row 393 gave ['실행계획서'], and _key_fact_ratio(facts, '실행계획서') returned 1.0.
+- Experiment 1 (pinned test): test_bundled_dev_key_facts_score_the_requested_answer now asserts that row 393's facts are 실행계획서 plus the four bullet items, and that '실행계획서' alone scores 0.2. Against the 7a71cdf loader it fails at the row-393 assert; after the fix the gate passes.
+- Line splitting alone fixed 393 and confirmed the hypothesis for that shape. It also produced a junk fact '내용' at row 395, where a wrapped label cell '세부\n내용' was split into lines. Fix: the first cell of a multi-cell row is not split.
+- Experiment 2 (coverage audit). Before the fix, 5 kept rows had facts covering less than half of the answer: 379, 384, 386, 387, 393. 384 was a false alarm, because the audit counted field-name labels as uncovered. Two shapes remained:
+  - Inline bullets on one line (379 ' o ', 330 '○ … - …'). Fixed by also splitting on bullet markers inside a line.
+  - Paraphrased or partly quoted prose (326, 364, 376, 377, 386, 387, 394). No split recovers these, as the Counterevidence section predicted.
+- For the second shape the Alternatives fallback was adopted: a multi_hop row is kept only when its facts cover at least 60% of the answer letters. Field names, 'X:' labels, words already in the question and particle-only words are not counted. On dev, rows missing requested content scored 0.07-0.54 and complete rows 0.60 or more. The cut is a judgement call with a narrow gap (0.54 vs 0.60), not a value from the sources.
+- The same audit found single-digit values (row 348's scores 6 and 4) lost to the len>1 filter, and to _field_names counting row numbers 1-4 as field names. Digits are now kept, and field names must contain a letter.
+- Experiment 3 (regression): every kept multi_hop fact still scores 1 against its own context. Rows 270, 333, 335, 336 and 362 keep their pinned facts. Every kept multi_hop fact also matches its own reference answer, except row 370; there the evaluator reads 'SFR-009\n분류' as 9 minutes (rag/evaluation/evaluation.py, outside this fix).
+- Net effect: 374 of 396 dev questions are kept, against 377 at 7a71cdf. 22 multi_hop rows are excluded as having no key facts: 348 came back, and 364, 376, 386 and 387 left.
 
 ## Unresolved limits
 
