@@ -399,6 +399,19 @@ def test_rules_are_adopted_on_validation_bundles_and_judged_once_more_on_held_ou
         assert {adoption.split(bundle) for bundle in generated["bundle_ids"]} == {part}
 
 
+def test_a_limit_hit_on_held_out_is_the_stop_reason_even_after_the_rounds_ran_out_of_bundles(
+        evidence_run, measure_bundles, tmp_path):
+    # 계획 p2 (예산 · 보증금) 는 round 2 에 다 통과해 no_open_bundles 로 끝나고, 마지막 호출을 h-base 생성이 쓴다.
+    make_plan("p2", "ev1", {"numeric": 2}, 2000, package=evidence_run)
+    measure_bundles("p2")
+    config = tmp_path / "loop.json"
+    config.write_text(json.dumps({**LOOP, "max_calls": 11}), encoding="utf-8")
+    report = improve("numeric", "p2", "l1", config, Generator(), Validator())
+
+    assert (report["stop_reason"], report["calls"]) == ("call_cap", 11)
+    assert report["held_out"] == {"measured": False, "reason": "call_cap"}
+
+
 @pytest.mark.parametrize("run_id", ["l1-v2", "l1-h-final"])
 def test_a_measuring_run_cannot_be_released(looped, tmp_path, run_id):
     # 출시에서 빠진 항목은 실패 기록이 된다. 정책을 재는 run 을 받으면 그 결과가 다음 정책에 새어 든다.

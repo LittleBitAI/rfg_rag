@@ -97,7 +97,8 @@ def improve(topic, plan_id, loop_id, config_path, generator, validator):
             break
     _pin(loop_dir, plan_id, config)
     held_out, held_stop = _held_out(topic, plan_id, loop_id, config, clients)
-    report = _report(topic, plan_id, loop_id, stop or held_stop or "max_rounds", held_out)
+    # held-out 의 한도가 마지막으로 멈춘 이유다. round 가 no_open_bundles 로 먼저 끝났어도 그것을 남긴다.
+    report = _report(topic, plan_id, loop_id, held_stop or stop or "max_rounds", held_out)
     with storage.guard(loop_dir / "report.json").open("x", encoding="utf-8") as f:
         f.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     return report
