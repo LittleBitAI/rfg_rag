@@ -18,8 +18,11 @@ from golden_pipeline.schema import EVIDENCE_FIELDS, TOPICS
 TOC_LINE = re.compile(r"\S\s+\d{1,3}\s*$")
 
 
-def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE):
-    """근거 어댑터 run 의 eligible 단위로 주제별 근거 묶음을 골라 outputs/plans/{plan_id}.json 에 쓴다."""
+def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE, skip_plans=()):
+    """근거 어댑터 run 의 eligible 단위로 주제별 근거 묶음을 골라 outputs/plans/{plan_id}.json 에 쓴다.
+
+    skip_plans 의 계획이 쓴 단위는 넣지 않는다. 묶음은 늘 같은 순서로 고르므로, 빼지 않으면 앞 계획의 묶음이 다시 뽑힌다.
+    """
     unknown = sorted(set(counts) - set(TOPICS))
     if unknown or not all(isinstance(n, int) and n > 0 for n in counts.values()):
         raise ValueError(f"counts 는 주제 {TOPICS} 별 양의 정수여야 합니다: {counts}")
@@ -31,7 +34,9 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
-    bundles, used = [], set()
+    bundles = []
+    skipped = {skipped_id: load_plan(skipped_id) for skipped_id in skip_plans}
+    used = {unit["unit_id"] for planned, _ in skipped.values() for bundle in planned["bundles"] for unit in bundle["units"]}
     # 한 단위는 한 주제의 묶음에만 들어간다. 카탈로그가 같은 근거 묶음을 두 주제에 두지 않기 때문이다.
     for topic, (spec, _) in specs.items():
         chosen = _pick(_groups(topic, spec, units, used, max_context_chars, names), counts[topic])
@@ -43,6 +48,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         "created_at": storage._now(),
         "code_commit": storage._code_commit(),
         "evidence_run": evidence_run,
+        "skipped_plans": {skipped_id: sha for skipped_id, (_, sha) in skipped.items()},
         "v11_manifest_sha256": pinned["manifest.json"],
         "topic_specs": {topic: sha for topic, (_, sha) in specs.items()},
         "max_context_chars": max_context_chars,
@@ -92,7 +98,7 @@ def doc_names(package, docs):
     한 기관에 문서가 여럿이라 기관 이름만으로는 문서를 가리지 못한다.
     """
     with (package.parent / "data_list.csv").open(encoding="utf-8-sig") as f:
-        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주 기관"] for row in csv.DictReader(f)}
+        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주기관"] for row in csv.DictReader(f)}
     names = {}
     for record in evidence._iter_jsonl(package / evidence.RECORDS):
         if record["doc_id"] in docs and record["doc_id"] not in names:
@@ -150,10 +156,30 @@ def _groups(topic, spec, units, used, max_context_chars, names):
     size = spec["bundle_units"]
     groups = {}
     for doc, doc_units in sorted(by_doc.items()):
-        chunks = [_with_headers(doc_units[i:i + size], headers) for i in range(0, len(doc_units) - size + 1, size)]
-        bundles = [_bundle(topic, chunk, names[doc]) for chunk in chunks if chunk]
+        if topic == "multi_hop":
+            windows = _spanning(doc_units, size)
+        else:
+            windows = [doc_units[i:i + size] for i in range(0, len(doc_units) - size + 1, size)]
+        windows = [_with_headers(window, headers) for window in windows]
+        bundles = [_bundle(topic, window, names[doc]) for window in windows if window]
         groups[doc] = [b for b in bundles if len(b["context"]) <= max_context_chars]
     return groups
+
+
+def _spanning(units, size):
+    """이어진 단위 size 개씩 묶되, 청크 둘 이상에 걸친 묶음만 낸다 (multi_hop).
+
+    한 청크 안의 단위만 받은 생성기는 청크 둘을 이어야 하는 질문을 만들 수 없어 그 묶음은 늘 거절된다.
+    """
+    windows, start = [], 0
+    while start + size <= len(units):
+        window = units[start:start + size]
+        if len({unit["ref"]["chunk_id"] for unit in window}) >= 2:
+            windows.append(window)
+            start += size
+        else:
+            start += 1
+    return windows
 
 
 def _with_headers(chunk, headers):
@@ -188,13 +214,25 @@ def _bundle(topic, units, doc):
     """근거 묶음. doc 은 그 문서의 발주 기관 · 사업 이름이고, 생성이 질문 앞에 붙인다."""
     labelled = [{"label": f"E{i}", **unit} for i, unit in enumerate(units, 1)]
     ids = "\n".join(unit["unit_id"] for unit in units)
+    chunks = list(dict.fromkeys(unit["ref"]["chunk_id"] for unit in units))
+
+    def header(unit):
+        label = unit["label"]
+        # 표 행은 | 로 이은 글이라, 표시가 없으면 생성기는 어느 행이 열 이름을 가진 머리글인지 알 수 없다.
+        if _table_row(unit) == 0:
+            label += " · 머리글 행"
+        # multi_hop 은 청크 둘을 이어야 하는데, 라벨만으로는 생성기가 어느 근거가 같은 청크인지 알 수 없다.
+        if topic == "multi_hop":
+            label += f" · 청크 {chunks.index(unit['ref']['chunk_id']) + 1}"
+        return label
+
     return {
         "bundle_id": "b-" + hashlib.sha256(ids.encode("utf-8")).hexdigest()[:16],
         "topic": topic,
         "doc_sha": units[0]["ref"]["doc_sha"],
         "doc": doc,
         "units": labelled,
-        "context": "\n\n".join(f"[{unit['label']}]\n{unit['text']}" for unit in labelled),
+        "context": "\n\n".join(f"[{header(unit)}]\n{unit['text']}" for unit in labelled),
     }
 
 

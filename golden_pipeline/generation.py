@@ -234,8 +234,8 @@ def _comparison(structure, answer, cited, texts):
     names = {_norm(entity) for entity in entities}
     if any(_norm(str(value)) in names for value in values.values()):
         return "대상의 값이 대상 이름이라 견줄 값이 없습니다"
-    if choice is not None and choice not in entities:
-        return "choice 는 entities 중 하나이거나 null 이어야 합니다"
+    if choice not in entities:
+        return "choice 는 entities 중 하나여야 합니다 (고르지 않는 비교는 나란한 조회다)"
     reason = _quoted(entities, texts, "비교 대상") or _quoted(list(values.values()), texts, "대상의 값")
     if reason:
         return reason
@@ -246,7 +246,7 @@ def _comparison(structure, answer, cited, texts):
 def comparison_answer(structure):
     """비교 structure 로 만든 답 글: A안 1억원, B안 2억원. 답: B안"""
     text = ", ".join(f"{entity} {structure['values'][entity]}" for entity in structure["entities"])
-    return f"{text}. 답: {structure['choice']}" if structure["choice"] else text
+    return f"{text}. 답: {structure['choice']}"
 
 
 def _multi_hop(structure, answer, cited, texts):

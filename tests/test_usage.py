@@ -157,8 +157,6 @@ def _answer_row() -> dict:
 
 def test_ragas_async_judge_records_each_call_once_and_end_cost_uses_saved_values(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL"):
-        monkeypatch.delenv(key, raising=False)
 
     async def fake_agenerate(self, messages, **kwargs):
         prompt = messages[-1].content

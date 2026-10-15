@@ -49,7 +49,8 @@ def _evidence(args):
 
 def _plan(args):
     counts = {topic: int(n) for topic, n in args.count}
-    return plan.make_plan(args.plan_id, args.evidence_run, counts, args.max_context_chars, package=evidence.PACKAGE)
+    return plan.make_plan(args.plan_id, args.evidence_run, counts, args.max_context_chars, package=evidence.PACKAGE,
+                          skip_plans=args.skip_plan)
 
 
 def _run(args):
@@ -104,7 +105,13 @@ def _release(args):
     runs = [tuple(run.split(":", 1)) for run in args.run]
     config = {**_priced(args.model, args.reasoning_effort, args.price), "max_calls": args.max_calls, "budget_usd": args.budget}
     with _config_file(config) as path, api_client() as call:
-        return validation.release(args.topic, args.version, runs, path, call)
+        release_dir = validation.release(args.topic, args.version, runs, path, call)
+    improvement.record_screen(args.topic, args.version)
+    return release_dir
+
+
+def _rename(args):
+    return validation.rename(args.topic, args.version, args.source)
 
 
 def _report(args):
@@ -159,6 +166,8 @@ def _prepare_commands(commands):
     command.add_argument("--count", nargs=2, action="append", required=True, metavar=("TOPIC", "N"),
                          help="주제와 목표 개수. 주제마다 한 번씩")
     command.add_argument("--max-context-chars", type=int, required=True)
+    command.add_argument("--skip-plan", action="append", default=[], metavar="PLAN_ID",
+                         help="이 계획이 쓴 근거 단위는 넣지 않음. 여러 번 줄 수 있음")
     command.set_defaults(handler=_plan)
 
 
@@ -191,6 +200,12 @@ def _paid_commands(commands):
     command.add_argument("--run", action="append", required=True, metavar="METHOD:RUN_ID")
     _limits(command)
     command.set_defaults(handler=_release)
+
+    command = commands.add_parser("rename", help="출시본들을 합쳐 문서 이름만 지금 data_list.csv 로 바꾼 출시본으로 (API 호출 없음)")
+    command.add_argument("--topic", choices=TOPICS, required=True)
+    command.add_argument("--version", required=True)
+    command.add_argument("--source", action="append", required=True, metavar="VERSION", help="합칠 출시본. 여러 번 줄 수 있음")
+    command.set_defaults(handler=_rename)
 
 
 def _record_commands(commands):

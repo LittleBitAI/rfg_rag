@@ -6,7 +6,7 @@ import unicodedata
 
 import pytest
 
-from golden_pipeline import generation, storage
+from golden_pipeline import adoption, evidence, generation, plan, storage
 
 DOC_SHA = "a" * 64
 IMAGE_SHA = "b" * 64
@@ -63,6 +63,29 @@ def one_worker(monkeypatch):
 
 
 @pytest.fixture
+def measure_bundles(monkeypatch):
+    """loop 는 계획의 validation · held-out 몫으로 정책을 잰다. 계획에 예산 묶음을 본뜬 묶음을 몫마다 하나씩 더한다.
+
+    본뜬 묶음은 단위 id 만 달라 묶음 id 가 다르고 근거 · 본문은 같다. 나머지 묶음은 모두 train 몫이다.
+    """
+    def add(plan_id):
+        path = storage.OUTPUTS / "plans" / f"{plan_id}.json"
+        planned = json.loads(path.read_text(encoding="utf-8"))
+        budget = next(bundle for bundle in planned["bundles"] if "130,000,000원" in bundle["context"])
+        parts = {}
+        for part in ("validation", "held_out"):
+            units = [{**{key: value for key, value in unit.items() if key != "label"}, "unit_id": f"{unit['unit_id']}-{part}"}
+                     for unit in budget["units"]]
+            bundle = plan._bundle(budget["topic"], units, budget["doc"])
+            planned["bundles"].append(bundle)
+            parts[bundle["bundle_id"]] = part
+        path.write_text(json.dumps(planned, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        monkeypatch.setattr(adoption, "split", lambda bundle_id: parts.get(bundle_id, "train"))
+        return parts
+    return add
+
+
+@pytest.fixture
 def make_item():
     def make(**overrides):
         item = copy.deepcopy(ITEM)
@@ -115,8 +138,10 @@ def _write_jsonl(path, rows):
 
 
 @pytest.fixture
-def evidence_run(outputs, tmp_path):
+def evidence_run(outputs, tmp_path, monkeypatch):
     """근거 어댑터 run 'ev1' 과 그 run 이 고정한 가짜 v11 패키지를 만들고 패키지 경로를 돌려준다.
+
+    출시는 evidence.PACKAGE 옆 data_list.csv 로 문서 이름을 다시 붙이므로 PACKAGE 도 이 패키지로 바꾼다.
 
     주제 명세와 프롬프트는 실제 파일을 복사해 실제 명세로 묶음을 고르고 검사한다.
     """
@@ -124,7 +149,8 @@ def evidence_run(outputs, tmp_path):
     shutil.copytree(storage.PACKAGE / "prompts", outputs / "prompts", dirs_exist_ok=True)
     package = tmp_path / "v11"
     package.mkdir()
-    rows = [body for _, _, body, _ in UNITS if isinstance(body, list)]
+    monkeypatch.setattr(evidence, "PACKAGE", package)
+    rows =[body for _, _, body, _ in UNITS if isinstance(body, list)]
     cells = [{"row": r, "col": c, "text": text} for r, row in enumerate(rows) for c, text in enumerate(row)]
     elements = [{"element_id": "e-table", "search_text": "표", "table": {"cells": cells},
                  "location": {"span_text_field": "search_text"}}]
@@ -138,7 +164,7 @@ def evidence_run(outputs, tmp_path):
         {"doc_id": DOC_2, "source_paths": [unicodedata.normalize("NFD", "원본 데이터/files/나기관_[재공고]나사업 운영.hwp")]},
     ])
     (tmp_path / "data_list.csv").write_text(
-        "파일명,발주 기관\n사단법인가기관_가사업 구축.hwp,가기관\n나기관_[재공고]나사업 운영.hwp,나기관\n", encoding="utf-8")
+        "파일명,발주기관\n사단법인가기관_가사업 구축.hwp,가기관\n나기관_[재공고]나사업 운영.hwp,나기관\n", encoding="utf-8")
     (package / "manifest.json").write_text('{"package": "fake v11"}', encoding="utf-8")
 
     run_dir = outputs / "outputs" / "evidence" / "ev1"
