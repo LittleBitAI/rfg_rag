@@ -98,7 +98,7 @@ def doc_names(package, docs):
     한 기관에 문서가 여럿이라 기관 이름만으로는 문서를 가리지 못한다.
     """
     with (package.parent / "data_list.csv").open(encoding="utf-8-sig") as f:
-        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주 기관"] for row in csv.DictReader(f)}
+        agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주기관"] for row in csv.DictReader(f)}
     names = {}
     for record in evidence._iter_jsonl(package / evidence.RECORDS):
         if record["doc_id"] in docs and record["doc_id"] not in names:
@@ -217,10 +217,14 @@ def _bundle(topic, units, doc):
     chunks = list(dict.fromkeys(unit["ref"]["chunk_id"] for unit in units))
 
     def header(unit):
+        label = unit["label"]
+        # 표 행은 | 로 이은 글이라, 표시가 없으면 생성기는 어느 행이 열 이름을 가진 머리글인지 알 수 없다.
+        if _table_row(unit) == 0:
+            label += " · 머리글 행"
         # multi_hop 은 청크 둘을 이어야 하는데, 라벨만으로는 생성기가 어느 근거가 같은 청크인지 알 수 없다.
-        if topic != "multi_hop":
-            return unit["label"]
-        return f"{unit['label']} · 청크 {chunks.index(unit['ref']['chunk_id']) + 1}"
+        if topic == "multi_hop":
+            label += f" · 청크 {chunks.index(unit['ref']['chunk_id']) + 1}"
+        return label
 
     return {
         "bundle_id": "b-" + hashlib.sha256(ids.encode("utf-8")).hexdigest()[:16],

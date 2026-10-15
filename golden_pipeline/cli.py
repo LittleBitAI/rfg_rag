@@ -110,6 +110,10 @@ def _release(args):
     return release_dir
 
 
+def _rename(args):
+    return validation.rename(args.topic, args.version, args.source)
+
+
 def _report(args):
     rounds = []
     for loop_id in args.a or []:
@@ -196,6 +200,12 @@ def _paid_commands(commands):
     command.add_argument("--run", action="append", required=True, metavar="METHOD:RUN_ID")
     _limits(command)
     command.set_defaults(handler=_release)
+
+    command = commands.add_parser("rename", help="출시본들을 합쳐 문서 이름만 지금 data_list.csv 로 바꾼 출시본으로 (API 호출 없음)")
+    command.add_argument("--topic", choices=TOPICS, required=True)
+    command.add_argument("--version", required=True)
+    command.add_argument("--source", action="append", required=True, metavar="VERSION", help="합칠 출시본. 여러 번 줄 수 있음")
+    command.set_defaults(handler=_rename)
 
 
 def _record_commands(commands):

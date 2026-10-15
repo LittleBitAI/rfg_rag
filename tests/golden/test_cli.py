@@ -233,10 +233,11 @@ def test_a_resumed_loop_continues_from_its_pinned_config_without_duplicate_ids(p
 
     loop = storage.OUTPUTS / "goldens/numeric/loops/l1"
     assert json.loads((loop / "report.json").read_text(encoding="utf-8"))["stop_reason"] == "max_rounds"
-    # 끝난 round 1 과 생성까지 끝난 v0 은 다시 생성하지 않는다: r1 3 + v0 · v2 1 + r2 2 + r3 1 + h-base · h-final 1 번.
-    assert sum(not user.startswith("{") for _, _, user in api.requests) == 10
+    # 끝난 round 1 과 생성까지 끝난 v0 은 다시 생성하지 않는다:
+    # r1 3 + v0 · v2 1 + r2 2 + v3 1 + r3 1 + h-base · h-final 1 번.
+    assert sum(not user.startswith("{") for _, _, user in api.requests) == 11
     ids = [entry["candidate_id"] for entry in storage.read_catalog()]
-    assert len(ids) == len(set(ids)) == 7
+    assert len(ids) == len(set(ids)) == 8
     # 끝난 loop 는 다시 돌지 않는다.
     with pytest.raises(FileExistsError):
         golden("resume", "--topic", "numeric", "--method", "A", "--id", "l1")

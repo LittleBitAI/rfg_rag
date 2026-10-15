@@ -47,6 +47,7 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `audit` | B · C run 의 독립 검증. A 는 loop 안에서 검증합니다 | 유료 |
 | `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
 | `release` | 검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (아래 출시) | 유료 |
+| `rename` | 출시본들을 합쳐 질문 앞 문서 이름만 지금 `data/data_list.csv` 의 이름으로 바꾼 새 출시본으로. 쓸모 판정은 다시 하지 않습니다 | 없음 |
 | `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
 
 ```
@@ -63,6 +64,7 @@ golden_pipeline\golden.cmd resume --topic numeric --method A --id a1
 golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls 40 --budget 1
 
 golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 400 --budget 2
+golden_pipeline\golden.cmd rename --topic numeric --version final --source v1 --source v2
 golden_pipeline\golden.cmd plan p2 v11-20261014 --count numeric 20 --max-context-chars 4000 --skip-plan p1
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
@@ -258,7 +260,7 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
    줄의 절반 이상이 쪽 번호로 끝나는 목차 줄(`1. 용역개요 02`)인 단위는 묶지 않습니다. 목차로 만든 질문은 RFP 내용을 묻지 않습니다.
 4. 문서를 돌아가며 하나씩 골라 개수를 채웁니다. 모자라면 기준을 낮추지 않고 `planned` 에 실제 개수를 남깁니다.
    그래서 한 문서에 묶음이 몰리지 않습니다.
-5. 묶음마다 문서 이름 `doc` (`agency`, `title`)을 남깁니다. 발주 기관은 패키지 옆 `data_list.csv` 의 정리된 `발주 기관` 을
+5. 묶음마다 문서 이름 `doc` (`agency`, `title`)을 남깁니다. 발주 기관은 패키지 옆 `data_list.csv` 의 정리된 `발주기관` 을
    v11 레코드의 원본 파일 이름으로 찾고, 사업 이름은 파일 이름의 `_` 뒤에서 `[재공고]` 같은 앞 표시를 뺀 것입니다.
    원본 파일 이름 일부는 한글 자모가 풀린 NFD 라 두 이름 모두 NFC 로 맞춘 뒤 찾습니다.
 
@@ -309,6 +311,8 @@ A · B · C 는 같은 출력 계약과 같은 검사를 거쳐 같은 `write_ru
 질문에는 문서 98개 가운데 어느 문서를 묻는지가 드러나야 합니다. 프롬프트는 질문에 기관 · 사업 이름을 쓰지 말라고 하고,
 A · B 는 항목을 만들 때 계획의 `doc` 으로 질문 앞에 `{발주 기관}의 「{사업 이름}」 사업에서 ` 를 붙입니다 (`with_document`).
 생성기가 이름을 잘못 옮겨 쓰는 일을 막기 위해서입니다.
+출시는 이 앞머리를 지금 `data_list.csv` 의 이름으로 다시 붙입니다. 팀이 기관 이름을 고친 뒤에도 한 출시본에서 한 문서는 한 이름이 되게 하려는 것입니다.
+출시 항목은 run 에 등록된 기록과 질문 앞의 문서 이름만 다를 수 있습니다.
 
 출력 한 행은 정확히 `question`, `answer`, `evidence` (묶음의 근거 라벨 리스트), `structure`, `secondary_tags` 를 가집니다 (C 는 `bundle_id` 도).
 아래 중 하나라도 어기면 항목이 되지 않고 원문 · 이유와 함께 `rejected.jsonl` 로 갑니다:
@@ -486,7 +490,8 @@ validation · held-out 묶음이 하나도 없는 계획이면 정책을 잴 수
 1. 다시 부를 묶음: 계획의 train 묶음 중 loop 의 앞 round 에서 `auto_validated` 가 되지 않은 묶음.
    남은 묶음이 없으면 멈춥니다 (`no_open_bundles`).
 2. 채택: 그 주제의 `failure_memory/A_*.jsonl` 과 `screen_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
-   이 loop 가 아직 채택하지도 버리지도 않은 코드가 있으면 그 코드를 더한 정책으로 validation 묶음을 생성 · 검증합니다 (`v{n}`).
+   이 loop 가 아직 채택하지도 버리지도 않은 코드 중 기록이 가장 많은 하나를 더한 정책으로 validation 묶음을 생성 · 검증합니다 (`v{n}`).
+   기록 수가 같으면 코드 이름 순입니다. 여럿을 함께 붙이면 도움이 되는 규칙이 해로운 규칙과 함께 버려지므로 한 번에 하나만 시험합니다.
    지금 정책의 validation run (처음엔 규칙 없는 `v0`)과 묶음끼리 짝지어, 통과(그 묶음에 `auto_validated` 항목이 있음) 차이를 봅니다.
    차이 평균을 묶음으로 1000 번 다시 뽑은 부트스트랩의 5 백분위(한쪽 95%)가 0 보다 클 때만 채택합니다 (`adoption.paired_gain`).
    생성은 매번 흔들리므로 우연한 통과 몇 개로 채택하지 않으려는 것입니다. 채택하지 않은 코드는 이 loop 에서 다시 시도하지 않습니다.

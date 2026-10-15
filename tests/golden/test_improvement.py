@@ -9,7 +9,8 @@ from golden_pipeline import adoption, improvement, storage
 from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
-from golden_pipeline.validation import SCREEN_CODES, release, rule_reason, validate
+from golden_pipeline.state import transition
+from golden_pipeline.validation import SCREEN_CODES, release, rename, rule_reason, validate
 
 PRICED = {"usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0}
 LOOP = {
@@ -149,12 +150,14 @@ def test_next_round_gets_rules_for_the_topics_failure_codes_and_records_its_poli
 
     first, second = manifest(1), manifest(2)
     assert first["policy"]["failures"] == {} and "예방 규칙" not in generator.requests[0][0]["content"]
-    entry_ids = {entry["failure_code"]: [entry["entry_id"]] for entry in memory(1)}
+    # 기록이 같은 수면 코드 이름 순으로 answer_mismatch 를 먼저 시험해 채택한다.
+    entry_ids = {entry["failure_code"]: [entry["entry_id"]] for entry in memory(1)
+                 if entry["failure_code"] == "answer_mismatch"}
     assert second["policy"]["failures"] == entry_ids
     assert (second["policy"]["version"], second["policy"]["round"]) == (PREVENTION_VERSION, "r2")
     # 요청 차례: round 1 의 셋, 채택을 재는 v0 · v2 하나씩, round 2 의 예산 · 표.
     system = generator.requests[5][0]["content"]
-    assert PREVENTION_RULES["answer_mismatch"] in system and PREVENTION_RULES["output_format"] in system
+    assert PREVENTION_RULES["answer_mismatch"] in system and PREVENTION_RULES["output_format"] not in system
     assert PREVENTION_RULES["table_relation"] not in system
     assert second["prompt_sha256"] == first["prompt_sha256"] == storage._sha256(storage.PROMPTS / "A" / "numeric.txt")
     assert second["policy"]["prevention_sha256"] != first["policy"]["prevention_sha256"]
@@ -174,8 +177,8 @@ def test_a_retried_bundle_is_told_its_own_failed_question_and_why_but_not_an_ans
     assert manifest(2)["policy"]["notes"][manifest(2)["bundle_ids"][0]] == budget[budget.index(note):]
 
 
-def test_an_item_the_release_screen_drops_reaches_the_next_loops_first_round_without_its_question(
-        looped, loop_config, tmp_path):
+def test_an_item_the_release_screen_drops_becomes_a_failure_the_next_loop_can_try_without_its_question(
+        looped, tmp_path):
     # 검증을 통과했어도 출시에서 빠진 항목이 실패 기록에 없으면, 다음 생성이 같은 실패를 되풀이한다.
     # 판정기가 고를 수 있는 코드에 예방 규칙이 없으면 유료 출시 뒤에 기록이 멈춘다.
     assert set(SCREEN_CODES) <= set(PREVENTION_RULES)
@@ -199,13 +202,8 @@ def test_an_item_the_release_screen_drops_reaches_the_next_loops_first_round_wit
         "release": "v1", "run": "A/l1-r1", "candidate_id": accepted["candidate_id"],
     }
 
-    generator = Generator()
-    improve("numeric", "p3", "l2", loop_config(), generator, Validator())
-
-    policy = json.loads((storage.run_path("numeric", "A", "l2-r1") / "manifest.json").read_text(encoding="utf-8"))
-    assert policy["generation"]["policy"]["failures"]["ordinal_reference"] == ["screen-v1:1"]
-    # 요청 차례: 채택을 재는 v0 · v1 하나씩 뒤에 round 1.
-    assert PREVENTION_RULES["ordinal_reference"] in generator.requests[2][0]["content"]
+    # 다음 loop 의 채택은 related_failures 에서 시험할 코드를 고른다.
+    assert improvement.related_failures("numeric")["ordinal_reference"] == ["screen-v1:1"]
 
 
 @pytest.mark.parametrize("topic, field, value, code", [
@@ -233,8 +231,8 @@ def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_fai
     ({"max_calls": 4}, "call_cap", 1),
     # 채택을 재는 v0 · v2 가 남은 호출을 다 쓴다 (r1 5 + 4).
     ({"max_calls": 9}, "call_cap", 1),
-    # round 는 모두 끝났지만 held-out 을 재다 닿는다 (13 + h-base 생성 1).
-    ({"max_calls": 14}, "call_cap", 3),
+    # round 는 모두 끝났지만 held-out 을 재다 닿는다 (r1 5 + v0 · v2 4 + r2 3 + v3 2 + r3 1 + h-base 생성 1).
+    ({"max_calls": 16}, "call_cap", 3),
     ({"budget_usd": 0.0001}, "budget", 1),
 ])
 def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits, reason, rounds):
@@ -269,6 +267,25 @@ def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config
     with pytest.raises(ValueError, match=re.escape(f"시작할 때와 다릅니다: {changed}")):
         improve("numeric", plan_id, "l1", config, generator, validator)
     assert not generator.requests and not validator.calls
+
+
+def test_a_resumed_adoption_decides_on_the_code_its_measuring_run_was_made_with(loop_config):
+    # l1-v2 를 answer_mismatch 로 만든 뒤 끊긴다. 그 사이 다른 loop 가 output_format 기록을 더 많게 해도,
+    # 이어 돈 l1 이 output_format 을 다시 골라 answer_mismatch 로 잰 이득으로 채택하면 안 된다.
+    with pytest.raises(ConnectionError):
+        improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=4))
+
+    def not_json(**kwargs):
+        return {"model": "generator-test", "text": "JSON 아님", "input_tokens": 10, "output_tokens": 10}
+
+    improve("numeric", "p3", "l2", loop_config(max_rounds=1), not_json, Validator())
+    related = improvement.related_failures("numeric")
+    assert len(related["output_format"]) > len(related["answer_mismatch"])
+
+    report = improve("numeric", "p3", "l1", loop_config(), Generator(), Validator())
+
+    decision = report["rounds"][1]["adoption"]
+    assert (decision["tried"], decision["adopted"]) == (["answer_mismatch"], ["answer_mismatch"])
 
 
 @pytest.mark.parametrize("collision, run_id, changed", [
@@ -381,16 +398,18 @@ def test_rules_are_adopted_on_validation_bundles_and_judged_once_more_on_held_ou
     [first, second, third] = [round_["adoption"] for round_ in report["rounds"]]
 
     assert first == {"adopted": [], "reference": "v0", "retired": [], "tried": [], "gain": None, "floor": None}
-    assert second == {"adopted": ["answer_mismatch", "output_format"], "reference": "v2", "retired": [],
-                      "tried": ["answer_mismatch", "output_format"], "gain": 1.0, "floor": 1.0}
-    assert third["adopted"] == second["adopted"] and third["tried"] == []
+    # 코드는 round 마다 하나씩 시험한다. 예산을 고치는 answer_mismatch 는 채택하고, 표를 고치지 못하는 output_format 은 버린다.
+    assert second == {"adopted": ["answer_mismatch"], "reference": "v2", "retired": [],
+                      "tried": ["answer_mismatch"], "gain": 1.0, "floor": 1.0}
+    assert third == {"adopted": ["answer_mismatch"], "reference": "v2", "retired": ["output_format"],
+                     "tried": ["output_format"], "gain": 0.0, "floor": 0.0}
     # held-out 의 통과는 validation 에서 통과한 같은 질문과 겹쳐도 중복으로 거절되지 않는다.
     assert report["held_out"] == {"measured": True, "adopted": second["adopted"], "bundles": 1, "base_passed": 0,
                                   "final_passed": 1, "gain": 1.0, "floor": 1.0}
     # 실패 기록 · 다음 round 의 묶음은 train run 에서만 나온다. validation · held-out 은 정책을 재는 데만 쓴다.
     memory_files = (storage.OUTPUTS / "goldens/numeric/failure_memory").glob("*.jsonl")
     assert sorted(path.name for path in memory_files) == [f"A_l1-r{n}.jsonl" for n in (1, 2, 3)]
-    parts = {"r1": "train", "r2": "train", "r3": "train", "v0": "validation", "v2": "validation",
+    parts = {"r1": "train", "r2": "train", "r3": "train", "v0": "validation", "v2": "validation", "v3": "validation",
              "h-base": "held_out", "h-final": "held_out"}
     for name, part in parts.items():
         generated = json.loads((storage.run_path("numeric", "A", f"l1-{name}") / "manifest.json")
@@ -410,6 +429,77 @@ def test_a_limit_hit_on_held_out_is_the_stop_reason_even_after_the_rounds_ran_ou
 
     assert (report["stop_reason"], report["calls"]) == ("call_cap", 11)
     assert report["held_out"] == {"measured": False, "reason": "call_cap"}
+
+
+def test_a_release_names_each_document_by_the_current_data_list(looped, evidence_run, tmp_path):
+    # 팀이 data_list.csv 의 기관 이름을 고친 뒤에도 앞서 만든 항목이 옛 이름으로 나가면 한 출시본에서 한 문서가 두 이름이 된다.
+    data_list = evidence_run.parent / "data_list.csv"
+    data_list.write_text(data_list.read_text(encoding="utf-8").replace(",나기관", ",새기관"), encoding="utf-8")
+
+    def useful(**kwargs):
+        return {"model": "screen-test", "text": '{"useful": true, "code": null, "reason": "보증금"}',
+                "input_tokens": 10, "output_tokens": 10}
+
+    config = tmp_path / "screen.json"
+    config.write_text(json.dumps({**LOOP["validator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
+    [made] = read_jsonl(run_dir(1) / "accepted.jsonl")
+    release_dir = release("numeric", "v1", [("A", "l1-r1")], config, useful)
+
+    [released] = read_jsonl(release_dir / "golden.jsonl")
+    assert made["question"] == with_document(BOND["question"], {"agency": "나기관", "title": "나사업 운영"})
+    assert released["question"] == with_document(BOND["question"], {"agency": "새기관", "title": "나사업 운영"})
+
+
+def test_a_rename_reissues_releases_under_current_names_without_screening(looped, evidence_run, tmp_path):
+    # 이름만 바뀌었는데 판정을 다시 사면 크레딧이 든다. 판정 결과는 앞 출시본의 것을 그대로 쓴다.
+    def useful(**kwargs):
+        return {"model": "screen-test", "text": '{"useful": true, "code": null, "reason": "보증금"}',
+                "input_tokens": 10, "output_tokens": 10}
+
+    config = tmp_path / "screen.json"
+    config.write_text(json.dumps({**LOOP["validator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
+    first = release("numeric", "v1", [("A", "l1-r1")], config, useful)
+    data_list = evidence_run.parent / "data_list.csv"
+    data_list.write_text(data_list.read_text(encoding="utf-8").replace(",나기관", ",새기관"), encoding="utf-8")
+
+    renamed = rename("numeric", "v2", ["v1"])
+
+    [before] = read_jsonl(first / "golden.jsonl")
+    [after] = read_jsonl(renamed / "golden.jsonl")
+    assert after == {**before, "question": with_document(BOND["question"], {"agency": "새기관", "title": "나사업 운영"})}
+    manifest = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["release"] == {"renamed_from": {"v1": storage._sha256(first / "golden.jsonl")}}
+    assert manifest["runs"] == ["A/l1-r1"]
+
+
+def released_under(version, agency, run_id, make_item):
+    """가기관 문서의 같은 예산 질문을 run 마다 다른 근거 묶음으로 등록하고, agency 이름을 붙여 출시한다."""
+    item = make_item(candidate_id=f"numeric-A-{run_id}-0001", run_id=run_id, bundle_id=f"b-{run_id}",
+                     question=with_document("사업 예산은 얼마인가?", {"agency": agency, "title": "가사업 구축"}))
+    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": f"c-{run_id}"}]
+    accepted = transition(item, "auto_validated", "통과", validator_version="val-0.1", difficulty="easy")
+    storage.write_run("numeric", "A", run_id, [accepted])
+    return storage.write_release("numeric", version, [transition(accepted, "released", "출시")], [("A", run_id)])
+
+
+def test_a_rename_refuses_questions_that_only_become_the_same_under_current_names(evidence_run, make_item):
+    # 옛 이름 · 새 이름 질문은 앞머리만 달라 이름을 바꾸기 전에는 다르다. 바꾼 뒤 같은 질문이 한 출시본에 둘 들어갔다.
+    released_under("old", "옛기관", "r1", make_item)
+    released_under("current", "가기관", "r2", make_item)
+
+    with pytest.raises(ValueError, match="같은 질문"):
+        rename("numeric", "merged", ["old", "current"])
+    assert not (storage.OUTPUTS / "goldens/numeric/releases/merged").exists()
+
+
+def test_a_rename_refuses_a_source_whose_items_differ_from_its_manifest(evidence_run, make_item):
+    # 출시 뒤 잘린 원본을 그대로 다시 내면 손상이 새 출시본으로 굳고, 매니페스트는 원래 파일의 SHA-256 을 주장했다.
+    source = released_under("v1", "가기관", "r1", make_item)
+    (source / "golden.jsonl").write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        rename("numeric", "v2", ["v1"])
+    assert not (storage.OUTPUTS / "goldens/numeric/releases/v2").exists()
 
 
 @pytest.mark.parametrize("run_id", ["l1-v2", "l1-h-final"])
@@ -436,9 +526,10 @@ def test_a_rule_that_does_not_help_on_validation_is_retired_and_never_reaches_a_
     generator = Stubborn()
     report = improve("numeric", "p3", "l1", loop_config(), generator, Validator())
 
-    retired = ["answer_mismatch", "output_format"]
-    assert report["rounds"][1]["adoption"] == {"adopted": [], "reference": "v0", "retired": retired, "tried": retired,
-                                               "gain": 0.0, "floor": 0.0}
+    assert report["rounds"][1]["adoption"] == {"adopted": [], "reference": "v0", "retired": ["answer_mismatch"],
+                                               "tried": ["answer_mismatch"], "gain": 0.0, "floor": 0.0}
+    # 버린 코드는 다시 시험하지 않고 다음 코드로 넘어간다.
+    third = report["rounds"][2]["adoption"]
+    assert (third["tried"], third["retired"]) == (["output_format"], ["answer_mismatch", "output_format"])
     assert manifest(2)["policy"]["failures"] == manifest(3)["policy"]["failures"] == {}
-    assert report["rounds"][2]["adoption"]["tried"] == []
     assert report["held_out"] == {"measured": False, "reason": "채택한 예방 규칙이 없습니다"}
