@@ -37,29 +37,22 @@ def test_golden_release_row_becomes_eval_item(tmp_path, topic, answer, structure
         "id": f"{topic}-A-night1-r1-0001", "reference": answer, "key_facts": key_facts}
 
 
-def test_multi_hop_key_facts_are_context_cells_the_answer_names(tmp_path):
-    """근거 단위의 첫 칸(이름)과 질문에 있는 값은 빼고, 답이 언급한 칸 값만 따로따로 사실이 된다"""
-    row = _release_row("multi_hop", "요구사항 분류는 '테스트 요구사항'이고 요구사항 명칭은 '단위/통합/성능 시험'이다.", {},
-                       "[E1]\n요구사항 분류 | 테스트 요구사항\n\n[E2 · 청크 2]\n요구사항 명칭 | 단위/통합/성능 시험")
-    path = tmp_path / "dev.jsonl"
-    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    [item] = load_eval_items([str(path)])
-
-    assert item["key_facts"] == ["단위/통합/성능 시험", "테스트 요구사항"]
-
-
 def test_bundled_dev_key_facts_score_the_requested_answer():
-    """eval/golden/dev.jsonl 전체: 사실에 'A|B' 로 읽힐 '|' 가 없고, multi_hop 사실은 근거 전체에서 모두 찾힌다"""
+    """eval/golden/dev.jsonl: 표 칸 구분선 ' | ' 가 'A|B' 로 읽히지 않고, multi_hop 사실은 근거 전체에서 모두 찾히며,
+    항목 이름이 아닌 첫 칸 값과 수량은 정답 꼴 그대로 남는다. 행 번호는 dev.jsonl 의 줄 번호"""
     rows = read_jsonl(ROOT / "eval/golden/dev.jsonl")
     items = {it["id"]: it for it in load_eval_items(["eval/golden/dev.jsonl"])}
+    facts = {n: items[row["candidate_id"]]["key_facts"] for n, row in enumerate(rows, 1)}
 
-    assert not [f for it in items.values() for f in it["key_facts"] if "|" in f]
-    for row in rows:
-        facts = items[row["candidate_id"]]["key_facts"]
-        if row["primary_topic"] == "multi_hop" and facts:
-            assert _key_fact_ratio(facts, row["context"]) == 1, row["candidate_id"]
+    assert not [f for fs in facts.values() for f in fs if " | " in f]
+    for n, row in enumerate(rows, 1):
+        if row["primary_topic"] == "multi_hop" and facts[n]:
+            assert _key_fact_ratio(facts[n], row["context"]) == 1, n
 
-    [comparison] = [items[r["candidate_id"]] for r in rows if r["structure"].get("choice") == "MAR-006"]
-    assert _key_fact_ratio(comparison["key_facts"], "MAR-006입니다.") == 1
-    assert _key_fact_ratio(comparison["key_facts"], "MAR-005가 플랫폼 홍보 지원입니다.") == 0
+    assert _key_fact_ratio(facts[270], "MAR-006입니다.") == 1
+    assert _key_fact_ratio(facts[270], "MAR-005가 플랫폼 홍보 지원입니다.") == 0
+    assert facts[333] == ["DAR-002", "DAR-003", "DB 설계 요구사항", "데이터 분석 요구사항"]
+    assert facts[336] == ["PER-002", "성능 요구사항"]
+    assert facts[335] == ["47|47개", "SFR-상담-001"]
+    assert _key_fact_ratio(facts[335], rows[335 - 1]["answer"]) == 1
+    assert facts[362] == []  # 2024 는 날짜 2024.12.27 의 일부일 뿐 수량이 아니다
