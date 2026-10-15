@@ -187,7 +187,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
   ```
 
 실행
-- Windows: 탐색기에서 `frontend\start.cmd` 를 더블클릭합니다. 창 하나에서 API 서버(포트 8765)와 Vite 개발 서버(5173)가 함께 돌고(먼저 `npm install` — 처음 한 번만 오래 걸림), 기본 브라우저로 화면을 엽니다. 화면을 쓰는 동안 이 창을 닫지 마세요. 창을 닫으면 둘 다 꺼집니다.
+- Windows: 탐색기에서 `frontend\start.cmd` 를 더블클릭합니다. 창 하나에서 API 서버(포트 8765), OCR 이미지 라벨링 화면의 API 서버(8766), Vite 개발 서버(5173)가 함께 돌고(먼저 `npm install` — 처음 한 번만 오래 걸림), 기본 브라우저로 화면을 엽니다. 화면을 쓰는 동안 이 창을 닫지 마세요. 창을 닫으면 모두 꺼집니다.
 - macOS: Finder 에서 `frontend/start.command` 를 더블클릭합니다. 터미널 창 하나에서 둘 다 돌고, 창을 닫으면 API 서버도 꺼집니다.
 - 직접 실행 — 저장소 최상위에서 터미널 두 개:
   ```bash
@@ -210,7 +210,7 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 
 실행 — 저장소 최상위에서
 1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다. 문서 100개에 1분 남짓 걸립니다.
-2. 화면 열기: Windows 는 `frontend\ocr_select\start.cmd`, macOS 는 `frontend/ocr_select/start.command` 를 더블클릭합니다. API 서버(포트 8766)와 Vite 개발 서버(5174)가 함께 돌고 `ocr.html` 을 엽니다. 포트가 달라 질문 화면과 함께 띄울 수 있습니다.
+2. 화면 열기: 질문 화면과 같은 실행기(`frontend\start.cmd` · `frontend/start.command`)를 더블클릭하고, 첫 화면 오른쪽 위 `설정` → `OCR 이미지 라벨링` 을 누릅니다 (`http://localhost:5173/ocr.html`). 실행기가 라벨링 화면의 API 서버(포트 8766)도 함께 띄웁니다.
 
 결과 — `artifacts/ocr_labels/`
 - `images/<doc_id>/<파일>`: 꺼낸 그림. extract 를 다시 실행하면 이 폴더만 새로 만듭니다.
@@ -377,7 +377,7 @@ frontend/                  ⑥ 질문 화면
   server.py                POST /api/ask — answer_question 을 감싸는 FastAPI
   web/                     React + Vite 화면 (/api 는 server.py, /ocr-api 는 ocr_select/server.py 로 프록시; ocr.html 은 라벨링 화면)
   start.cmd · start.command  Windows · macOS 실행기
-  ocr_select/              OCR 이미지 라벨링 — extract.py (그림 꺼내기) · server.py (API) · start.cmd · start.command
+  ocr_select/              OCR 이미지 라벨링 — extract.py (그림 꺼내기) · server.py (API, 위 실행기가 8766 에 띄움)
 tests/test_smoke.py        게이트: rag/ 모든 모듈 import
 artifacts/                 (커밋 안 함) 노트북 사이에 주고받는 파일
 ```

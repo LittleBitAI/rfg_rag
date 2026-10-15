@@ -96,7 +96,7 @@ function fileUrl(file) {
   return '/ocr-api/files/' + file.split('/').map(encodeURIComponent).join('/')
 }
 
-const UNREACHABLE = '서버에 연결할 수 없습니다. 실행 창(frontend/ocr_select/start.cmd · start.command)이 닫혔다면 다시 실행하세요.'
+const UNREACHABLE = '서버에 연결할 수 없습니다. 실행 창(frontend/start.cmd · start.command)이 닫혔다면 다시 실행하세요.'
 
 async function errorText(res) {
   // Vite 프록시는 API 서버에 닿지 못하면 502 를 돌려준다
