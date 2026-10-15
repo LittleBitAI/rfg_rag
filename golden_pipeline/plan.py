@@ -18,10 +18,12 @@ from golden_pipeline.schema import EVIDENCE_FIELDS, TOPICS
 TOC_LINE = re.compile(r"\S\s+\d{1,3}\s*$")
 
 
-def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE, skip_plans=()):
+def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE, skip_plans=(), side=None):
     """근거 어댑터 run 의 eligible 단위로 주제별 근거 묶음을 골라 outputs/plans/{plan_id}.json 에 쓴다.
 
     skip_plans 의 계획이 쓴 단위는 넣지 않는다. 묶음은 늘 같은 순서로 고르므로, 빼지 않으면 앞 계획의 묶음이 다시 뽑힌다.
+    side 는 (분할 version, dev 또는 test) 이고, 주면 질문이 묻는 문서가 그 분할의 그쪽에 있는 묶음만 고른다.
+    새 주제를 앞 분할에 더할 때 한쪽만 모자라면 그쪽 문서로만 다시 만들어, 반대쪽에 쓸 호출을 아낀다.
     """
     unknown = sorted(set(counts) - set(TOPICS))
     if unknown or not all(isinstance(n, int) and n > 0 for n in counts.values()):
@@ -37,9 +39,13 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     bundles = []
     skipped = {skipped_id: load_plan(skipped_id) for skipped_id in skip_plans}
     used = {unit["unit_id"] for planned, _ in skipped.values() for bundle in planned["bundles"] for unit in bundle["units"]}
+    wanted = _side_documents(*side) if side else None
     # 한 단위는 한 주제의 묶음에만 들어간다. 카탈로그가 같은 근거 묶음을 두 주제에 두지 않기 때문이다.
     for topic, (spec, _) in specs.items():
-        chosen = _pick(_groups(topic, spec, units, used, max_context_chars, names), counts[topic])
+        groups = _groups(topic, spec, units, used, max_context_chars, names)
+        if wanted is not None:
+            groups = {doc: [b for b in found if b["doc_sha"] in wanted] for doc, found in groups.items()}
+        chosen = _pick(groups, counts[topic])
         used.update(unit["unit_id"] for bundle in chosen for unit in bundle["units"])
         bundles += chosen
 
@@ -49,6 +55,8 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         "code_commit": storage._code_commit(),
         "evidence_run": evidence_run,
         "skipped_plans": {skipped_id: sha for skipped_id, (_, sha) in skipped.items()},
+        "side": side and {"split": side[0], "part": side[1],
+                          "manifest_sha256": storage._sha256(storage.OUTPUTS / "splits" / side[0] / "manifest.json")},
         "v11_manifest_sha256": pinned["manifest.json"],
         "topic_specs": {topic: sha for topic, (_, sha) in specs.items()},
         "max_context_chars": max_context_chars,
@@ -108,6 +116,14 @@ def document_units(run_dir, package, docs):
         text = _unit_text(unit, elements[unit["element_id"]]) if unit["chunk_id"] else cells[unit["unit_id"]]
         found[unit["doc_sha"]].append({"unit_id": unit["unit_id"], "text": text})
     return found
+
+
+def _side_documents(version, part):
+    """분할 version 의 part(dev · test) 질문이 묻는 문서들. 파일이 분할 매니페스트의 SHA-256 과 다르면 멈춘다."""
+    split_dir = storage._child(storage.OUTPUTS / "splits", version)
+    if storage._sha256(split_dir / f"{part}.jsonl") != storage._read_json(split_dir / "manifest.json")[part]["sha256"]:
+        raise ValueError(f"분할 {version} 의 {part}.jsonl 이 매니페스트의 SHA-256 과 다릅니다")
+    return {asked_document(item) for item in storage._read_jsonl(split_dir / f"{part}.jsonl")}
 
 
 def asked_document(item):

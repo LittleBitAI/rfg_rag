@@ -50,7 +50,7 @@ def _evidence(args):
 def _plan(args):
     counts = {topic: int(n) for topic, n in args.count}
     return plan.make_plan(args.plan_id, args.evidence_run, counts, args.max_context_chars, package=evidence.PACKAGE,
-                          skip_plans=args.skip_plan)
+                          skip_plans=args.skip_plan, side=tuple(args.side) if args.side else None)
 
 
 def _run(args):
@@ -172,6 +172,8 @@ def _prepare_commands(commands):
     command.add_argument("--max-context-chars", type=int, required=True)
     command.add_argument("--skip-plan", action="append", default=[], metavar="PLAN_ID",
                          help="이 계획이 쓴 근거 단위는 넣지 않음. 여러 번 줄 수 있음")
+    command.add_argument("--side", nargs=2, metavar=("SPLIT", "PART"),
+                         help="질문이 묻는 문서가 분할 SPLIT 의 PART(dev · test)에 있는 묶음만 고름")
     command.set_defaults(handler=_plan)
 
 
