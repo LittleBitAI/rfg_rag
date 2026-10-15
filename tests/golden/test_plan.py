@@ -69,7 +69,8 @@ def test_units_of_a_skipped_plan_are_left_out_and_the_skip_is_recorded(evidence_
 
 def table_row(row, text):
     location = {"kind": "table", "grid": "logical_restored", "row": row, "cell": None}
-    return {"unit_id": f"r{row}", "ref": {"doc_sha": DOC_1, "element_id": "e-table", "location": location}, "text": text}
+    ref = {"doc_sha": DOC_1, "chunk_id": "c-table", "element_id": "e-table", "location": location}
+    return {"unit_id": f"r{row}", "ref": ref, "text": text}
 
 
 def six_rows():
@@ -102,6 +103,8 @@ def test_multi_hop_bundles_cross_a_chunk_boundary():
     [bundle] = _groups("multi_hop", topic_spec("multi_hop")[0], units, set(), 2000, NAMES)[DOC_1]
 
     assert [u["unit_id"] for u in bundle["units"]] == ["a3", "a4", "b1"]
+    # 생성기가 청크가 다른 근거를 고를 수 있게 라벨 옆에 청크 번호를 보인다.
+    assert bundle["context"] == "[E1 · 청크 1]\n본문 a3\n\n[E2 · 청크 1]\n본문 a4\n\n[E3 · 청크 2]\n본문 b1"
 
 
 @pytest.mark.parametrize("header_eligible", [True, False])

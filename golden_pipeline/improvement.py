@@ -12,7 +12,7 @@ import threading
 
 from golden_pipeline import generation, plan, storage, validation
 
-PREVENTION_VERSION = "prevention-7"
+PREVENTION_VERSION = "prevention-8"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
 FAILURE_CODES = (
     ("JSON 이 아닙니다", "output_format"),
@@ -27,6 +27,8 @@ FAILURE_CODES = (
     ("근거만으로 답할 수 없습니다", "unanswerable"),
     ("독립 답과 다릅니다", "answer_mismatch"),
     ("복사형", "copied"),
+    # 같은 앞말의 not_multi_hop 보다 먼저 맞춘다. 근거는 둘 이상 이었지만 청크가 하나였던 실패다.
+    ("multi_hop 아님: 인용한 근거가 모두 한 청크", "single_chunk"),
     ("multi_hop 아님", "not_multi_hop"),
     ("검증기 출력 오류", "validator_output"),
     ("근거 충돌", "evidence_conflict"),
@@ -51,7 +53,8 @@ PREVENTION_RULES = {
     "answer_mismatch": "답은 근거에서 바로 읽히는 값과 단위를 그대로 쓰고, 계산하거나 바꿔 쓰지 않는다.",
     "copied": "질문에 답의 값을 넣지 않는다.",
     "not_multi_hop": "근거 하나만으로는 답이 나오지 않고 둘 이상을 이어야 답이 나오는 질문을 만든다.",
-    "validator_output": "질문은 근거만 읽고 짧은 답 하나로 답할 수 있게 묻는다.",
+    "single_chunk": "evidence 에 청크 번호가 다른 근거를 함께 넣고, 그 근거들을 이어야 답이 나오게 묻는다.",
+    "validator_output":"질문은 근거만 읽고 짧은 답 하나로 답할 수 있게 묻는다.",
     "evidence_conflict": "근거끼리 값이 다르게 적힌 사실은 묻지 않는다.",
     # 아래는 검증을 통과했지만 규칙 검사(validation.rule_reason) · 출시 쓸모 판정이 뺀 실패의 코드다 (record_screen).
     "useless_answer": "답이 '방문 후 열람 가능' · '없음' 같은 안내 문구나 빈 값이 되는 질문은 만들지 않는다.",

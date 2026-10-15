@@ -202,7 +202,7 @@ def test_an_item_the_release_screen_drops_reaches_the_next_loops_first_round_wit
     ("table", "context", "[E1]\n | 1억원", "broken_table"),
     ("condition", "answer", "가능 (조건: 사전 승인)", "answer_dump"),
     ("comparison", "structure", {"choice": None}, "invalid_comparison"),
-    ("multi_hop", "evidence", [{"chunk_id": "c1"}, {"chunk_id": "c1"}], "not_multi_hop"),
+    ("multi_hop", "evidence", [{"chunk_id": "c1"}, {"chunk_id": "c1"}], "single_chunk"),
 ])
 def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_failure_code(topic, field, value, code):
     # 검증은 답이 근거와 맞는지만 봐서 이 꼴은 통과하지만 평가에 쓸 수 없었다. 코드가 없으면 다음 생성이 배우지 못한다.
