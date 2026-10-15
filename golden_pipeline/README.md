@@ -43,7 +43,6 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `plan` | 주제 · 목표 개수를 정한 분포 계획 (아래 분포 계획) | 없음 |
 | `run` | A: 자기 개선 loop (생성 → 검증 → 실패 기록을 round 마다). B: 고정 프롬프트 생성만 | 유료 |
 | `import` | C 가져오기 | 없음 |
-| `review` | 사람이 읽고 틀렸다고 정한 항목을 실패 기록으로 (아래 자기 개선) | 없음 |
 | `audit` | B · C run 의 독립 검증. A 는 loop 안에서 검증합니다 | 유료 |
 | `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
 | `release` | 검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (아래 출시) | 유료 |
@@ -63,7 +62,6 @@ golden_pipeline\golden.cmd resume --topic numeric --method A --id a1
 golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls 40 --budget 1
 
 golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 400 --budget 2
-golden_pipeline\golden.cmd review --topic numeric --id rv1 --verdicts review_numeric.json
 golden_pipeline\golden.cmd plan p2 v11-20261014 --count numeric 20 --max-context-chars 4000 --skip-plan p1
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
@@ -144,7 +142,7 @@ golden_pipeline/outputs/
       validation.json                   검증 기록: 검증기 버전, 난도 규칙, 호출, 상태 파일별 SHA-256 (run 마다 한 번)
       validation-{n}.json               이어서 검증한 기록 (B · C 의 pending 후보, n = 2, 3, ...)
     failure_memory/A_{run_id}.jsonl     A run 의 실패 코드 · 참조 · 예방 규칙 · 규칙 버전 (질문 · 답은 넣지 않음)
-    failure_memory/review_{id}.jsonl    사람이 읽고 틀렸다고 정한 항목의 같은 기록 (record_review)
+    failure_memory/screen_{version}.jsonl  출시에서 규칙 검사 · 쓸모 판정이 뺀 A 항목의 같은 기록 (record_screen)
     loops/{loop_id}/
       start.json                        처음 받은 loop 설정 · 계획 id · 계획 SHA-256 · 통과 기준 (이어 돌 때 같아야 함)
       calls.jsonl                       돌아온 생성 · 검증 호출마다 한 줄: 모델 · 토큰 · 비용 (끊긴 run 의 호출 포함)
@@ -293,7 +291,7 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | `numeric` | `value` · `unit` | 값에 숫자가 있고, (`value`, `unit`) 이 답과 인용한 근거에 모두 수 · 단위 쌍으로 있음. 쌍은 Kiwi 형태소 분석으로 읽습니다. 수(SN) 앞의 부호는 띄어 써도 값에 들고, 수 뒤에 붙어 이어지는 단위 형태소는 끝까지 한 단위가 되며 더 짧은 단위로 물러나지 않습니다. 단위는 조사 · 어미 · 문장부호 · 띄어쓰기에서 끝납니다. 그래서 부호 · 수 · 단위가 통째로 맞아야 합니다 (`30,000,000원` ≠ `130,000,000원`, `-130,000,000원` · `- 130,000,000원` ≠ `130,000,000원`, `12개` ≠ `12개월` · `12개월간`, `5%` ≠ `5%p` · `5%포인트`, `5MB` ≠ `5MB/s`, `12개월이다` 는 `12` · `개월`, `5만원` 은 `5` · `만원`). 범위 표시 · 다른 수 · 쉼표 · 접두사에 붙은 수(`10~12개월`, `2024년-2025년`, `1,2,3개월`, `제3회`)는 쌍이 아닙니다. 한글로만 쓴 수(`삼천만원`)는 쌍이 없어 거절됩니다. 줄머리 기호 `- 12개월` 도 음수로 읽혀 거절됩니다. 값 없이 설명만 하는 답은 `유형 불일치` 로 거절 |
 | `table` | `row` · `column` | 인용한 근거에 표 행이 있고, 행 · 열 이름이 근거에 있음 |
 | `condition` | `condition` | 조건 · 예외 문구가 근거에 있음 |
-| `comparison` | `entities` · `values` · `choice` | 서로 다른 대상 2개 이상, 각각 근거에 있음. `values` 는 대상마다 값이고 값도 근거에 있음. 값이 대상 이름이면(`A안 A안`, `A안 B안`) 견줄 값이 없어 거절. `choice` 는 대상 중 하나이거나 `null`. 답은 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같음 (공백 · 쉼표 차이만 허용) |
+| `comparison` | `entities` · `values` · `choice` | 서로 다른 대상 2개 이상, 각각 근거에 있음. `values` 는 대상마다 값이고 값도 근거에 있음. 값이 대상 이름이면(`A안 A안`, `A안 B안`) 견줄 값이 없어 거절. `choice` 는 대상 중 하나 (고르지 않는 비교는 나란한 조회라 거절). 답은 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같음 (공백 · 쉼표 차이만 허용) |
 | `multi_hop` | 없음 (`{}`) | 인용한 근거 단위가 2개 이상 |
 
 ## 후보 생성
@@ -374,6 +372,7 @@ validate(topic, method, run_id, config_path, client)
 | 순서 | 검사 | 걸리면 |
 |---|---|---|
 | 1 | 주제 구조 (`check_structure`, 생성과 같은 검사) | `rejected` `유형 불일치` |
+| 1 | 규칙 검사 (`rule_reason`, 아래 출시에서도 다시 봄): 답은 맞지만 평가에 쓸 수 없던 꼴. numeric 질문의 `값과 단위` · `수치와 단위` · `첫 번째 값`, table 질문의 줄바꿈, table 근거의 빈 칸 행(빈 칸으로 시작하거나 이어짐), condition 답의 `(조건:` 덧붙임, comparison 의 `choice` 없음 (1 이 먼저 막지만 그 전에 검증한 run 을 출시할 때 걸림), multi_hop 근거가 모두 한 청크 | `rejected` `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `multi_hop 아님` |
 | 2 | 표: 인용한 표에서 행 이름 · 열 이름이 만나는 칸의 값이 답에 있음 | `rejected` `표 관계` |
 | 2 | 조건: 구조의 조건 · 예외 문구가 답에 있음 | `rejected` `조건 · 예외 누락` |
 | 3 | 같은 주제 · 같은 방식에서 이미 통과한 항목과 근거 묶음이나 질문(공백 · 쉼표 무시)이 같음 | `rejected` `중복` |
@@ -398,14 +397,14 @@ validate(topic, method, run_id, config_path, client)
   `12개` ≠ `12개월`, `5%` ≠ `5%p`. 독립 답의 쌍이 모두 후보 답에 있어야 같은 답입니다.
 - 비교(`comparison`) 항목은 답 글을 견주지 않고 필드를 견줍니다. 결론(어느 대상을 골랐는지)은 글자로 읽을 수 없기 때문입니다
   (`A안 1억원, B안 2억원으로 A안이 더 많다` 는 값이 모두 맞아도 결론이 틀립니다).
-  후보 `structure` 의 `values` (대상마다 값) · `choice` (고른 대상 또는 `null`) 를 검증기의 `comparison` 과 맞춥니다.
+  후보 `structure` 의 `values` (대상마다 값) · `choice` (고른 대상) 를 검증기의 `comparison` 과 맞춥니다.
   대상마다 값은 담기가 아니라 같음을 봅니다 (`미지원` 은 `지원` 을 담지만 반대 뜻).
   글이 같으면(공백 · 쉼표 차이만) 같고, 수 · 단위 값이 다르면 다르며, 수 표기만 다르면 같습니다 (`1억원` = `100,000,000원`).
   수가 여럿이면 쓴 차례로 견줍니다. 수 밖의 글이 같은데 자리마다 수가 다르면 다른 값입니다
   (`구축 2억원, 운영 1억원` ≠ `구축 1억원, 운영 2억원`).
   수 밖의 글은 수 · 단위 쌍으로 읽은 자리만 지우고 견주므로, 쌍이 아닌 수는 남습니다
   (`제3회 회의 1억원` 과 `제4회 회의 1억원` 은 수 밖의 글이 달라 판정기로).
-  그 밖에 글이 다른 값(`지원 가능` · `지원`, `1억원 이상` · `1억원`)은 판정기가 정합니다. `choice` 는 같은 대상이어야 합니다 (둘 다 `null` 도 같음).
+  그 밖에 글이 다른 값(`지원 가능` · `지원`, `1억원 이상` · `1억원`)은 판정기가 정합니다. `choice` 는 같은 대상이어야 합니다 (검증기가 고르지 않으면 다름).
   값이나 `choice` 가 다르면 `rejected` `독립 답과 다릅니다`, 검증기가 `comparison` 을 주지 않았거나
   대상 이름이 `entities` 와 꼭 같지 않으면 판정기가 정합니다.
   답 글은 생성 검사에서 `structure` 로 만든 글(`A안 1억원, B안 2억원. 답: B안`)과 같아야 하므로 필드와 다른 결론을 쓸 수 없습니다.
@@ -469,7 +468,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 
 1. 다시 부를 묶음: 계획의 주제 묶음 중 loop 의 앞 round 에서 `auto_validated` 가 되지 않은 묶음.
    남은 묶음이 없으면 멈춥니다 (`no_open_bundles`).
-2. 관련 실패: 그 주제의 `failure_memory/A_*.jsonl` 과 `review_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
+2. 관련 실패: 그 주제의 `failure_memory/A_*.jsonl` 과 `screen_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
    코드마다 정해 둔 예방 규칙을 A 프롬프트 뒤에 `지난 실패에서 정한 예방 규칙` 으로 붙입니다.
    다른 주제의 기록과, 실패한 후보의 답은 붙이지 않습니다.
    묶음마다 그 묶음의 지난 실패(`bundle_notes`)도 user 메시지 뒤에 붙입니다. 최근 3개까지
@@ -491,7 +490,7 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 | `entry_id` | `{run_id}:{rejected.jsonl 줄 번호}` |
 | `failure_code` | 거절 이유의 앞부분으로 정한 코드 (`FAILURE_CODES`). 코드가 없는 이유는 기록하지 않고 멈춥니다 |
 | `evidence` | 보존된 실패를 가리킴: `run` (`A/{run_id}`), `line`, `candidate_id` (항목이 되지 못한 출력이면 `null`), `bundle_id` |
-| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-6`). 글을 바꾸면 버전을 올립니다 |
+| `prevention_rule` · `rule_version` | 그 코드의 정해 둔 규칙 글과 `PREVENTION_VERSION` (`prevention-7`). 글을 바꾸면 버전을 올립니다 |
 
 | 실패 코드 | 거절 이유 |
 |---|---|
@@ -504,18 +503,17 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 A run 의 실패 기록은 `record_failures` 가 그 run 의 `rejected.jsonl` 줄에서만 만듭니다.
 그래서 항목의 글은 정해 둔 규칙 글뿐이고, 출시본의 질문 · 답 · 전이 이유가 들어올 자리가 없습니다.
 
-검증을 통과했지만 사람이 읽어 확실히 틀린 항목도 다음 생성이 피해야 할 실패입니다.
-`review` 명령(`record_review`)이 `{candidate_id: 실패 코드}` JSON 을 받아 `failure_memory/review_{id}.jsonl` 에 같은 꼴로 씁니다.
-`entry_id` 는 `review-{id}:{n}`, `evidence` 는 `{review, candidate_id}` 이고, 질문 · 답은 넣지 않습니다.
-카탈로그에서 그 주제의 항목이 아니거나 `PREVENTION_RULES` 에 없는 코드면 쓰지 않고 멈춥니다. 같은 id 로 다시 쓰지 않습니다.
+검증을 통과했지만 출시에서 빠진 항목도 다음 생성이 피해야 할 실패입니다. 사람이 읽고 정하는 단계는 없습니다.
+`release` 명령은 출시본을 쓴 뒤 `record_screen` 으로 매니페스트 `release.dropped` 의 A 항목을 `failure_memory/screen_{version}.jsonl` 에 같은 꼴로 씁니다.
+`entry_id` 는 `screen-{version}:{n}`, `evidence` 는 `{release, candidate_id}` 이고, 질문 · 답은 넣지 않습니다.
+코드는 판정기가 고른 `code`, 규칙 검사 · 판정기 출력 오류로 빠진 항목은 이유 문구의 코드입니다.
 
-| 검토 실패 코드 | 틀린 이유 |
+| 출시 실패 코드 | 빠진 이유 |
 |---|---|
-| `misread_source` · `broken_table` | 근거의 대상 · 범위를 바꿔 읽음, 병합 셀 · 빈 칸 · 밀린 열로 칸의 뜻이 정해지지 않음 |
-| `useless_answer` · `answer_dump` | 답이 안내 문구 · 빈 값, 답에 근거 원문 · 덧붙임이 붙음 |
-| `ordinal_reference` · `malformed_question` · `structure_question` | 순번 · '둘 중' 으로 가리킴, 끊긴 질문, 목차 · 위치 · 형식을 물음 |
-| `invalid_comparison` · `partial_all` · `personal_info` | 다른 종류 · 머리글 · 합계와 부분을 비교함, 근거 범위만으로 '모든' 을 셈, 사람 이름 · 결재란 |
-| `evidence_reference` | 질문자가 볼 수 없는 근거를 'E1 · E2' · '근거들' · '이 요구사항' 으로 가리킴 |
+| `structure_question` · `ordinal_reference` · `evidence_reference` | 목차 · 위치 · 표 형식을 물음, 순번 · '첫 번째 값' 으로 가리킴, 질문자가 볼 수 없는 근거('E1 · E2' · '근거들' · '이 요구사항')를 가리킴 |
+| `answer_dump` · `useless_answer` · `copied` | 답이 원문 · 덧붙임을 늘어놓음, 답이 양식 빈칸 · 안내 문구, 답이 질문에 있음 |
+| `malformed_question` · `personal_info` · `invalid_comparison` | 끊긴 질문, 사람 이름 · 연락처 · 결재란, 견줄 까닭이 없는 비교 |
+| `broken_table` | 근거 표에 빈 칸 행이 있어 칸의 뜻이 정해지지 않음 (규칙 검사) |
 
 loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 
@@ -553,8 +551,10 @@ release(topic, version, [(method, run_id), ...], config_path, client)
 사람이 확인하는 단계는 없습니다.
 
 검증은 답이 근거와 맞는지만 봅니다. 목차 · 쪽 번호 · 순번 · 표 머리글 · 연락처를 묻는 질문도 답은 맞아 통과하므로,
-출시 전에 판정기(`prompts/screen.txt`)가 질문 · 답만 받아 RFP 를 읽는 사람이 물을 만한 질문인지 `{"useful": 참거짓, "reason"}` 으로 정합니다.
-출력이 두 번 다 계약을 어기면 쓸모 없다고 봅니다. 빠진 항목은 `candidate_id` · 질문 · 이유와 함께 매니페스트 `release.dropped` 에,
+출시 전에 먼저 검증의 규칙 검사(`rule_reason`)를 다시 봅니다. 규칙이 생기기 전에 검증한 run 도 같은 기준으로 내기 위해서입니다.
+그다음 판정기(`prompts/screen.txt`)가 질문 · 답만 받아 RFP 를 읽는 사람이 물을 만한 질문인지 `{"useful": 참거짓, "code", "reason"}` 으로 정합니다.
+`code` 는 쓸모 있으면 `null`, 없으면 위 출시 실패 코드 중 하나입니다 (`SCREEN_CODES`).
+출력이 두 번 다 계약을 어기면 쓸모 없다고 봅니다. 빠진 항목은 `candidate_id` · 방식 · 질문 · 코드 · 이유와 함께 매니페스트 `release.dropped` 에,
 판정 설정 · 프롬프트 SHA-256 · 호출 수 · 비용은 `release` 에 남습니다. CLI 는 다른 유료 명령처럼 모델 · 추론 강도 · 단가 · 한도를 받고,
 한도에 닿으면 일부만 판정한 출시본을 만들지 않고 멈춥니다.
 2026-10-15 실제 표본(비교 40 · 표 30)에서 `low` 는 같은 기준을 들쭉날쭉 적용해, 출시에는 `high` 를 씁니다.

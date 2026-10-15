@@ -91,11 +91,6 @@ def _resume(args):
         return validation.resume_validation(args.topic, args.method, args.id, path, call)
 
 
-def _review(args):
-    verdicts = json.loads(Path(args.verdicts).read_text(encoding="utf-8"))
-    return improvement.record_review(args.topic, args.id, verdicts)
-
-
 def _import(args):
     return generation.import_c(args.topic, args.plan, args.id, args.export, args.sidecar)
 
@@ -110,7 +105,9 @@ def _release(args):
     runs = [tuple(run.split(":", 1)) for run in args.run]
     config = {**_priced(args.model, args.reasoning_effort, args.price), "max_calls": args.max_calls, "budget_usd": args.budget}
     with _config_file(config) as path, api_client() as call:
-        return validation.release(args.topic, args.version, runs, path, call)
+        release_dir = validation.release(args.topic, args.version, runs, path, call)
+    improvement.record_screen(args.topic, args.version)
+    return release_dir
 
 
 def _report(args):
@@ -209,12 +206,6 @@ def _record_commands(commands):
     command.add_argument("--export", nargs="+", required=True, help="웹에서 내보낸 JSONL 파일들")
     command.add_argument("--sidecar", required=True, help="관측 기록 JSON")
     command.set_defaults(handler=_import)
-
-    command = commands.add_parser("review", help="사람이 읽고 틀렸다고 정한 항목을 실패 기록으로 (API 호출 없음)")
-    command.add_argument("--topic", choices=TOPICS, required=True)
-    command.add_argument("--id", required=True, help="새 검토 id")
-    command.add_argument("--verdicts", required=True, help="{candidate_id: 실패 코드} JSON 파일")
-    command.set_defaults(handler=_review)
 
     command = commands.add_parser("report", help="A · B · C 비교 보고서 (API 호출 없음)")
     command.add_argument("--topic", choices=TOPICS, required=True)

@@ -49,7 +49,8 @@ class FakeAPI:
         if system == SCREEN:
             # 출시 전 쓸모 판정: 보증금 질문은 쓸모 없다고 본다.
             useful = "보증금" not in json.loads(user)["question"]
-            text = json.dumps({"useful": useful, "reason": "판정 이유"}, ensure_ascii=False)
+            text = json.dumps({"useful": useful, "code": None if useful else "useless_answer", "reason": "판정 이유"},
+                              ensure_ascii=False)
         elif user.startswith("{"):
             text = self._verdict(json.loads(user))
         elif "130,000,000원" in user:

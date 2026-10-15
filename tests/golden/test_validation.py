@@ -77,7 +77,7 @@ class Screener:
         self.requests.append(messages)
         question = json.loads(messages[1]["content"])["question"]
         reply = next((text for end, text in self.replies.items() if question.endswith(end)),
-                     json.dumps({"useful": True, "reason": "예산을 묻는다"}, ensure_ascii=False))
+                     json.dumps({"useful": True, "code": None, "reason": "예산을 묻는다"}, ensure_ascii=False))
         return {"model": "screen-test", "text": reply, "input_tokens": 10, "output_tokens": 10}
 
 
@@ -385,12 +385,14 @@ def test_release_collects_only_accepted_items_and_refuses_an_existing_version(ju
     assert (release_dir / "golden.jsonl").read_bytes() == before
 
 
-@pytest.mark.parametrize("reply, reason", [
-    (json.dumps({"useful": False, "reason": "쪽 번호를 묻는다"}, ensure_ascii=False), "쪽 번호를 묻는다"),
-    # 출력이 두 번 다 계약을 어기면 애매하게 남기지 않고 뺀다.
-    ("쓸모 있음", "판정기 출력 오류: JSON 이 아닙니다"),
+@pytest.mark.parametrize("reply, code, reason", [
+    (json.dumps({"useful": False, "code": "structure_question", "reason": "쪽 번호를 묻는다"}, ensure_ascii=False),
+     "structure_question", "쪽 번호를 묻는다"),
+    # 출력이 두 번 다 계약을 어기면 애매하게 남기지 않고 뺀다. 코드가 없으면 실패 기록에 쓸 수 없어 계약 위반이다.
+    ("쓸모 있음", None, "판정기 출력 오류: JSON 이 아닙니다"),
+    (json.dumps({"useful": False, "code": None, "reason": "쪽 번호를 묻는다"}, ensure_ascii=False), None, "판정기 출력 오류: code"),
 ])
-def test_an_item_the_screen_rejects_is_left_out_with_its_reason(judged, config, reply, reason):
+def test_an_item_the_screen_rejects_is_left_out_with_its_code_and_reason(judged, config, reply, code, reason):
     # 목차 · 쪽 번호를 묻는 질문은 답이 근거와 맞아 검증을 통과하지만 RAG 평가에 쓸모가 없다.
     screener = Screener({"얼마인가?": reply})
 
@@ -400,6 +402,7 @@ def test_an_item_the_screen_rejects_is_left_out_with_its_reason(judged, config, 
     info = json.loads((release_dir / "manifest.json").read_text(encoding="utf-8"))["release"]
     [dropped] = info["dropped"]
     assert dropped["candidate_id"] == "numeric-C-c1-0001" and dropped["reason"].startswith(reason)
+    assert (dropped["method"], dropped["code"]) == ("C", code)
     assert (info["screened"], info["calls"]) == (1, len(screener.requests))
 
 
