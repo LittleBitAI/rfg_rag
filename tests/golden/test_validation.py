@@ -6,10 +6,12 @@ import pytest
 from golden_pipeline import storage
 from golden_pipeline.generation import comparison_answer, generate, import_c, with_document
 from golden_pipeline.plan import load_plan, make_plan
+from golden_pipeline.plan import topic_spec as load_topic_spec
 from golden_pipeline.schema import DIFFICULTIES
 from golden_pipeline.validation import (
-    VALIDATOR_VERSION, difficulty, quantities, release, same_answer, same_comparison, validate,
+    VALIDATOR_VERSION, _premise_absent, difficulty, quantities, release, same_answer, same_comparison, validate,
 )
+from conftest import DOC_2, GRID_CELL, UNITS
 
 CONFIG = {
     "model": "validator-test", "reasoning_effort": "high", "max_calls": 20, "budget_usd": 1.0,
@@ -494,3 +496,90 @@ def test_free_rejections_are_recorded_even_after_a_candidate_blocked_by_the_call
     assert rejected["candidate_id"] == "multi_hop-C-c1-0002"
     assert rejected["state_history"][-1]["reason"].startswith("multi_hop 아님")
     assert validator.requests == []
+
+
+REFUSAL = "제공된 문서에서 확인할 수 없습니다."
+
+
+def unanswerable(question, attribute, key_terms, evidence):
+    return {"question": question, "answer": REFUSAL, "evidence": evidence, "secondary_tags": [],
+            "structure": {"attribute": attribute, "key_terms": key_terms}}
+
+
+@pytest.fixture
+def borrowed(config):
+    """p3: 문서 1 의 근거(E1 · E2 = u1 · u2)로 문서 2 에 묻는 unanswerable 묶음 하나."""
+    make_plan("p3", "ev1", {"unanswerable": 1}, 2000, package=config.parent / "v11")
+    return config
+
+
+def test_an_attribute_found_only_in_a_held_unit_of_the_asked_document_is_rejected(borrowed):
+    # 문서 2 에서 하자 보수 기간은 검증되지 않은 원본 그리드 셀에만 있다. eligible 만 보면 없는 것으로 잘못 출시된다.
+    row = unanswerable("하자 보수 기간은 얼마인가?", "하자 보수 기간", ["하자"], ["E2"])
+    generate("A", "unanswerable", "p3", "a1", borrowed, Generator(row))
+    validator = Validator({"*": verdict("", answerable=False)})
+
+    run_dir = validate("unanswerable", "A", "a1", borrowed, validator)
+
+    [item] = validated(run_dir).values()
+    assert item["state"] == "rejected"
+    assert item["state_history"][-1]["reason"].startswith("대상 문서에 있음: 핵심어 ['하자'] 가 근거 단위 grid:")
+    assert validator.requests == []
+
+
+@pytest.mark.parametrize("reply, state, reason", [
+    (verdict("", answerable=False), "auto_validated", "자동 검증 통과"),
+    # 핵심어를 다른 말로 쓴 근거는 글자 검사를 지나므로, 대상 문서에서 고른 근거로 검증기가 답하면 거절한다.
+    (verdict("11월 3일까지"), "rejected", "대상 문서에 있음: 검증기"),
+])
+def test_an_attribute_absent_from_every_unit_of_the_asked_document_is_kept_unless_the_validator_answers(
+        borrowed, reply, state, reason):
+    row = unanswerable("계약 기간은 얼마인가?", "계약 기간", ["계약"], ["E1"])
+    generate("A", "unanswerable", "p3", "a1", borrowed, Generator(row))
+    validator = Validator({"*": reply})
+
+    run_dir = validate("unanswerable", "A", "a1", borrowed, validator)
+
+    [item] = validated(run_dir).values()
+    assert (item["state"], item["state_history"][-1]["reason"][:len(reason)]) == (state, reason)
+    # 검증기는 근거 묶음(문서 1)이 아니라 질문이 묻는 문서 2 의 근거만 받는다.
+    [request] = validator.requests
+    sent = {unit["text"] for unit in json.loads(request[1]["content"])["evidence"]}
+    assert sent == {body for _, doc, body, _ in UNITS if doc == DOC_2} | {GRID_CELL}
+
+
+def test_an_unanswerable_release_names_the_asked_document_and_tells_the_screen_why_it_refuses(borrowed):
+    row = unanswerable("계약 기간은 얼마인가?", "계약 기간", ["계약"], ["E1"])
+    generate("A", "unanswerable", "p3", "a1", borrowed, Generator(row))
+    validate("unanswerable", "A", "a1", borrowed, Validator({"*": verdict("", answerable=False)}))
+    screener = Screener()
+
+    release_dir = release("unanswerable", "v1", [("A", "a1")], borrowed, screener)
+
+    [item] = read_jsonl(release_dir / "golden.jsonl")
+    assert item["question"] == "나기관의 「나사업 운영」 사업에서 계약 기간은 얼마인가?"
+    note = load_topic_spec("unanswerable")[0]["screen"]
+    assert screener.requests[0][0]["content"].endswith(note)
+
+
+@pytest.mark.parametrize("stated, state, reason", [
+    ("9개월", "auto_validated", "자동 검증 통과"),
+    # 6개월 은 문서 1 의 다른 근거(표 행)에 있다. 그 값을 전제한 질문은 틀린 전제가 아니다.
+    ("6개월", "rejected", "전제가 문서에 있음"),
+])
+def test_a_false_premise_must_state_a_value_found_nowhere_in_its_document(config, stated, state, reason):
+    make_plan("p4", "ev1", {"false_premise": 1}, 2000, package=config.parent / "v11")
+    row = {"question": f"계약 기간 {stated}은 언제 끝나나?", "answer": f"계약 기간은 {stated}이 아니라 12개월이다.",
+           "evidence": ["E1"], "structure": {"stated": stated, "actual": "12개월"}, "secondary_tags": []}
+    generate("A", "false_premise", "p4", "a1", config, Generator(row))
+
+    run_dir = validate("false_premise", "A", "a1", config, Validator({"*": verdict("12개월")}))
+
+    [item] = validated(run_dir).values()
+    assert (item["state"], item["state_history"][-1]["reason"][:len(reason)]) == (state, reason)
+
+
+@pytest.mark.parametrize("text, found", [("응답 시간은 13초 이내", False), ("응답 시간은 3초 이내", True)])
+def test_a_longer_number_in_the_document_is_not_the_stated_value(text, found):
+    item = {"structure": {"stated": "3초", "actual": "5초"}}
+    assert (_premise_absent(item, [], [{"unit_id": "u", "text": text}]) is not None) == found

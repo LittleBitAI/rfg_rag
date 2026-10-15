@@ -27,6 +27,10 @@ def _release_row(topic: str, answer: str, structure: dict, context: str = "[E1]\
      ["설치일 이전까지 인증서를 제출하여야 한다."]),
     ("table", "2,150", {"row": "인 원", "column": "휴학"}, ["2,150"]),
     ("table", "정의 | 개발 방법론 적용", {"row": "상세 설명", "column": "COR-002"}, ["정의", "개발 방법론 적용"]),
+    ("unanswerable", "제공된 문서에서 확인할 수 없습니다.", {"attribute": "드론 촬영 해상도", "key_terms": ["드론"]},
+     ["확인할 수 없"]),
+    ("false_premise", "사업 기간은 7개월이 아니라 계약일로부터 12개월입니다.", {"stated": "7개월", "actual": "12개월"},
+     ["12개월"]),
 ])
 def test_golden_release_row_becomes_eval_item(tmp_path, topic, answer, structure, key_facts):
     path = tmp_path / "dev.jsonl"
@@ -51,6 +55,8 @@ def test_bundled_dev_key_facts_score_the_requested_answer():
             # 정답 그대로 답하거나 근거를 모두 찾으면 만점이어야 한다 — 'SFR-009\n분류' 의 009 가 9분으로,
             # '생성된 문서는 별도 시건장치…' 가 부정으로 읽히지 않게
             assert _key_fact_ratio(facts[n], row["answer"]) == 1, n
+        # unanswerable 의 근거는 다른 문서의 것이라, 근거를 찾아도 답(거절)이 나오지 않는다
+        if facts[n] and row["primary_topic"] != "unanswerable":
             assert _key_fact_ratio(facts[n], row["context"]) == 1, n
         if row["primary_topic"] == "multi_hop" and facts[n]:
             assert not [v for v in _labelled_cell_values(row) if v not in {a for f in facts[n] for a in f.split("|")}], n

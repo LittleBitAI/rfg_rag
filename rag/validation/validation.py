@@ -137,6 +137,10 @@ def _golden_key_facts(row: dict, field_names: set[str]) -> list[str]:
         return [s["condition"]]
     if topic == "multi_hop":
         return _multi_hop_key_facts(row, field_names)
+    if topic == "unanswerable":
+        return ["확인할 수 없"]  # 문서에 없는 내용 — 04 생성의 거절 문장 '제공된 문서에서 확인할 수 없습니다.' 를 찾는다
+    if topic == "false_premise":
+        return [s["actual"]]  # 질문의 틀린 전제를 바로잡은 문서의 값
     # 표 칸 안의 ' | ' 는 칸 구분선이다. 05 평가의 'A|B'(둘 중 하나)로 읽히지 않게 칸마다 따로 요구한다
     return [part.strip() for part in row["answer"].split(" | ")]
 

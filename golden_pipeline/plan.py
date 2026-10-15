@@ -90,6 +90,35 @@ def eligible_units(run_dir, package):
     return [unit for unit in units if unit["text"].strip()]
 
 
+def document_units(run_dir, package, docs):
+    """문서 SHA → 그 문서의 모든 근거 단위(eligible 과 held) {unit_id, text}, 패키지 순서대로.
+
+    문서에 무엇이 없음을 보이려면 보류된 단위(UNVERIFIED 원문, 범위 없는 OCR, 원본 그리드 셀)까지 읽어야 한다.
+    eligible 만 보면 보류된 글에 든 답을 놓친다. 원본 그리드 셀의 글은 원본 그리드 참고 파일에서 읽는다.
+    """
+    units = [unit for unit in evidence._iter_jsonl(run_dir / "units.jsonl") if unit["doc_sha"] in docs]
+    elements = _elements(package, {unit["element_id"] for unit in units if unit["chunk_id"]})
+    cells = {
+        f"grid:{grid['source_document_sha256']}:{grid['stream']}:{grid['control']}:{cell['row']}:{cell['col']}": cell["text"]
+        for grid in evidence._iter_jsonl(package / evidence.GRIDS) if grid["source_document_sha256"] in docs
+        for cell in grid["cells"]
+    }
+    found = defaultdict(list)
+    for unit in units:
+        text = _unit_text(unit, elements[unit["element_id"]]) if unit["chunk_id"] else cells[unit["unit_id"]]
+        found[unit["doc_sha"]].append({"unit_id": unit["unit_id"], "text": text})
+    return found
+
+
+def asked_document(item):
+    """질문이 묻는 문서의 SHA. 대개 근거의 문서이고, unanswerable 은 근거와 다른 문서라 계획 묶음의 doc_sha 다."""
+    if item["primary_topic"] != "unanswerable":
+        return item["evidence"][0]["doc_sha"]
+    run_dir = storage.run_path(item["primary_topic"], item["method"], item["run_id"])
+    planned = load_plan(storage._read_json(run_dir / "manifest.json")["generation"]["plan_id"])[0]
+    return next(bundle["doc_sha"] for bundle in planned["bundles"] if bundle["bundle_id"] == item["bundle_id"])
+
+
 def doc_names(package, docs):
     """문서 SHA → {"agency": 발주 기관, "title": 사업 이름}. 문서 98개 가운데 어느 문서의 질문인지 밝히는 데 쓴다.
 
@@ -163,7 +192,20 @@ def _groups(topic, spec, units, used, max_context_chars, names):
         windows = [_with_headers(window, headers) for window in windows]
         bundles = [_bundle(topic, window, names[doc]) for window in windows if window]
         groups[doc] = [b for b in bundles if len(b["context"]) <= max_context_chars]
+    if topic == "unanswerable":
+        groups = {doc: [_borrowed(bundle, doc, names) for bundle in bundles] for doc, bundles in groups.items()}
     return groups
+
+
+def _borrowed(bundle, source, names):
+    """unanswerable 묶음은 문서 A(source)의 근거로 다른 문서 B 에 묻는다. doc_sha · doc 는 질문이 묻는 문서 B 다.
+
+    B 는 문서를 SHA 차례로 늘어놓은 고리에서 A 의 맞은편 문서다. 늘 같은 B 가 골라진다.
+    ponytail: 맞은편 문서가 비슷한 사업이면 속성이 B 에도 있어 거절된다. 거절이 많으면 사업 분야가 다른 문서를 고른다.
+    """
+    docs = sorted(names)
+    target = docs[(docs.index(source) + len(docs) // 2) % len(docs)]
+    return {**bundle, "doc_sha": target, "doc": names[target]}
 
 
 def _spanning(units, size):

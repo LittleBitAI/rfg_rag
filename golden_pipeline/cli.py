@@ -115,7 +115,7 @@ def _rename(args):
 
 
 def _split(args):
-    return split.split(args.version)
+    return split.split(args.version, args.base)
 
 
 def _report(args):
@@ -211,8 +211,9 @@ def _paid_commands(commands):
     command.add_argument("--source", action="append", required=True, metavar="VERSION", help="합칠 출시본. 여러 번 줄 수 있음")
     command.set_defaults(handler=_rename)
 
-    command = commands.add_parser("split", help="다섯 주제의 출시본을 문서 단위 dev 30%% · test 70%% 로 (API 호출 없음)")
-    command.add_argument("--version", required=True, help="다섯 주제에 모두 있는 출시본")
+    command = commands.add_parser("split", help="주제들의 출시본을 문서 단위 dev 30%% · test 70%% 로 (API 호출 없음)")
+    command.add_argument("--version", required=True, help="나눌 출시본. --base 가 없으면 모든 주제에 있어야 함")
+    command.add_argument("--base", help="그대로 둘 앞 분할. 그 분할에 없는 주제의 출시본만 문서가 간 쪽으로 더함")
     command.set_defaults(handler=_split)
 
 

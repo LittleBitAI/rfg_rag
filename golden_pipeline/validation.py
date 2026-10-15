@@ -10,6 +10,7 @@ import json
 import re
 import unicodedata
 from decimal import Decimal
+from functools import lru_cache
 
 from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
@@ -35,6 +36,8 @@ SCREEN_CODES = ("structure_question", "ordinal_reference", "evidence_reference",
                 "personal_info", "malformed_question", "invalid_comparison", "useless_answer")
 # 칸이 비어 행의 뜻이 정해지지 않는 표 행: 빈 칸으로 시작하거나 빈 칸이 이어진다 (조직도 · 간트 모양).
 BLANK_CELL = re.compile(r"(^|\n) *\||\| *\|")
+# unanswerable 검증기에 주는 대상 문서의 근거 단위 수.
+BEST_MATCHING = 5
 
 
 def validate(topic, method, run_id, config_path, client):
@@ -93,11 +96,12 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     plan_id, planned, spec = _pinned_plan(run_dir, topic)
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
     units = {item["candidate_id"]: evidence_units(item, bundles[item["bundle_id"]]) for item in candidates}
+    documents = _documents(topic, planned, bundles, candidates)
     prompt_path = storage.PROMPTS / "validator.txt"
     calls = []
     ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls)
     judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls)
-    free_rejects = _static_rejections(candidates, spec, units, survivors)
+    free_rejects = _static_rejections(candidates, spec, units, survivors, documents)
     rejected_ids = {item["candidate_id"] for item in free_rejects}
     to_judge = [item for item in candidates if item["candidate_id"] not in rejected_ids]
 
@@ -109,11 +113,11 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
             needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]])
             status = generation.limit_reached(config, len(calls), generation._cost(config, calls), needed)
             break
-        verdicts = generation.parallel(
-            lambda item: _verdict(item, spec, units[item["candidate_id"]], ask, judge, survivors), batch)
+        verdicts = generation.parallel(lambda item: _verdict(
+            item, spec, units[item["candidate_id"]], ask, judge, survivors, documents.get(item["candidate_id"])), batch)
         judged += [_settle(item, verdict, units[item["candidate_id"]], survivors) for item, verdict in zip(batch, verdicts)]
     unjudged = to_judge[len(judged):]
-    free_rejects += _static_rejections(unjudged, spec, units, survivors)
+    free_rejects += _static_rejections(unjudged, spec, units, survivors, documents)
     rejected_ids.update(item["candidate_id"] for item in free_rejects)
     pending = [item["candidate_id"] for item in unjudged if item["candidate_id"] not in rejected_ids]
     if not pending:
@@ -143,10 +147,26 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     return [settled[item["candidate_id"]] for item in candidates if item["candidate_id"] in settled], info
 
 
-def _static_rejections(candidates, spec, units, survivors):
+def _static_rejections(candidates, spec, units, survivors, documents):
     """호출 한도가 부족해도 무료 검사로 거절할 후보는 실패 기록에 남기도록 먼저 판정한다."""
     return [_settle(item, ("rejected", reason), units[item["candidate_id"]], survivors)
-            for item in candidates if (reason := _static_reason(item, spec, units[item["candidate_id"]], survivors))]
+            for item in candidates
+            if (reason := _static_reason(item, spec, units[item["candidate_id"]], survivors,
+                                         documents.get(item["candidate_id"])))]
+
+
+def _documents(topic, planned, bundles, candidates):
+    """candidate_id → 질문이 묻는 문서의 모든 근거 단위. 문서 전체를 보는 주제(DOCUMENT_TOPICS)만 읽는다.
+
+    근거 어댑터 run 이 고정한 패키지와 지금 패키지가 다르면 판정과 본문이 맞지 않으므로 멈춘다.
+    """
+    if topic not in DOCUMENT_TOPICS:
+        return {}
+    run_dir = storage._child(storage.OUTPUTS / "evidence", planned["evidence_run"])
+    plan._check_package(evidence.PACKAGE, storage._read_json(run_dir / "manifest.json")["pinned_sha256"])
+    asked = {item["candidate_id"]: bundles[item["bundle_id"]]["doc_sha"] for item in candidates}
+    found = plan.document_units(run_dir, evidence.PACKAGE, set(asked.values()))
+    return {candidate_id: found[doc] for candidate_id, doc in asked.items()}
 
 
 def _pinned_plan(run_dir, topic):
@@ -171,8 +191,10 @@ def release(topic, version, runs, config_path, client):
     _refuse_duplicates(items)
     config, config_sha = generation._run_config(config_path)
     prompt_path = storage.PROMPTS / "screen.txt"
+    # 일부러 답이 없거나 전제가 틀린 질문은 판정기가 안내 문구 · 틀린 질문으로 빼지 않게, 주제 명세의 설명을 붙인다.
+    note = plan.topic_spec(topic)[0].get("screen")
     calls = []
-    screen = _screener(client, config, prompt_path.read_text(encoding="utf-8"), calls)
+    screen = _screener(client, config, prompt_path.read_text(encoding="utf-8") + (f"\n\n{note}" if note else ""), calls)
     ruled = {item["candidate_id"]: (False, None, rule)
              for item in items if (rule := rule_reason(item, units[item["candidate_id"]]))}
     to_screen = [item for item in items if item["candidate_id"] not in ruled]
@@ -193,6 +215,7 @@ def release(topic, version, runs, config_path, client):
                for item in items if not judged[item["candidate_id"]][0]]
     info = {
         "screen_prompt_sha256": storage._sha256(prompt_path),
+        "screen_note": note,
         "run_config": config,
         "run_config_sha256": config_sha,
         "model_reported": sorted({call["model"] for call in calls}),
@@ -238,7 +261,7 @@ def rename(topic, version, sources):
         items += released
         runs.update(tuple(run.split("/", 1)) for run in manifest["runs"])
         golden[source] = manifest["golden_sha256"]
-    docs = {item["candidate_id"]: item["evidence"][0]["doc_sha"] for item in items}
+    docs = {item["candidate_id"]: plan.asked_document(item) for item in items}
     items = _current_names(items, docs)
     # 이름이 같아진 뒤에 견준다. 옛 이름 · 새 이름 질문은 앞머리만 달라 이름을 바꾸기 전에는 같은 질문으로 보이지 않는다.
     _refuse_duplicates(items)
@@ -456,17 +479,26 @@ def difficulty(question, units, proven_multi_hop):
     """
     if proven_multi_hop:
         return "hard"
-    question = DOCUMENT_PREFIX.sub("", question, count=1)
     evidence = _norm(" ".join(unit["text"] for unit in units))
-    words = [_norm(t.form) for t in generation.tokens(question) if t.tag in CONTENT_TAGS and t.form not in INTERROGATIVES]
-    return "easy" if all(word in evidence for word in words) else "medium"
+    return "easy" if all(word in evidence for word in _content_words(question)) else "medium"
 
 
-def _verdict(item, spec, units, ask, judge, survivors):
-    """(갈 상태, 이유). 돈이 들지 않는 검사를 먼저 하고, 그다음 독립 답을 받는다. 상태는 auto_validated 아니면 rejected 다."""
-    reason = _static_reason(item, spec, units, survivors)
+def _content_words(question):
+    """질문의 내용 형태소 (의문사와 앞에 붙인 문서 이름은 뺌)."""
+    question = DOCUMENT_PREFIX.sub("", question, count=1)
+    return [_norm(t.form) for t in generation.tokens(question) if t.tag in CONTENT_TAGS and t.form not in INTERROGATIVES]
+
+
+def _verdict(item, spec, units, ask, judge, survivors, document):
+    """(갈 상태, 이유). 돈이 들지 않는 검사를 먼저 하고, 그다음 독립 답을 받는다. 상태는 auto_validated 아니면 rejected 다.
+
+    document 는 질문이 묻는 문서의 모든 근거 단위다 (DOCUMENT_TOPICS 만, 아니면 None).
+    """
+    reason = _static_reason(item, spec, units, survivors, document)
     if reason:
         return "rejected", reason
+    if item["primary_topic"] == "unanswerable":
+        return _absent_verdict(item, document, ask)
     full, error = ask(item["question"], units)
     reason = _answer_reason(item, units, full, error, judge)
     if reason:
@@ -497,7 +529,7 @@ def _answer_reason(item, units, full, error, judge):
     return f"독립 답과 다릅니다: 독립 답 {independent!r}"
 
 
-def _static_reason(item, spec, units, survivors):
+def _static_reason(item, spec, units, survivors, document):
     cited = [unit for unit in units if unit["ref"] in item["evidence"]]
     mismatch = generation.check_structure(item["primary_topic"], spec, item, cited)
     if mismatch:
@@ -506,7 +538,7 @@ def _static_reason(item, spec, units, survivors):
     if rule:
         return rule
     check = RELATIONS.get(item["primary_topic"])
-    relation = check(item, units) if check else None
+    relation = check(item, units, document) if check else None
     if relation:
         return relation
     duplicate = next((survivors[key] for key in _keys(item) if key in survivors), None)
@@ -554,12 +586,14 @@ def _answerable(item, full):
 
 
 def _numeric_answer(item, full):
-    if item["primary_topic"] != "numeric":
+    """수를 답하는 주제는 독립 답에도 그 수 · 단위가 있어야 한다. false_premise 는 바로잡은 값(actual)이다."""
+    claim = CLAIMED.get(item["primary_topic"])
+    if claim is None:
         return None
     found = quantities(full["answer"])
     if not found:
         return f"유형 불일치: 독립 답 {full['answer']!r} 에 수 · 단위가 없습니다"
-    claimed = item["structure"]["value"] + item["structure"]["unit"]
+    claimed = claim(item["structure"])
     if not quantities(claimed) <= found:
         return f"독립 답과 다릅니다: 값 · 단위 {claimed!r}, 독립 답 {full['answer']!r}"
     return None
@@ -606,10 +640,37 @@ def _not_copied(item, full):
     return f"복사형: 질문에 답 {full['answer']!r} 이 들어 있습니다"
 
 
+CLAIMED = {"numeric": lambda structure: structure["value"] + structure["unit"],
+           "false_premise": lambda structure: structure["actual"]}
 ANSWER_CHECKS = (_answerable, _numeric_answer, _not_copied)
 
 
-def _table_relation(item, units):
+def _absent_verdict(item, document, ask):
+    """unanswerable: 대상 문서에서 질문 낱말을 가장 많이 담은 근거 단위만 준 검증기도 답하지 못해야 한다.
+
+    핵심어 검사(_key_terms_absent)는 글자로만 본다. 핵심어를 다른 말로 쓴 근거(하자보수 · 하자담보책임)는 검증기가 찾는다.
+    """
+    found, error = ask(item["question"], best_matching(item["question"], document))
+    if error:
+        return "rejected", f"검증기 출력 오류: {error}"
+    if found["answerable"]:
+        return "rejected", f"대상 문서에 있음: 검증기가 대상 문서의 근거로 답했습니다: {found['answer']!r}"
+    return "auto_validated", "자동 검증 통과: 대상 문서의 근거로 답이 나오지 않습니다"
+
+
+def best_matching(question, document):
+    """대상 문서의 근거 단위 중 질문의 내용 형태소를 가장 많이 담은 BEST_MATCHING 개 (같으면 문서 차례). 검증기에 줄 라벨을 붙인다."""
+    words = _content_words(question)
+
+    def score(unit):
+        text = _norm(unit["text"])
+        return -sum(word in text for word in words)
+
+    scored = sorted(document, key=score)
+    return [{**unit, "label": f"E{n}"} for n, unit in enumerate(scored[:BEST_MATCHING], 1)]
+
+
+def _table_relation(item, units, document):
     """표 주제의 답은 인용한 표에서 행 이름과 열 이름이 만나는 칸의 값이어야 한다."""
     row, column = item["structure"]["row"], item["structure"]["column"]
     cell = _cell(units, row, column)
@@ -618,13 +679,41 @@ def _table_relation(item, units):
     return None if _states(item["answer"], cell) else f"표 관계: {row} · {column} 칸은 {cell!r} 인데 답에 없습니다"
 
 
-def _condition_relation(item, units):
+def _condition_relation(item, units, document):
     """조건 주제의 답은 그 조건 · 예외 문구를 함께 밝혀야 한다 (주제 명세 requires)."""
     condition = item["structure"]["condition"]
     return None if _states(item["answer"], condition) else f"조건 · 예외 누락: 답에 조건 {condition!r} 이 없습니다"
 
 
-RELATIONS = {"table": _table_relation, "condition": _condition_relation}
+def _key_terms_absent(item, units, document):
+    """unanswerable: 빌린 속성의 핵심어가 대상 문서의 어느 근거 단위에도 없어야 한다 (held 단위 포함, 공백 · 쉼표 무시)."""
+    for unit in document:
+        found = [term for term in item["structure"]["key_terms"] if _norm(term) in _norm(unit["text"])]
+        if found:
+            return f"대상 문서에 있음: 핵심어 {found} 가 근거 단위 {unit['unit_id']} 에 있습니다"
+    return None
+
+
+def _premise_absent(item, units, document):
+    """false_premise: 전제한 값(stated)이 대상 문서의 어느 근거 단위에도 없어야 한다 (held 단위 포함).
+
+    값은 quantities 로 견주므로 표기만 다른 같은 값(3천만원 · 30,000,000원)도 있는 것으로 본다. 13초 는 3초 가 아니다.
+    """
+    stated = quantities(item["structure"]["stated"])
+    unit = next((unit for unit in document if stated <= _unit_quantities(unit["text"])), None)
+    return f"전제가 문서에 있음: {item['structure']['stated']!r} 이 근거 단위 {unit['unit_id']} 에 있습니다" if unit else None
+
+
+@lru_cache(maxsize=None)
+def _unit_quantities(text):
+    # 한 문서의 단위 수천 개를 후보마다 다시 형태소 분석하지 않는다.
+    return frozenset(quantities(text))
+
+
+RELATIONS = {"table": _table_relation, "condition": _condition_relation,
+             "unanswerable": _key_terms_absent, "false_premise": _premise_absent}
+# 질문이 묻는 문서 전체를 읽어 검사하는 주제. 근거 묶음 밖에 답이나 전제가 있으면 틀린 문제다.
+DOCUMENT_TOPICS = ("unanswerable", "false_premise")
 
 
 def _cell(units, row, column):
