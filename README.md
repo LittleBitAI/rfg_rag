@@ -100,6 +100,12 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 03의 청크 기반 질문 생성은 실행하지 않습니다. 두 입력에 같은 질문 파일과 02 설정을 사용하고,
 각각 02 → 04 → 05를 실행해 네 평가 CSV를 별도 보관합니다.
 
+## RFP EDA 분석 기록
+
+[168셀 RFP 전처리 EDA](preprocessing/01_RFP_전처리_EDA.ipynb)는 저장된 표·그래프를 기본 실행에서 재표시하는 분석 기록입니다. 팀 기본 데이터 v12와 기존 최종 EDA의 v13 통계를 구분하며, 실제 원문 보존율을 인증하지 않습니다. Python·IPython만 있으면 원본/데이터 없이 볼 수 있고 OCR·모델 다운로드·파싱·이미지 저장·외부 API는 실행하지 않습니다. 과거 계산 코드는 주석으로 남겼으며, 원본 이미지·서명·직인 출력은 제외했습니다. Notebook을 열 때는 저장소 최상위 또는 `preprocessing/`를 작업 폴더로 사용하고 파일명을 유지하세요.
+
+이 파일은 dev에 신규 추가한 EDA이며 실행 파이프라인의 `01_preprocessing.ipynb`를 대체하지 않습니다. 기존 `feature/preprocessing`의 01/02/03은 이번 변경에 포함하지 않습니다.
+
 ## 팀 VM `codeit` 에서 작업 (VS Code Remote-SSH, GPU NVIDIA L4)
 코드는 그대로이고, VS Code 가 VM 에 접속해 VM 의 GPU 로 실행합니다. 임베딩은 GPU 가 있으면 알아서 `cuda` 를 씁니다.
 
@@ -268,7 +274,7 @@ ruff check .                              # 함수 복잡도 (C901 ≤ 8, PLR091
 ```
 
 - `.env` · `data/` · `artifacts/` 는 커밋하지 않습니다.
-- 노트북은 출력을 지우고 커밋합니다.
+- 실행 파이프라인 노트북은 출력을 지우고 커밋합니다. EDA 분석 기록은 비식별화한 저장 표·그래프를 포함합니다.
 - `rag/*.py` 를 고친 뒤에는 커널을 재시작하고 다시 실행합니다.
 
 
