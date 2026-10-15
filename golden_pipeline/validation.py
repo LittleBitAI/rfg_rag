@@ -234,11 +234,8 @@ def rename(topic, version, sources):
     """
     items, runs, golden = [], set(), {}
     for source in sources:
-        release_dir = storage._child(storage._topic_dir(topic) / "releases", source)
-        manifest = storage._read_json(release_dir / "manifest.json")
-        if storage._sha256(release_dir / "golden.jsonl") != manifest["golden_sha256"]:
-            raise ValueError(f"출시본 {source} 의 golden.jsonl 이 매니페스트의 SHA-256 과 다릅니다")
-        items += storage._read_jsonl(release_dir / "golden.jsonl")
+        released, manifest = storage.read_release(topic, source)
+        items += released
         runs.update(tuple(run.split("/", 1)) for run in manifest["runs"])
         golden[source] = manifest["golden_sha256"]
     docs = {item["candidate_id"]: item["evidence"][0]["doc_sha"] for item in items}

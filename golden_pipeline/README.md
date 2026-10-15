@@ -48,6 +48,7 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
 | `release` | 검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (아래 출시) | 유료 |
 | `rename` | 출시본들을 합쳐 질문 앞 문서 이름만 지금 `data/data_list.csv` 의 이름으로 바꾼 새 출시본으로. 쓸모 판정은 다시 하지 않습니다 | 없음 |
+| `split` | 다섯 주제의 출시본을 문서 단위 dev 30% · test 70% 로 (아래 dev · test 나누기) | 없음 |
 | `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
 
 ```
@@ -65,6 +66,7 @@ golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls
 
 golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 400 --budget 2
 golden_pipeline\golden.cmd rename --topic numeric --version final --source v1 --source v2
+golden_pipeline\golden.cmd split --version final
 golden_pipeline\golden.cmd plan p2 v11-20261014 --count numeric 20 --max-context-chars 4000 --skip-plan p1
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
@@ -156,6 +158,9 @@ golden_pipeline/outputs/
       golden.jsonl                      released 항목
       manifest.json                     개수, golden.jsonl SHA-256, 원본 run 과 그 파일별 SHA-256, 코드 커밋
     reports/{report_id}.json            A · B · C 비교 보고서
+  splits/{version}/
+    dev.jsonl · test.jsonl              다섯 주제의 출시본 version 을 문서 단위로 나눈 것 (아래 dev · test 나누기)
+    manifest.json                       원본 출시본 SHA-256, dev · test 개수 · 문서 수 · 파일 SHA-256 · 주제 × 난이도 칸별 개수
 ```
 
 - 이미 있는 `run_id` 나 `version`, 보고서 id 는 덮어쓰지 않고 `FileExistsError` 로 거절합니다.
@@ -602,6 +607,15 @@ release(topic, version, [(method, run_id), ...], config_path, client)
 | run 에 등록된 기록과 다른 내용 | 위 저장 규약 |
 
 출시 매니페스트의 `sources` 에는 원본 run 마다 `candidates.jsonl` · 상태 파일 · `manifest.json` · 검증 기록들의 SHA-256 을 남깁니다.
+
+## dev · test 나누기
+
+`split --version V` 는 다섯 주제의 출시본 `V` 를 `splits/V/dev.jsonl` (30%) 과 `test.jsonl` (70%) 로 나눕니다. API 호출은 없습니다.
+
+- 한 문서의 질문은 모두 한쪽으로 갑니다. dev 에서 틀린 질문을 보고 그 문서에 맞춘 별칭 · 사용자 단어를 넣으면 같은 문서의 test 점수도 올라, test 가 실제보다 좋게 나오기 때문입니다.
+- 그 안에서 주제 × 난이도 칸마다 dev 몫이 30% 에 가깝도록 문서를 고릅니다. 고정 시드로 무작위로 시작해, 문서 하나를 옮겨 칸별 최대 오차가 줄어드는 동안 옮깁니다. 문서로 묶으므로 칸 비율이 정확히 30% 가 되지는 않습니다.
+- dev 는 설정을 바꿀 때마다 돌리므로 작게, test 는 마지막에 한 번 돌리는 최종 점수라 크게 둡니다.
+- 매니페스트에는 원본 출시본의 SHA-256, dev · test 의 개수 · 문서 수 · 파일 SHA-256 · 칸별 개수를 남깁니다. 원본 `golden.jsonl` 이 매니페스트의 SHA-256 과 다르면 나누지 않습니다.
 
 ## 비교 보고서
 

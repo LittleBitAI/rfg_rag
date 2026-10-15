@@ -211,6 +211,15 @@ def write_release(topic, version, items, runs, info=None):
     return release_dir
 
 
+def read_release(topic, version):
+    """출시본의 (항목, 매니페스트). golden.jsonl 이 매니페스트의 SHA-256 과 다르면 멈춘다 (출시 뒤 잘리거나 고친 파일)."""
+    release_dir = _child(_topic_dir(topic) / "releases", version)
+    manifest = _read_json(release_dir / "manifest.json")
+    if _sha256(release_dir / "golden.jsonl") != manifest["golden_sha256"]:
+        raise ValueError(f"출시본 {topic}/{version} 의 golden.jsonl 이 매니페스트의 SHA-256 과 다릅니다")
+    return _read_jsonl(release_dir / "golden.jsonl"), manifest
+
+
 def read_catalog():
     path = guard(OUTPUTS / "catalog.jsonl")
     return _read_jsonl(path) if path.exists() else []
