@@ -96,8 +96,8 @@ def improve(topic, plan_id, loop_id, config_path, generator, validator):
         if stop:
             break
     _pin(loop_dir, plan_id, config)
-    held_out = _held_out(topic, plan_id, loop_id, config, clients)
-    report = _report(topic, plan_id, loop_id, stop or "max_rounds", held_out)
+    held_out, held_stop = _held_out(topic, plan_id, loop_id, config, clients)
+    report = _report(topic, plan_id, loop_id, stop or held_stop or "max_rounds", held_out)
     with storage.guard(loop_dir / "report.json").open("x", encoding="utf-8") as f:
         f.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     return report
@@ -223,7 +223,10 @@ def _generate(topic, plan_id, loop_id, n, config, clients):
     parents = open_bundles(topic, plan_id, loop_id)
     if not parents:
         return "no_open_bundles"
-    stop = generation.limit_reached(config, *_spent(topic, loop_id)) or _adopt(topic, plan_id, loop_id, n, config, clients)
+    # 채택을 재는 run 이 남은 한도를 다 쓸 수 있으므로 채택 뒤에도 한도를 다시 본다.
+    stop = (generation.limit_reached(config, *_spent(topic, loop_id))
+            or _adopt(topic, plan_id, loop_id, n, config, clients)
+            or generation.limit_reached(config, *_spent(topic, loop_id)))
     if stop:
         return stop
     codes = storage._read_json(_loop_path(topic, loop_id) / f"r{n}-adoption.json")["adopted"]
@@ -297,19 +300,20 @@ def _held_out(topic, plan_id, loop_id, config, clients):
     """loop 끝의 held-out: 규칙 없는 정책(h-base)과 마지막에 채택한 정책(h-final)을 같은 묶음에서 견준다.
 
     held-out 은 어떤 채택 결정에도 쓰지 않았으므로, 이 차이가 채택한 규칙의 실제 효과다.
+    (report 의 held_out, 한도에 닿아 멈췄으면 그 이유) 를 돌려준다.
     """
     rounds = sum(1 for _ in _loop_path(topic, loop_id).glob("r*-adoption.json"))
     adopted = _policy(topic, loop_id, rounds)["adopted"]
     if not adopted:
-        return {"measured": False, "reason": "채택한 예방 규칙이 없습니다"}
+        return {"measured": False, "reason": "채택한 예방 규칙이 없습니다"}, None
     stop = (_measure(topic, plan_id, loop_id, "h-base", [], "held_out", config, clients)
             or _measure(topic, plan_id, loop_id, "h-final", adopted, "held_out", config, clients))
     if stop:
-        return {"measured": False, "reason": stop}
+        return {"measured": False, "reason": stop}, stop
     base, final = adoption.passes(topic, f"{loop_id}-h-base"), adoption.passes(topic, f"{loop_id}-h-final")
     gain, floor = adoption.paired_gain(final, base)
     return {"measured": True, "adopted": adopted, "bundles": len(base), "base_passed": sum(base.values()),
-            "final_passed": sum(final.values()), "gain": gain, "floor": floor}
+            "final_passed": sum(final.values()), "gain": gain, "floor": floor}, None
 
 
 def _split_bundles(plan_id, topic, part):

@@ -206,11 +206,17 @@ def release(topic, version, runs, config_path, client):
 
 
 def _release_items(topic, runs):
-    """출시의 규칙 검사도 검증 때와 같은 고정 계획에서 인용 근거와 표 머리글만 읽는다."""
+    """출시의 규칙 검사도 검증 때와 같은 고정 계획에서 인용 근거와 표 머리글만 읽는다.
+
+    정책을 재는 run 은 받지 않는다. 출시에서 빠진 항목은 실패 기록이 되므로, 받으면 validation · held-out 결과가 정책에 새어 든다.
+    """
     items, units = [], {}
     for method, run_id in runs:
+        run_dir = storage.run_path(topic, method, run_id)
+        if measuring(run_dir):
+            raise ValueError(f"{run_id} 은 자기 개선이 정책을 재려고 만든 run 이라 출시하지 않습니다")
         accepted = storage.read_validated(topic, method, run_id)
-        generated = storage._read_json(storage.run_path(topic, method, run_id) / "manifest.json")["generation"]
+        generated = storage._read_json(run_dir / "manifest.json")["generation"]
         planned, sha = plan.load_plan(generated["plan_id"])
         if sha != generated["plan_sha256"]:
             raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_id} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")

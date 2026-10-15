@@ -231,6 +231,10 @@ def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_fai
 @pytest.mark.parametrize("limits, reason, rounds", [
     ({}, "max_rounds", 3),
     ({"max_calls": 4}, "call_cap", 1),
+    # 채택을 재는 v0 · v2 가 남은 호출을 다 쓴다 (r1 5 + 4).
+    ({"max_calls": 9}, "call_cap", 1),
+    # round 는 모두 끝났지만 held-out 을 재다 닿는다 (13 + h-base 생성 1).
+    ({"max_calls": 14}, "call_cap", 3),
     ({"budget_usd": 0.0001}, "budget", 1),
 ])
 def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits, reason, rounds):
@@ -393,6 +397,19 @@ def test_rules_are_adopted_on_validation_bundles_and_judged_once_more_on_held_ou
                                .read_text(encoding="utf-8"))["generation"]
         assert generated["policy"]["part"] == part
         assert {adoption.split(bundle) for bundle in generated["bundle_ids"]} == {part}
+
+
+@pytest.mark.parametrize("run_id", ["l1-v2", "l1-h-final"])
+def test_a_measuring_run_cannot_be_released(looped, tmp_path, run_id):
+    # 출시에서 빠진 항목은 실패 기록이 된다. 정책을 재는 run 을 받으면 그 결과가 다음 정책에 새어 든다.
+    def screen(**kwargs):
+        raise AssertionError("유료 판정 전에 멈춰야 합니다")
+
+    config = tmp_path / "screen.json"
+    config.write_text(json.dumps({**LOOP["validator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
+    with pytest.raises(ValueError, match=f"{run_id} 은 자기 개선이 정책을 재려고"):
+        release("numeric", "v1", [("A", "l1-r1"), ("A", run_id)], config, screen)
+    assert not (storage.OUTPUTS / "goldens/numeric/releases").exists()
 
 
 def test_a_rule_that_does_not_help_on_validation_is_retired_and_never_reaches_a_round(loop_config):

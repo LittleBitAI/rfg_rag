@@ -77,7 +77,7 @@ golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 - 플래그로 받은 설정은 `outputs/` 아래 임시 파일로 넘기고 지웁니다. 내용과 SHA-256 은 run 매니페스트 · `validation.json` · loop `start.json` 에 남습니다.
 - `resume --method A` 는 `start.json` 에 고정된 설정 · 계획으로 loop 를 잇고 한도를 받지 않습니다. 이미 끝난(`report.json` 이 있는) loop 는 잇지 않습니다.
 - `resume --method B|C` 는 아래 독립 검증의 "이어서 검증" 입니다. 모델 · 추론 강도 · 단가는 앞 검증 기록의 것을 그대로 쓰고, 이번에 쓸 `--max-calls` · `--budget` 만 받습니다.
-- `release` 의 A run 은 loop 의 round run(`{loop_id}-r{n}`)입니다. `v{n}` · `h-base` · `h-final` 은 정책을 재는 run 입니다.
+- `release` 의 A run 은 loop 의 round run(`{loop_id}-r{n}`)입니다. `v{n}` · `h-base` · `h-final` 은 정책을 재는 run 이라, 판정 호출 전에 출시를 거절합니다 (빠진 항목이 실패 기록이 되어 정책에 새어 들기 때문입니다).
 
 ## 항목 스키마
 
@@ -507,7 +507,7 @@ validation · held-out 묶음이 하나도 없는 계획이면 정책을 잴 수
 round 가 끝나면 마지막에 채택한 정책을 held-out 묶음에서 규칙 없는 정책과 견줍니다 (`h-final` 대 `h-base`).
 held-out 은 어떤 채택에도 쓰지 않았으므로 이 차이가 채택한 규칙의 실제 효과입니다.
 `report.json` 의 `held_out` 에 `bundles` · `base_passed` · `final_passed` · `gain` · `floor` 가 남고,
-채택한 규칙이 없거나 한도에 닿아 재지 못하면 `measured: false` 와 이유가 남습니다.
+채택한 규칙이 없거나 한도에 닿아 재지 못하면 `measured: false` 와 이유가 남습니다. held-out 을 재다 한도에 닿으면 `stop_reason` 도 그 한도입니다.
 
 실패 기록 항목은 정확히 아래 필드이고, 고친 답은 넣을 수 없습니다.
 검증하지 않은 답이 다음 프롬프트에 사실로 들어가면 다음 후보가 오염되기 때문입니다.
