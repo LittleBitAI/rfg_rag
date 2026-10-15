@@ -113,7 +113,12 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
         verdicts = generation.parallel(
             lambda item: _verdict(item, spec, units[item["candidate_id"]], ask, judge, survivors), batch)
         judged += [_settle(item, verdict, units[item["candidate_id"]], survivors) for item, verdict in zip(batch, verdicts)]
-    pending = [item["candidate_id"] for item in to_judge[len(judged):]]
+    unjudged = to_judge[len(judged):]
+    free_rejects += _static_rejections(unjudged, spec, units, survivors)
+    rejected_ids.update(item["candidate_id"] for item in free_rejects)
+    pending = [item["candidate_id"] for item in unjudged if item["candidate_id"] not in rejected_ids]
+    if not pending:
+        status = "complete"
     info = {
         "run_id": run_dir.name,
         "topic": topic,

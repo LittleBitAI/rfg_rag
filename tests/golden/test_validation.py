@@ -311,7 +311,8 @@ def test_multi_hop_is_approved_only_if_no_single_unit_yields_the_answer(config, 
     assert item["difficulty"] == ("hard" if state == "auto_validated" else "medium")
 
 
-def test_duplicates_and_items_from_the_same_evidence_group_are_rejected_through_the_catalog(config, tmp_path):
+@pytest.mark.parametrize("max_calls", [1, CONFIG["max_calls"]])
+def test_duplicates_and_items_from_the_same_evidence_group_are_rejected_through_the_catalog(config, tmp_path, max_calls):
     validator = Validator({"*": verdict("130,000,000원", ["부가세 포함"])})
     rows = [
         NUMERIC,
@@ -319,7 +320,12 @@ def test_duplicates_and_items_from_the_same_evidence_group_are_rejected_through_
         {**NUMERIC, "question": " 사업 예산은  얼마인가? ", "evidence": ["E1", "E2"]},
     ]
     import_rows(tmp_path, "numeric", rows)
-    c1 = validated(validate("numeric", "C", "c1", config, validator))
+    capped = tmp_path / "duplicates.json"
+    capped.write_text(json.dumps({**CONFIG, "max_calls": max_calls}), encoding="utf-8")
+    run_dir = validate("numeric", "C", "c1", capped, validator)
+    c1 = validated(run_dir)
+    record = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))
+    assert record["pending"] == [] and record["status"] == "complete"
     assert [(item["state"], item["state_history"][-1]["reason"]) for item in c1.values()] == [
         ("auto_validated", "자동 검증 통과"),
         ("rejected", "중복: numeric-C-c1-0001 와 같은 근거 묶음이나 질문입니다"),
