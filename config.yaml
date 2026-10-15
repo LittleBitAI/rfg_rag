@@ -3,7 +3,7 @@
 #  노트북 사이에 주고받는 파일은 모두 artifacts/ 아래에 저장됩니다.
 # ============================================================
 paths:
-  org_csv: data/data_list.csv   # 담당자가 제공한 파일명 · 발주 기관 목록 (필수)
+  org_csv: data/data_list.csv   # 담당자가 제공한 파일명 · 발주기관 목록 (필수, 열: 파일명 · 발주기관)
   input: data/rfp.zip           # ZIP 파일 또는 폴더 (PDF / HWP / HWPX)
 
 # ── ① 전처리 (01_preprocessing) ──

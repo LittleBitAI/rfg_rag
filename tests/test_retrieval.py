@@ -2,6 +2,7 @@
 from collections import defaultdict
 from unittest.mock import MagicMock
 
+import faiss
 import numpy as np
 import pytest
 
@@ -137,7 +138,7 @@ def test_search_preserves_overlapping_evidence_from_distinct_documents(second_bo
 @pytest.mark.parametrize("bom", ["", "\ufeff"])
 def test_csv_routes_normalized_and_truncated_filenames_alongside_cover(tmp_path, bom):
     path = tmp_path / "orgs.csv"
-    path.write_text(bom + "파일명,발주 기관\n조달 사업 (최종).PDF,(재) 미래정보재단\n", encoding="utf-8")
+    path.write_text(bom + "파일명,발주기관\n조달 사업 (최종).PDF,(재) 미래정보재단\n", encoding="utf-8")
     docs = [{"doc_id": "a", "source": "조달_사업.pdf", "title": "조달 사업",
              "cover_text": "발주기관: 한국철도공사", "head_text": ""}]
     router = DocRouter(docs, read_csv_orgs(path))
@@ -181,7 +182,7 @@ def test_csv_ambiguous_normalized_or_truncated_filename_does_not_route(source):
 @pytest.mark.parametrize("first,second", [("사업.pdf", "사업.pdf"), ("RFP_A.pdf", "rfp_a.pdf")])
 def test_csv_conflicting_duplicate_filename_is_rejected(tmp_path, first, second):
     path = tmp_path / "orgs.csv"
-    path.write_text(f"파일명,발주 기관\n{first},기관가공사\n{second},기관나공사\n", encoding="utf-8")
+    path.write_text(f"파일명,발주기관\n{first},기관가공사\n{second},기관나공사\n", encoding="utf-8")
     with pytest.raises(ValueError, match=second):
         read_csv_orgs(path)
 
@@ -205,3 +206,127 @@ def test_unrouted_titles_lists_documents_without_any_organization():
                                       ("c", "가 사업", "")]]
     router = DocRouter(docs, {})
     assert router.unrouted_titles() == ["가 사업", "포털 사업"]
+
+
+def _fake_embedder(monkeypatch, calls, stop_at=None):
+    """청크 본문 길이로 만든 가짜 임베딩. stop_at 번째 묶음에서 노트북이 중지된 것처럼 멈춘다"""
+    from rag.retrieval import indexing
+
+    def encode(texts, progress=False):
+        calls.append(list(texts))
+        if len(calls) == stop_at:
+            raise KeyboardInterrupt
+        return np.array([[len(t), 1.0] for t in texts], dtype=np.float32)
+
+    embedder = MagicMock()
+    embedder.encode.side_effect = encode
+    embedder.token_counts.side_effect = lambda texts: [1] * len(texts)
+    monkeypatch.setattr(indexing, "Embedder", MagicMock(return_value=embedder))
+    monkeypatch.setattr(indexing, "_PART_SIZE", 2)
+
+
+def _index_cfg():
+    return {"embedding": {"model": "kure", "max_seq_length": 2048, "batch_size": 4}}
+
+
+def test_build_index_resumes_embedding_from_checkpoint(monkeypatch, tmp_path):
+    from rag.retrieval import indexing
+    chunks = [{"text": f"청크 본문 {'가' * i}"} for i in range(5)]  # 묶음 3개: 2 · 2 · 1
+    calls = []
+    _fake_embedder(monkeypatch, calls, stop_at=2)
+    with pytest.raises(KeyboardInterrupt):
+        indexing.build_index(chunks, _index_cfg(), tmp_path)
+
+    calls.clear()
+    _fake_embedder(monkeypatch, calls)
+    summary = indexing.build_index(chunks, _index_cfg(), tmp_path)
+
+    assert calls == [[c["text"] for c in chunks[2:4]], [chunks[4]["text"]]]  # 첫 묶음은 저장된 결과를 읽음
+    index = faiss.read_index(str(tmp_path / "faiss.index"))
+    assert index.ntotal == summary["청크"] == 5
+    assert index.reconstruct_n(0, 5)[:, 0].tolist() == [len(c["text"]) for c in chunks]
+
+
+def test_build_index_recomputes_changed_chunks_and_drops_old_checkpoints(monkeypatch, tmp_path):
+    from rag.retrieval import indexing
+    chunks = [{"text": f"청크 {i}"} for i in range(4)]
+    calls = []
+    _fake_embedder(monkeypatch, calls)
+    indexing.build_index(chunks, _index_cfg(), tmp_path)
+
+    calls.clear()
+    chunks[3] = {"text": "바뀐 청크"}
+    indexing.build_index(chunks, _index_cfg(), tmp_path)
+
+    assert calls == [["청크 2", "바뀐 청크"]]
+    assert len(list((tmp_path / "checkpoint").glob("*.npy"))) == 2
+
+
+_SHARED = "제안사는 사용자 요청 시점부터 화면 표시까지의 처리 기준을 아래와 같이 준수하여야 하며 측정 결과를 보고한다"
+
+
+@pytest.mark.parametrize("first,second", [
+    (f"{_SHARED} 응답시간은 2초 이내", f"{_SHARED} 응답시간은 5초 이내"),
+    (f"{_SHARED} 계약금액은 부가가치세를 포함한다", f"{_SHARED} 계약금액은 부가가치세를 포함하지 않는다"),
+], ids=["2초-5초", "포함한다-포함하지않는다"])
+def test_pack_keeps_same_document_evidence_with_different_number_or_negation(first, second):
+    index = make_index([first, second], [5, 5], budget=10)
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (1, 0.8)])] == ["c0", "c1"]
+
+
+def test_pack_still_drops_same_document_duplicate_with_same_number_and_negation():
+    index = make_index([f"{_SHARED} 응답시간은 2초 이내", f"{_SHARED} 응답시간은 2초 이내로"], [5, 5], budget=10)
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (1, 0.8)])] == ["c0"]
+
+
+@pytest.mark.parametrize("csv_org,question,expected", [
+    ("중앙선거관리위원회", "중앙선거관리위원회 2025년도 행정정보시스템 위탁운영사업의 QUR-006은?", "중앙선거관리위원회"),
+    ("케빈랩 주식회사", "케빈랩의 영상감시 시스템 하자보수 기간은?", "케빈랩"),
+    ("(주)케빈랩", "케빈랩 사업 기간은?", "케빈랩"),
+    ("인천공항운영서비스㈜", "인천공항운영서비스 ERP 사업의 무상보증기간은?", "인천공항운영서비스"),
+    ("경상북도 봉화군", "봉화군 재난통합관리시스템의 CPU 사용률 상한은?", "봉화군"),
+    ("케빈랩", "케빈랩 영상감시 시스템의 요구사항은?", "케빈랩"),
+    ("경희대학교 산학협력단", "경희대학교 정보시스템 운영 용역의 범위는?", "경희대학교"),
+    ("아시아물위원회 사무국", "아시아물위원회 스마트 관개시스템 사업 기간은?", "아시아물위원회"),
+    ("재단법인 예술경영지원센터", "예술경영지원센터 사전 컨설팅 범위는?", "예술경영지원센터"),
+])
+def test_csv_organization_names_route_without_generic_filter(csv_org, question, expected):
+    docs = [{"doc_id": "a", "source": "사업.hwp", "title": "사업", "cover_text": "", "head_text": ""}]
+    assert DocRouter(docs, {"사업.hwp": csv_org}).route(question) == {expected: {"a"}}
+
+
+@pytest.mark.parametrize("csv_org,question", [
+    ("인천광역시 동구", "이동구간 요구사항은?"),
+    ("인천광역시 동구", "인천광역시 도시계획위원회 통합관리시스템 요구사항은?"),   # 광역 지자체만 나온 질문
+    ("경희대학교 산학협력단", "서영대학교 산학협력단 사업 기간은?"),               # 하위 조직 일반명
+    ("대한적십자사 의료원", "국립중앙의료원 응급의료 시스템 요구사항은?"),
+])
+def test_csv_province_or_generic_word_alone_does_not_route(csv_org, question):
+    docs = [{"doc_id": "a", "source": "사업.hwp", "title": "사업", "cover_text": "", "head_text": ""}]
+    assert DocRouter(docs, {"사업.hwp": csv_org}).route(question) == {}
+
+
+def test_route_keeps_every_document_of_organization_even_if_question_matches_other_title():
+    docs = [{"doc_id": did, "source": f"{did}.hwp", "title": title, "cover_text": "", "head_text": ""}
+            for did, title in [("rec", "국방과학연구소 기록관리시스템 통합 활용"), ("big", "국방과학연구소 대용량 자료전송시스템 고도화")]]
+    router = DocRouter(docs, {"rec.hwp": "국방과학연구소", "big.hwp": "국방과학연구소"})
+    assert router.route("국방과학연구소 기록관리 시스템의 대용량 전송 예외는?") == {"국방과학연구소": {"rec", "big"}}
+
+
+def test_csv_name_also_routes_other_documents_whose_title_mentions_it():
+    docs = [{"doc_id": did, "source": f"{did}.hwp", "title": title, "cover_text": "", "head_text": ""}
+            for did, title in [("bus", "평택시 버스정보시스템"), ("cctv", "평택시 스마트시티 영상감시")]]
+    router = DocRouter(docs, {"bus.hwp": "경기도 평택시", "cctv.hwp": "케빈랩 주식회사"})
+    assert router.route("평택시 스마트시티 영상감시 요구사항은?") == {"평택시": {"bus", "cctv"}}
+
+
+@pytest.mark.parametrize("source,csv_org,question,expected", [
+    ("KOICA 전자조달_우즈베키스탄 의정활동.hwp", "한국국제협력단", "KOICA 우즈베키스탄 사업은?", "KOICA"),
+    ("KOICA 전자조달_우즈베키스탄 의정활동.hwp", "한국국제협력단", "한국국제협력단 우즈베키스탄 사업은?", "한국국제협력단"),
+    ("수협중앙회_상황관제시스템 구축.hwp", "수산업협동조합중앙회", "수협중앙회 상황관제시스템은?", "수협중앙회"),
+    ("(사）한국대학스포츠협의회_KUSF 시스템.hwp", "한국대학스포츠협의회", "한국대학스포츠협의회 KUSF 시스템은?",
+     "한국대학스포츠협의회"),
+])
+def test_csv_official_name_and_filename_common_name_both_route(source, csv_org, question, expected):
+    docs = [{"doc_id": "a", "source": source, "title": source.rsplit(".", 1)[0], "cover_text": "", "head_text": ""}]
+    assert DocRouter(docs, {source: csv_org}).route(question) == {expected: {"a"}}

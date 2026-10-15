@@ -20,11 +20,23 @@ from .indexing import Embedder, KiwiTokenizer, find_codes
 
 
 _DUP_RATIO = 0.8
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*\s*(?:%|시간|개월|MB|GB|KB|TB|[초분일월년명건회개원부식인장])?")
+_NEGATION = re.compile(r"않|아니|없|불가|금지|미적용|불포함|제외")
 
 
-def _is_dup(a: set[str], b: set[str]) -> bool:
-    """큰 낱말 집합의 80%가 겹쳐야 중복이다. 짧은 코드만 겹치는 상세 근거는 남긴다."""
-    return len(a & b) >= _DUP_RATIO * max(len(a), len(b))
+def _evidence_key(body: str) -> tuple[set[str], frozenset[str], frozenset[str]]:
+    """중복 판정에 쓰는 (낱말들, 단위를 붙인 숫자들, 부정어가 든 낱말들)"""
+    words = set(body.split())
+    numbers = frozenset(re.sub(r"[,\s]", "", n) for n in _NUMBER.findall(body))
+    return words, numbers, frozenset(w for w in words if _NEGATION.search(w))
+
+
+def _is_dup(a: tuple, b: tuple) -> bool:
+    """숫자 · 부정어가 모두 같고 큰 낱말 집합의 80%가 겹쳐야 중복이다.
+    '2초/5초', '포함한다/포함하지 않는다' 처럼 낱말은 거의 같아도 뜻이 다른 근거는 둘 다 남긴다."""
+    (words_a, numbers_a, negations_a), (words_b, numbers_b, negations_b) = a, b
+    return (numbers_a == numbers_b and negations_a == negations_b
+            and len(words_a & words_b) >= _DUP_RATIO * max(len(words_a), len(words_b)))
 
 
 def _minmax(d: dict[int, float]) -> dict[int, float]:
@@ -97,20 +109,20 @@ class HybridIndex:
         return {int(i): float(scores[i]) for i in top if scores[i] > 0}
 
     def _pack(self, ranked: list[tuple[int, float]]) -> list[dict]:
-        """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크는 제외한다.
+        """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크(숫자 · 부정어까지 같은)는 제외한다.
         긴 청크는 건너뛰되 첫 청크는 예산을 넘어도 담아 빈 컨텍스트를 막는다."""
         budget = int(self.rcfg["token_budget"])
-        picked: list[tuple[int, float, set[str]]] = []
+        picked: list[tuple[int, float, tuple]] = []
         used = 0
         for i, score in ranked:
-            words = set(self.chunks[i]["body"].split())
-            if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(words, seen))
+            key = _evidence_key(self.chunks[i]["body"])
+            if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(key, seen))
                    for j, _, seen in picked):
                 continue
             cost = self.embedder.token_counts([self.chunks[i]["body"]])[0]
             if picked and used + cost > budget:
                 continue
-            picked.append((i, score, words))
+            picked.append((i, score, key))
             used += cost
         return [{**self.chunks[i], "score": round(score, 4)} for i, score, _ in picked]
 
@@ -123,7 +135,14 @@ _ORG_SUFFIX = (r"(?:공단|공사|연구원|연구소|대학교|대학|과학기
 _ORG_RE = re.compile(r"(?:한국|국립|재단법인|\(재\)|\(사\))?\s?[가-힣A-Za-z]{2,15}" + _ORG_SUFFIX)
 _GENERIC_ORG = re.compile(r"(?:자문|평가|심의|운영|선정|추진|협의|기술|제안)?위원회$|^(?:해당|발주|주관|수요|관련|전문|계약|용역|사업|기타|본|각)"
                           r"|^[가-힣]{1,2}(?:센터|연구소)$|^산학협력단$")
-_LEGAL_FORM = re.compile(r"^\((?:재|사)\)\s*|^(?:재단|사단)법인\s*|^주식회사\s*|\s*\(주\)$")
+# 법인 형태는 앞뒤 어느 쪽에 붙어도 뗀다 (전각 괄호 포함): '(사)벤처기업협회', '(사）한국대학스포츠협의회', '케빈랩 주식회사', '인천공항운영서비스㈜', '한국철도공사 (용역)'
+_LEGAL_FORM = re.compile(r"^[(（](?:재|사|주)[)）]\s*|^㈜\s*|^(?:재단|사단)법인\s*|^주식회사\s*|\s*[(（][^)）]*[)）]$|\s*㈜$|\s*주식회사$")
+# 여러 낱말 CSV 기관명에서 따로 라우팅에 쓸 낱말: 기관 접미사나 시·군·구로 끝나는 낱말
+# ('경희대학교 산학협력단' → '경희대학교', '경상북도 봉화군' → '봉화군', '아시아물위원회 사무국' → '아시아물위원회').
+# 광역 지자체('인천광역시 동구' 의 '인천광역시')와 하위 조직 일반명('산학협력단', '조직위원회')은 따로 쓰지 않는다.
+_ORG_PART = re.compile(_ORG_SUFFIX + r"$|대회$|[시군구]$")
+_PROVINCE = re.compile(r"(?:특별시|광역시|특별자치시|특별자치도|도)$")
+_GENERIC_PART = re.compile(r"^(?:(?:자문|평가|심의|운영|선정|추진|협의|기술|제안|조직)?위원회|산학협력단|사업단|사무국|연구소|센터)$")
 
 
 def _is_org_name(name: str) -> bool:
@@ -153,11 +172,11 @@ def _source_key(name: str) -> str:
 
 
 def read_csv_orgs(path: Path) -> dict[str, str]:
-    """담당자가 제공한 CSV의 파일명 · 발주 기관 열을 읽는다"""
+    """담당자가 제공한 CSV의 파일명 · 발주기관 열을 읽는다"""
     orgs: dict[str, str] = {}
     with open(path, encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
-            name, org = row["파일명"], row["발주 기관"]
+            name, org = row["파일명"], row["발주기관"]
             key = _source_key(name)
             if key in orgs and orgs[key] != org:
                 raise ValueError(f"CSV 파일명에 서로 다른 발주 기관이 지정되었습니다: {name}")
@@ -171,14 +190,34 @@ def _file_key(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z가-힣]", "", stem)
 
 
+def _is_org_part(word: str) -> bool:
+    if re.fullmatch(r"[A-Z]{3,}", word):  # 'KOICA 전자조달' → 'KOICA'
+        return True
+    return (len(word) >= 3 and bool(_ORG_PART.search(word)) and not _PROVINCE.search(word)
+            and not _GENERIC_PART.match(word))
+
+
 def _org_names(org: str) -> set[str]:
-    """CSV의 전체 기관명과 공백을 제거한 전체 이름만 모은다"""
+    """CSV의 기관명(법인 형태 제외) · 공백을 뺀 이름 · 여러 낱말이면 기관다운 낱말 각각.
+    CSV 전체 이름에는 자동 추출용 필터(4글자 이상 · …위원회 제외)를 쓰지 않는다 — '케빈랩' · '중앙선거관리위원회'가 빠지지 않게."""
     name = _LEGAL_FORM.sub("", org.strip())
-    return {n for n in {name, re.sub(r"\s+", "", name)} if _is_org_name(n)}
+    names = {name, re.sub(r"\s+", "", name)}
+    words = name.split()
+    if len(words) > 1:
+        names |= {w for w in words if _is_org_part(w)}
+    return {n for n in names if len(n) >= 2}
+
+
+def _file_org_names(source: str) -> set[str]:
+    """'발주기관_사업명' 파일명의 앞부분. CSV는 정식 명칭('한국국제협력단', '수산업협동조합중앙회')이라도
+    질문에는 파일명 쪽의 흔한 이름('KOICA', '수협중앙회')이 나오므로 함께 쓴다"""
+    stem = unicodedata.normalize("NFC", source)
+    return _org_names(stem.split("_", 1)[0]) if "_" in stem else set()
 
 
 def _csv_org_docs(docs: list[dict], csv_orgs: dict[str, str]) -> dict[str, set]:
-    """전체 파일명을 우선 맞추고, 정규화·앞부분 일치는 기관이 하나일 때만 쓴다"""
+    """전체 파일명을 우선 맞추고, 정규화·앞부분 일치는 기관이 하나일 때만 쓴다.
+    맞춘 문서에는 CSV 기관명과 파일명 앞부분의 기관명을 함께 붙인다."""
     by_source: dict[str, set[str]] = defaultdict(set)
     by_key: dict[str, set[str]] = defaultdict(set)
     for name, org in csv_orgs.items():
@@ -190,7 +229,7 @@ def _csv_org_docs(docs: list[dict], csv_orgs: dict[str, str]) -> dict[str, set]:
         orgs = (by_source.get(_source_key(doc["source"])) or by_key.get(key)
                 or set().union(*(orgs for k, orgs in by_key.items() if k.startswith(key))))
         if len(orgs) == 1:
-            for name in _org_names(next(iter(orgs))):
+            for name in _org_names(next(iter(orgs))) | _file_org_names(doc["source"]):
                 org_docs[name].add(doc["doc_id"])
     return org_docs
 
@@ -206,7 +245,8 @@ class DocRouter:
         for org in _extract_orgs(hay.values()):
             self.org_docs[org] |= {did for did, text in hay.items() if _has(text, org)}
         for org, doc_ids in _csv_org_docs(docs, csv_orgs).items():
-            self.org_docs[org] |= doc_ids
+            # 다른 문서 제목 · 표지에 같은 이름이 나오면 그 문서도 넣는다 (예: '평택시' 사업을 다른 업체가 발주)
+            self.org_docs[org] |= doc_ids | {did for did, text in hay.items() if _has(text, org)}
         self.org_docs = {org: doc_ids for org, doc_ids in self.org_docs.items() if doc_ids}
 
     def unrouted_titles(self) -> list[str]:
@@ -219,13 +259,6 @@ class DocRouter:
         found = [org for org in self.org_docs if _has(question, org)]
         # '한국원자력연구원' 과 자동추출 '원자력연구원' 처럼 겹치면 긴 이름만
         found = [o for o in found if not any(o != p and o in p for p in found)]
-        return {org: self._narrow(self.org_docs[org], question) for org in found}
-
-    def _narrow(self, doc_ids: set, question: str) -> set:
-        """같은 기관 문서가 여러 개면 질문 단어와 제목이 가장 많이 겹치는 문서로 좁힘"""
-        if len(doc_ids) <= 1:
-            return doc_ids
-        words = set(re.findall(r"[가-힣A-Za-z0-9]{2,}", question))
-        score = {d: sum(w in self.titles[d] for w in words) for d in doc_ids}
-        best = max(score.values())
-        return {d for d, s in score.items() if s == best} if best > 0 else doc_ids
+        # 같은 기관의 여러 문서 중 하나를 제목 낱말로 고르지 않는다 — 질문의 '대용량 전송' 이 다른 사업 제목
+        # ('대용량 자료전송시스템')과 겹쳐 정답 문서를 빼던 문제. 기관 문서 안의 순위는 하이브리드 점수가 정한다.
+        return {org: self.org_docs[org] for org in found}

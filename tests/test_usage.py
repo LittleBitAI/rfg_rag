@@ -71,7 +71,10 @@ def test_ocr_invocation_records_every_image_with_source_without_langfuse(monkeyp
 
     monkeypatch.setattr(ChatOpenAI, "_generate", fake_generate)
     monkeypatch.setattr(parsing, "_parse_file", parse_file)
-    parsing.parse_documents(["첫째.pdf", "둘째.hwp"], {}, ocr, load_config()["ocr"])
+    files = [tmp_path / "첫째.pdf", tmp_path / "둘째.hwp"]
+    for file in files:
+        file.write_bytes(b"x")
+    parsing.parse_documents([str(f) for f in files], {}, ocr, load_config()["ocr"], tmp_path / "parsed")
 
     if not ocr:
         assert not (tmp_path / "api_usage.csv").exists()
