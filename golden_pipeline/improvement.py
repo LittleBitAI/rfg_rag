@@ -5,12 +5,13 @@
 코드마다 정해 둔 예방 규칙과 그 버전만 갖는다.
 B · C 는 실패 기록을 읽지 않는다. 이 모듈은 A run 만 다룬다.
 기준(주제 명세, 검증기 프롬프트 · 버전, 난도 규칙)은 바꾸지 않는다. 목표에 못 미치면 모자란 수를 보고한다.
+예방 규칙은 무조건 더하지 않는다. 새 규칙은 validation 묶음에서 지금 정책보다 낫다고 잰 때만 채택한다 (adoption).
 """
 import hashlib
 import json
 import threading
 
-from golden_pipeline import generation, plan, storage, validation
+from golden_pipeline import adoption, generation, plan, storage, validation
 
 PREVENTION_VERSION = "prevention-8"
 # 거절 이유의 앞부분 → 실패 코드. 이유는 generation · validation 이 만드는 고정 문구다.
@@ -73,14 +74,20 @@ PRICED = ("model", "reasoning_effort", "usd_per_million_input_tokens", "usd_per_
 
 
 def improve(topic, plan_id, loop_id, config_path, generator, validator):
-    """A 를 round 마다 생성 → 검증 → 실패 기록으로 돌리고, 멈춘 이유와 목표 대비 모자란 수를 report.json 에 남긴다.
+    """A 를 round 마다 정책 채택 → 생성 → 검증 → 실패 기록으로 돌리고, 끝에 held-out 을 잰 뒤
+    멈춘 이유와 목표 대비 모자란 수를 report.json 에 남긴다.
 
-    round n 의 run_id 는 {loop_id}-r{n} 이다. 도중에 멈춘 loop 를 같은 인자로 다시 부르면
-    끝난 round 는 건너뛰고, 끝나지 않은 round 는 남은 단계(생성 · 검증 · 실패 기록)부터 잇는다.
+    round n 의 run_id 는 {loop_id}-r{n} 이고 계획의 train 묶음만 부른다. 채택을 정하는 validation run 은 {loop_id}-v{n},
+    held-out run 은 {loop_id}-h-base · {loop_id}-h-final 이다. 도중에 멈춘 loop 를 같은 인자로 다시 부르면
+    끝난 단계는 건너뛰고 남은 단계부터 잇는다.
     설정 · 계획 · 통과 기준은 loop 를 시작할 때 고정하고, round 마다와 report 직전에 그대로인지 본다.
     """
     config = _loop_config(config_path)
     loop_dir = _loop_dir(topic, loop_id)
+    _pin(loop_dir, plan_id, config)
+    empty = [part for part in ("validation", "held_out") if not _split_bundles(plan_id, topic, part)]
+    if empty:
+        raise ValueError(f"계획 {plan_id} 의 {topic} 묶음이 적어 {empty} 몫이 비었습니다. 정책을 잴 수 없습니다")
     clients = (_counted(generator, loop_dir, config["generator"]), _counted(validator, loop_dir, config["validator"]))
     stop = None
     for n in range(1, config["max_rounds"] + 1):
@@ -89,7 +96,9 @@ def improve(topic, plan_id, loop_id, config_path, generator, validator):
         if stop:
             break
     _pin(loop_dir, plan_id, config)
-    report = _report(topic, plan_id, loop_id, stop or "max_rounds")
+    held_out, held_stop = _held_out(topic, plan_id, loop_id, config, clients)
+    # held-out 의 한도가 마지막으로 멈춘 이유다. round 가 no_open_bundles 로 먼저 끝났어도 그것을 남긴다.
+    report = _report(topic, plan_id, loop_id, held_stop or stop or "max_rounds", held_out)
     with storage.guard(loop_dir / "report.json").open("x", encoding="utf-8") as f:
         f.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     return report
@@ -170,9 +179,8 @@ def related_failures(topic):
 
 
 def open_bundles(topic, plan_id, loop_id):
-    """loop 의 앞 round 에서 통과하지 못한 묶음 → 그 묶음에서 마지막으로 거절된 후보 id (없으면 None)."""
-    planned = plan.load_plan(plan_id)[0]
-    parents = {bundle["bundle_id"]: None for bundle in planned["bundles"] if bundle["topic"] == topic}
+    """loop 의 앞 round 에서 통과하지 못한 train 묶음 → 그 묶음에서 마지막으로 거절된 후보 id (없으면 None)."""
+    parents = {bundle_id: None for bundle_id in _split_bundles(plan_id, topic, "train")}
     for run_dir in _rounds(topic, loop_id):
         for item in storage.read_validated(topic, "A", run_dir.name):
             parents.pop(item["bundle_id"], None)
@@ -190,6 +198,7 @@ def thresholds():
         "judge_prompt_sha256": storage._sha256(storage.PROMPTS / "judge.txt"),
         "validator_version": validation.VALIDATOR_VERSION,
         "difficulty_rule": validation.DIFFICULTY_RULE,
+        "adoption": adoption.settings(),
     }
 
 
@@ -197,47 +206,145 @@ def _round(topic, plan_id, loop_id, n, config, clients):
     """round n 의 남은 단계를 한다. 다음 round 로 가면 None, 멈추면 멈춘 이유를 돌려준다."""
     run_id = f"{loop_id}-r{n}"
     run_dir = storage.run_path(topic, "A", run_id)
-    if not _generated(topic, loop_id, n):
-        stop = _generate(topic, plan_id, loop_id, n, config, clients[0])
+    if not _generated(topic, loop_id, f"r{n}"):
+        stop = _generate(topic, plan_id, loop_id, n, config, clients)
         if stop:
             return stop
     if not (run_dir / "validation.json").exists():
         stop = generation.limit_reached(config, *_spent(topic, loop_id))
         if stop:
             return stop
-        validation.validate(topic, "A", run_id, _limits(topic, loop_id, n, config, "validator"), clients[1])
+        validation.validate(topic, "A", run_id, _limits(topic, loop_id, f"r{n}", config, "validator"), clients[1])
     if not _memory_path(topic, run_id).exists():
         record_failures(topic, run_id)
+    return _status(run_dir)
+
+
+def _generate(topic, plan_id, loop_id, n, config, clients):
+    parents = open_bundles(topic, plan_id, loop_id)
+    if not parents:
+        return "no_open_bundles"
+    # 채택을 재는 run 이 남은 한도를 다 쓸 수 있으므로 채택 뒤에도 한도를 다시 본다.
+    stop = (generation.limit_reached(config, *_spent(topic, loop_id))
+            or _adopt(topic, plan_id, loop_id, n, config, clients)
+            or generation.limit_reached(config, *_spent(topic, loop_id)))
+    if stop:
+        return stop
+    codes = storage._read_json(_loop_path(topic, loop_id) / f"r{n}-adoption.json")["adopted"]
+    path = _limits(topic, loop_id, f"r{n}", config, "generator")
+    generation.generate("A", topic, plan_id, f"{loop_id}-r{n}", path, clients[0],
+                        _revision(topic, loop_id, f"r{n}", parents, codes, "train"))
+    return None
+
+
+def _adopt(topic, plan_id, loop_id, n, config, clients):
+    """round n 이 쓸 예방 규칙을 정해 r{n}-adoption.json 에 남긴다. 멈추면 그 이유를, 정했으면 None 을 돌려준다.
+
+    주제의 실패 코드 중 이 loop 가 아직 채택하지도 버리지도 않은 코드가 있으면, 그 코드를 더한 정책으로
+    validation 묶음을 생성 · 검증해 지금 정책의 validation 결과와 묶음끼리 짝지어 견준다.
+    짝지은 통과 차이의 부트스트랩 하한이 0 보다 클 때만 채택하고, 채택되지 않은 코드는 이 loop 에서 다시 시도하지 않는다.
+    """
+    path = _loop_path(topic, loop_id) / f"r{n}-adoption.json"
+    if path.exists():
+        return None
+    state = _policy(topic, loop_id, n - 1)
+    new = sorted(set(related_failures(topic)) - set(state["adopted"]) - set(state["retired"]))
+    decision = {**state, "tried": new, "gain": None, "floor": None}
+    if new:
+        candidate = sorted(state["adopted"] + new)
+        stop = (_measure(topic, plan_id, loop_id, state["reference"], state["adopted"], "validation", config, clients)
+                or _measure(topic, plan_id, loop_id, f"v{n}", candidate, "validation", config, clients))
+        if stop:
+            return stop
+        gain, floor = adoption.paired_gain(adoption.passes(topic, f"{loop_id}-v{n}"),
+                                           adoption.passes(topic, f"{loop_id}-{state['reference']}"))
+        decision.update(gain=gain, floor=floor)
+        if floor > 0:
+            decision.update(adopted=candidate, reference=f"v{n}")
+        else:
+            decision.update(retired=sorted(state["retired"] + new))
+    storage._write_json(path, decision)
+    return None
+
+
+def _policy(topic, loop_id, n):
+    """round n 까지 정한 정책: 채택한 코드, 그 정책을 잰 validation run, 버린 코드. round 0 은 규칙 없는 정책(v0)이다."""
+    if n == 0:
+        return {"adopted": [], "reference": "v0", "retired": []}
+    decided = storage._read_json(_loop_path(topic, loop_id) / f"r{n}-adoption.json")
+    return {key: decided[key] for key in ("adopted", "reference", "retired")}
+
+
+def _measure(topic, plan_id, loop_id, name, codes, part, config, clients):
+    """예방 규칙 codes 로 계획의 part(validation · held_out) 묶음을 생성 · 검증한 run {loop_id}-{name}. 멈추면 그 이유.
+
+    이 run 의 거절은 실패 기록에 넣지 않는다. validation 은 채택을 정하는 데만, held-out 은 재는 데만 쓴다.
+    이미 검증한 run 이면 다시 부르지 않는다.
+    """
+    run_dir = storage.run_path(topic, "A", f"{loop_id}-{name}")
+    if not _generated(topic, loop_id, name):
+        stop = generation.limit_reached(config, *_spent(topic, loop_id))
+        if stop:
+            return stop
+        parents = {bundle_id: None for bundle_id in _split_bundles(plan_id, topic, part)}
+        generation.generate("A", topic, plan_id, run_dir.name, _limits(topic, loop_id, name, config, "generator"),
+                            clients[0], _revision(topic, loop_id, name, parents, codes, part))
+    if not (run_dir / "validation.json").exists():
+        stop = generation.limit_reached(config, *_spent(topic, loop_id))
+        if stop:
+            return stop
+        validation.validate(topic, "A", run_dir.name, _limits(topic, loop_id, name, config, "validator"), clients[1])
+    return _status(run_dir)
+
+
+def _held_out(topic, plan_id, loop_id, config, clients):
+    """loop 끝의 held-out: 규칙 없는 정책(h-base)과 마지막에 채택한 정책(h-final)을 같은 묶음에서 견준다.
+
+    held-out 은 어떤 채택 결정에도 쓰지 않았으므로, 이 차이가 채택한 규칙의 실제 효과다.
+    (report 의 held_out, 한도에 닿아 멈췄으면 그 이유) 를 돌려준다.
+    """
+    rounds = sum(1 for _ in _loop_path(topic, loop_id).glob("r*-adoption.json"))
+    adopted = _policy(topic, loop_id, rounds)["adopted"]
+    if not adopted:
+        return {"measured": False, "reason": "채택한 예방 규칙이 없습니다"}, None
+    stop = (_measure(topic, plan_id, loop_id, "h-base", [], "held_out", config, clients)
+            or _measure(topic, plan_id, loop_id, "h-final", adopted, "held_out", config, clients))
+    if stop:
+        return {"measured": False, "reason": stop}, stop
+    base, final = adoption.passes(topic, f"{loop_id}-h-base"), adoption.passes(topic, f"{loop_id}-h-final")
+    gain, floor = adoption.paired_gain(final, base)
+    return {"measured": True, "adopted": adopted, "bundles": len(base), "base_passed": sum(base.values()),
+            "final_passed": sum(final.values()), "gain": gain, "floor": floor}, None
+
+
+def _split_bundles(plan_id, topic, part):
+    planned = plan.load_plan(plan_id)[0]
+    return [bundle["bundle_id"] for bundle in planned["bundles"]
+            if bundle["topic"] == topic and adoption.split(bundle["bundle_id"]) == part]
+
+
+def _status(run_dir):
+    """생성 · 검증 중 끝나지 못한 쪽의 상태 (한도 등), 둘 다 끝났으면 None."""
     statuses = (storage._read_json(run_dir / "manifest.json")["generation"]["status"],
                 storage._read_json(run_dir / "validation.json")["status"])
     return next((status for status in statuses if status != "complete"), None)
 
 
-def _generate(topic, plan_id, loop_id, n, config, client):
-    parents = open_bundles(topic, plan_id, loop_id)
-    if not parents:
-        return "no_open_bundles"
-    stop = generation.limit_reached(config, *_spent(topic, loop_id))
-    if stop:
-        return stop
-    path = _limits(topic, loop_id, n, config, "generator")
-    generation.generate("A", topic, plan_id, f"{loop_id}-r{n}", path, client, _revision(topic, loop_id, n, parents))
-    return None
-
-
-def _revision(topic, loop_id, n, parents):
-    """다음 A round 의 입력: 다시 부를 묶음과 그 부모 후보, 주제의 실패 코드에서 나온 예방 규칙 글,
-    묶음마다 그 묶음에서 거절된 지난 시도(notes), 매니페스트에 남길 policy."""
+def _revision(topic, loop_id, name, parents, codes, part):
+    """A run 의 입력: 부를 묶음과 그 부모 후보, 채택한 실패 코드(codes)의 예방 규칙 글,
+    묶음마다 그 묶음에서 거절된 지난 시도(notes), 매니페스트에 남길 policy.
+    name 은 loop 안의 run 이름(r1 · v0 · h-base), part 는 그 묶음의 몫(train · validation · held_out)이다."""
     related = related_failures(topic)
-    rules = "".join(f"- {PREVENTION_RULES[code]}\n" for code in sorted(related))
+    rules = "".join(f"- {PREVENTION_RULES[code]}\n" for code in codes)
     prevention = f"\n\n지난 실패에서 정한 예방 규칙\n{rules}" if rules else ""
     notes = bundle_notes(topic, loop_id, parents)
     policy = {
         "version": PREVENTION_VERSION,
         "loop_id": loop_id,
-        "round": n,
+        "round": name,
+        "part": part,
         "start_sha256": storage._sha256(_loop_path(topic, loop_id) / "start.json"),
-        "failures": related,
+        "failures": {code: related[code] for code in codes},
         "prevention_sha256": hashlib.sha256(prevention.encode("utf-8")).hexdigest(),
         "notes": notes,
     }
@@ -262,10 +369,10 @@ def bundle_notes(topic, loop_id, parents):
     return {bundle: "\n\n이 근거 묶음에서 거절된 지난 시도\n" + "\n".join(tried[-3:]) for bundle, tried in lines.items()}
 
 
-def _limits(topic, loop_id, n, config, role):
+def _limits(topic, loop_id, name, config, role):
     """loop 전체 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정 파일. 생성 · 검증은 이 파일로 돈다."""
     calls, cost = _spent(topic, loop_id)
-    path = _loop_path(topic, loop_id) / f"r{n}-{role}.json"
+    path = _loop_path(topic, loop_id) / f"{name}-{role}.json"
     storage._write_json(path, {
         **config[role], "max_calls": config["max_calls"] - calls, "budget_usd": config["budget_usd"] - cost,
     })
@@ -296,10 +403,10 @@ def _spent(topic, loop_id):
     return len(records), sum(record["cost_usd"] for record in records)
 
 
-def _report(topic, plan_id, loop_id, stop):
-    """멈춘 이유, round 별 상태 · policy, 쓴 호출 · 비용, 목표 개수 대비 통과 묶음과 모자란 수."""
+def _report(topic, plan_id, loop_id, stop, held_out):
+    """멈춘 이유, round 별 상태 · policy · 채택 결정, held-out 효과, 쓴 호출 · 비용, train 묶음 대비 통과 묶음과 모자란 수."""
     rounds, accepted = [], set()
-    for run_dir in _rounds(topic, loop_id):
+    for n, run_dir in enumerate(_rounds(topic, loop_id), 1):
         generated = storage._read_json(run_dir / "manifest.json")["generation"]
         record = storage._read_json(run_dir / "validation.json") if (run_dir / "validation.json").exists() else None
         rounds.append({
@@ -308,45 +415,51 @@ def _report(topic, plan_id, loop_id, stop):
             "validation_status": record["status"] if record else "not_validated",
             "counts": record["counts"] if record else None,
             "policy": generated["policy"],
+            "adoption": _policy_record(topic, loop_id, n),
         })
         if record:
             accepted.update(item["bundle_id"] for item in storage.read_validated(topic, "A", run_dir.name))
     calls, cost = _spent(topic, loop_id)
-    target = plan.load_plan(plan_id)[0]["counts"][topic]
+    # 출시용 후보는 train 묶음에서만 나온다. validation · held-out 묶음은 정책을 재는 데만 쓴다.
+    target = len(_split_bundles(plan_id, topic, "train"))
     return {
         "loop_id": loop_id, "topic": topic, "plan_id": plan_id, "stop_reason": stop, "rounds": rounds,
-        "calls": calls, "cost_usd": cost, "target": target, "auto_validated": len(accepted),
+        "held_out": held_out, "calls": calls, "cost_usd": cost, "target": target, "auto_validated": len(accepted),
         "shortfall": max(0, target - len(accepted)), "thresholds": thresholds(),
     }
+
+
+def _policy_record(topic, loop_id, n):
+    return storage._read_json(_loop_path(topic, loop_id) / f"r{n}-adoption.json")
 
 
 def _rounds(topic, loop_id):
     """loop 의 생성이 끝난 round 디렉터리를 차례로."""
     n = 1
-    while _generated(topic, loop_id, n):
+    while _generated(topic, loop_id, f"r{n}"):
         yield storage.run_path(topic, "A", f"{loop_id}-r{n}")
         n += 1
 
 
-def _generated(topic, loop_id, n):
-    """round n 의 생성 run 이 있는지. 있으면 이 loop 가 start.json 의 계획으로 round n 에 만든 run 이어야 한다.
+def _generated(topic, loop_id, name):
+    """loop 안의 run {loop_id}-{name} 이 생성됐는지. 있으면 이 loop 가 start.json 의 계획으로 그 이름에 만든 run 이어야 한다.
 
-    run 이름만 같다고 이어 쓰면, 따로 만든 run 이나 다른 계획 · 다른 시작 기록의 run 이 이 loop 의 round 로 검증 · 보고된다.
+    run 이름만 같다고 이어 쓰면, 따로 만든 run 이나 다른 계획 · 다른 시작 기록의 run 이 이 loop 의 run 으로 검증 · 보고된다.
     """
-    run_dir = storage.run_path(topic, "A", f"{loop_id}-r{n}")
+    run_dir = storage.run_path(topic, "A", f"{loop_id}-{name}")
     if not (run_dir / "manifest.json").exists():
         return False
     generated = storage._read_json(run_dir / "manifest.json")["generation"]
     policy = generated["policy"] or {}
     start = _loop_path(topic, loop_id) / "start.json"
     pinned = storage._read_json(start)
-    owner = {"loop_id": loop_id, "round": n, "start_sha256": storage._sha256(start),
+    owner = {"loop_id": loop_id, "round": name, "start_sha256": storage._sha256(start),
              "plan_id": pinned["plan_id"], "plan_sha256": pinned["plan_sha256"]}
     found = {"loop_id": policy.get("loop_id"), "round": policy.get("round"), "start_sha256": policy.get("start_sha256"),
              "plan_id": generated["plan_id"], "plan_sha256": generated["plan_sha256"]}
     changed = sorted(key for key in owner if owner[key] != found[key])
     if changed:
-        raise ValueError(f"{run_dir.name} 은 loop {loop_id} 가 round {n} 에 만든 run 이 아닙니다: {changed}")
+        raise ValueError(f"{run_dir.name} 은 loop {loop_id} 가 {name} 로 만든 run 이 아닙니다: {changed}")
     return True
 
 

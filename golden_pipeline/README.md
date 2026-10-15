@@ -23,6 +23,7 @@ A 만의 자기 개선(실패 기록과 round), 이 모두를 부르는 CLI 와 
 | `generation.py` | 후보 생성: A · B (`generate`), C 가져오기 (`import_c`), 주제 구조 검사 (`check_structure`) |
 | `validation.py` | 독립 검증 (`validate`), 난도 판정 (`difficulty`), 출시 (`release`) |
 | `improvement.py` | A 의 자기 개선: round 반복 (`improve`), 실패 기록 (`record_failures`), 관련 실패 찾기 (`related_failures`) |
+| `adoption.py` | 자기 개선의 채택 하한과 held-out: 묶음 나눔 (`split`), 짝지은 부트스트랩 하한 (`paired_gain`) |
 | `report.py` | A · B · C 비교 보고서 (`compare`, `write_report`, `render`) |
 | `cli.py` | 하나뿐인 CLI (`python -m golden_pipeline.cli`)와 OpenAI 호출 (`api_client`) |
 | `golden.cmd` · `golden.command` | Windows · macOS 실행기. 둘 다 받은 인자를 그대로 `cli.py` 에 넘깁니다 |
@@ -76,7 +77,7 @@ golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 - 플래그로 받은 설정은 `outputs/` 아래 임시 파일로 넘기고 지웁니다. 내용과 SHA-256 은 run 매니페스트 · `validation.json` · loop `start.json` 에 남습니다.
 - `resume --method A` 는 `start.json` 에 고정된 설정 · 계획으로 loop 를 잇고 한도를 받지 않습니다. 이미 끝난(`report.json` 이 있는) loop 는 잇지 않습니다.
 - `resume --method B|C` 는 아래 독립 검증의 "이어서 검증" 입니다. 모델 · 추론 강도 · 단가는 앞 검증 기록의 것을 그대로 쓰고, 이번에 쓸 `--max-calls` · `--budget` 만 받습니다.
-- `release` 의 A run 은 loop 의 round run(`{loop_id}-r{n}`)입니다.
+- `release` 의 A run 은 loop 의 round run(`{loop_id}-r{n}`)입니다. `v{n}` · `h-base` · `h-final` 은 정책을 재는 run 이라, 판정 호출 전에 출시를 거절합니다 (빠진 항목이 실패 기록이 되어 정책에 새어 들기 때문입니다).
 
 ## 항목 스키마
 
@@ -146,8 +147,9 @@ golden_pipeline/outputs/
     loops/{loop_id}/
       start.json                        처음 받은 loop 설정 · 계획 id · 계획 SHA-256 · 통과 기준 (이어 돌 때 같아야 함)
       calls.jsonl                       돌아온 생성 · 검증 호출마다 한 줄: 모델 · 토큰 · 비용 (끊긴 run 의 호출 포함)
-      r{n}-generator.json · r{n}-validator.json   round 의 run 설정 (남은 호출 수 · 예산)
-      report.json                       멈춘 이유, round 별 상태 · policy, 호출 · 비용, 목표 대비 모자란 수, 기준 해시
+      r{n}-adoption.json                round n 이 쓸 예방 규칙의 채택 결정 (채택 · 버린 코드, 시도한 코드, 이득과 하한)
+      {name}-generator.json · {name}-validator.json   loop 안 run 의 설정 (남은 호출 수 · 예산). name 은 r{n} · v{n} · h-base · h-final
+      report.json                       멈춘 이유, round 별 상태 · policy · 채택 결정, held-out 효과, 호출 · 비용, 목표 대비 모자란 수, 기준 해시
     releases/{version}/
       golden.jsonl                      released 항목
       manifest.json                     개수, golden.jsonl SHA-256, 원본 run 과 그 파일별 SHA-256, 코드 커밋
@@ -467,13 +469,29 @@ A 의 검증은 자기 개선 loop 가 맡으므로 받지 않습니다.
 improve(topic, plan_id, loop_id, config_path, generator, validator)
 ```
 
-A 를 round 마다 생성 → 독립 검증 → 실패 기록 순서로 돌립니다. round n 의 run 은 `{loop_id}-r{n}` 입니다.
-B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revision=...)` 는 거절합니다.
+A 를 round 마다 채택 → 생성 → 독립 검증 → 실패 기록 순서로 돌리고, loop 끝에 held-out 을 잽니다.
+round n 의 run 은 `{loop_id}-r{n}` 입니다. B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revision=...)` 는 거절합니다.
 
-1. 다시 부를 묶음: 계획의 주제 묶음 중 loop 의 앞 round 에서 `auto_validated` 가 되지 않은 묶음.
+계획의 묶음은 `bundle_id` 의 SHA-256 을 100 으로 나눈 나머지로 셋으로 나뉘어 늘 같은 몫에 듭니다 (`adoption.split`).
+
+| 몫 | 비율 | 쓰임 |
+|---|---|---|
+| train | 60% | round run 이 부르는 묶음. 출시용 후보와 실패 기록은 여기서만 나옵니다 |
+| validation | 20% | 새 예방 규칙을 채택할지 정하는 run `{loop_id}-v{n}` 만 부릅니다 |
+| held_out | 20% | 어떤 결정에도 쓰지 않고, loop 끝의 `{loop_id}-h-base` · `{loop_id}-h-final` 만 부릅니다 |
+
+validation · held-out 묶음이 하나도 없는 계획이면 정책을 잴 수 없어 시작하지 않습니다.
+이 몫의 run 은 거절을 실패 기록에 넣지 않고, 다른 run 의 중복 판정 대상도 아닙니다 (`validation.measuring`).
+
+1. 다시 부를 묶음: 계획의 train 묶음 중 loop 의 앞 round 에서 `auto_validated` 가 되지 않은 묶음.
    남은 묶음이 없으면 멈춥니다 (`no_open_bundles`).
-2. 관련 실패: 그 주제의 `failure_memory/A_*.jsonl` 과 `screen_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
-   코드마다 정해 둔 예방 규칙을 A 프롬프트 뒤에 `지난 실패에서 정한 예방 규칙` 으로 붙입니다.
+2. 채택: 그 주제의 `failure_memory/A_*.jsonl` 과 `screen_*.jsonl` 을 실패 코드별로 묶고 (`related_failures`),
+   이 loop 가 아직 채택하지도 버리지도 않은 코드가 있으면 그 코드를 더한 정책으로 validation 묶음을 생성 · 검증합니다 (`v{n}`).
+   지금 정책의 validation run (처음엔 규칙 없는 `v0`)과 묶음끼리 짝지어, 통과(그 묶음에 `auto_validated` 항목이 있음) 차이를 봅니다.
+   차이 평균을 묶음으로 1000 번 다시 뽑은 부트스트랩의 5 백분위(한쪽 95%)가 0 보다 클 때만 채택합니다 (`adoption.paired_gain`).
+   생성은 매번 흔들리므로 우연한 통과 몇 개로 채택하지 않으려는 것입니다. 채택하지 않은 코드는 이 loop 에서 다시 시도하지 않습니다.
+   결정은 `loops/{loop_id}/r{n}-adoption.json` 에 `adopted` · `reference` · `retired` · `tried` · `gain` · `floor` 로 남습니다.
+   채택한 코드마다 정해 둔 예방 규칙을 A 프롬프트 뒤에 `지난 실패에서 정한 예방 규칙` 으로 붙입니다.
    다른 주제의 기록과, 실패한 후보의 답은 붙이지 않습니다.
    묶음마다 그 묶음의 지난 실패(`bundle_notes`)도 user 메시지 뒤에 붙입니다. 최근 3개까지
    `- 질문 '{그 묶음에서 거절된 질문}': {예방 규칙}` 또는 `- 출력 (항목이 되지 못함): {예방 규칙}` 입니다.
@@ -481,10 +499,15 @@ B · C 와 출시는 실패 기록을 읽지 않고, `generate("B", ..., revisio
 3. 생성: 그 묶음만 `WORKERS` (8) 개씩 함께 부릅니다. 같은 묶음에서 거절된 앞 후보가 있으면 새 후보의 `parent_candidate_id` 가 그 id 이고,
    새 후보는 새 `candidate_id` 를 받습니다. 앞 round 의 파일은 바꾸지 않습니다.
    run 매니페스트의 `generation.prompt_sha256` (프롬프트 파일)과 `generation.policy`
-   (`version`, `loop_id`, `round`, `start.json` 의 `start_sha256`, 코드별 기록 `failures`, 붙인 글의 `prevention_sha256`)로
-   무엇을 보냈는지 남깁니다.
+   (`version`, `loop_id`, loop 안의 run 이름 `round` (`r1` · `v0` · `h-base` 등), 묶음의 몫 `part`, `start.json` 의 `start_sha256`,
+   채택한 코드별 기록 `failures`, 붙인 글의 `prevention_sha256`)로 무엇을 보냈는지 남깁니다.
 4. 검증: 독립 검증과 같습니다. 기준은 바꾸지 않습니다.
 5. 실패 기록: `rejected.jsonl` 한 줄마다 항목 하나를 `failure_memory/A_{run_id}.jsonl` 에 씁니다 (`record_failures`).
+
+round 가 끝나면 마지막에 채택한 정책을 held-out 묶음에서 규칙 없는 정책과 견줍니다 (`h-final` 대 `h-base`).
+held-out 은 어떤 채택에도 쓰지 않았으므로 이 차이가 채택한 규칙의 실제 효과입니다.
+`report.json` 의 `held_out` 에 `bundles` · `base_passed` · `final_passed` · `gain` · `floor` 가 남고,
+채택한 규칙이 없거나 한도에 닿아 재지 못하면 `measured: false` 와 이유가 남습니다. held-out 을 재다 한도에 닿으면 `stop_reason` 도 그 한도입니다.
 
 실패 기록 항목은 정확히 아래 필드이고, 고친 답은 넣을 수 없습니다.
 검증하지 않은 답이 다음 프롬프트에 사실로 들어가면 다음 후보가 오염되기 때문입니다.
@@ -529,7 +552,8 @@ loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 | `budget_usd` | loop 전체 예산 (0 보다 큼) |
 | `generator` · `validator` | 각각 정확히 `model` · `reasoning_effort` · `usd_per_million_input_tokens` · `usd_per_million_output_tokens` |
 
-round 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정(`loops/{loop_id}/r{n}-*.json`)으로 돕니다.
+loop 안 run 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정(`loops/{loop_id}/{name}-*.json`)으로 돕니다.
+채택 · held-out 을 재는 호출도 같은 한도에서 빠집니다.
 쓴 호출 · 비용은 호출이 돌아올 때마다 `calls.jsonl` 에 남기므로, 생성 · 검증이 도중에 끊겨도 이어 돌 때 그만큼 한도에서 빠집니다.
 멈춘 이유는 `max_rounds` · `call_cap` · `budget` · `no_open_bundles` 중 하나로 `report.json` 에 남습니다.
 생성이나 검증이 한도에 닿아 끝나지 않은 round 가 있으면 그 round 에서 멈추고, 검증 전에 한도에 닿은 round 는 `not_validated` 로 남습니다.
@@ -538,12 +562,12 @@ round 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 �
 끝난 round 를 다시 부르지 않고 같은 `candidate_id` 가 두 번 생기지 않습니다.
 loop 설정, 계획(id 와 SHA-256), 통과 기준(`thresholds`)은 처음 시작할 때 `start.json` 에 고정하고,
 round 마다와 `report.json` 을 쓰기 전에 지금 값과 맞춰 봅니다. 하나라도 다르면 바뀐 키를 밝히고 멈춥니다.
-이미 있는 `{loop_id}-r{n}` run 은 이 loop 가 만든 것일 때만 이어 씁니다: 매니페스트의 `generation.policy` 의 `loop_id` · `round` ·
+이미 있는 loop 안 run (`{loop_id}-r{n}` · `v{n}` · `h-base` · `h-final`)은 이 loop 가 그 이름으로 만든 것일 때만 이어 씁니다: 매니페스트의 `generation.policy` 의 `loop_id` · `round` ·
 `start_sha256` 과 `generation.plan_id` · `plan_sha256` 이 이 loop 와 `start.json` 의 값과 같아야 합니다.
 따로 만든 run (`policy` 가 `null`)이나 다른 계획 · 다른 시작 기록의 run 이 그 이름에 있으면 다른 키를 밝히고 멈춥니다.
 `report.json` 이 있는 loop 는 다시 돌지 않습니다.
 
-`report.json` 은 목표(계획의 요청 개수)와 `auto_validated` 묶음 수, 모자란 수(`shortfall`)를 남깁니다.
+`report.json` 은 목표(계획의 train 묶음 수)와 `auto_validated` 묶음 수, 모자란 수(`shortfall`)를 남깁니다.
 목표에 못 미쳐도 기준을 낮추지 않고 모자란 수만 보고합니다. 기준 해시(`thresholds`: 주제 명세 파일별 SHA-256,
 검증기 · 판정기 프롬프트 SHA-256, 검증기 버전, 난도 규칙)를 함께 남깁니다. 이 값은 `start.json` 에 고정한 값과 같습니다.
 
@@ -587,7 +611,7 @@ CLI 의 `report --a` 는 loop id 를 받아 그 loop 의 round run 들을 넣습
 결과는 `reports/{report_id}.json` 에 쓰고 마크다운 표로 보여 줍니다. 비율은 모두 분자 · 분모 · 값으로 남깁니다.
 
 생성 출력 하나는 생성기 응답 한 번(C 는 내보낸 파일의 한 줄)이고, 항목이 된 것과 되지 못한 것(`rejected.jsonl` 의 `{bundle_id, reason, raw}`)을 모두 셉니다.
-A 는 모든 round 의 출력을 셉니다. 거절 이유는 자기 개선의 실패 코드로 나눕니다 (C 의 계획에 없는 묶음만 `unplanned_bundle`).
+A 는 모든 round 의 출력을 셉니다. 채택 · held-out 을 재는 run 은 세지 않으므로, 그 비용은 loop `report.json` 의 `cost_usd` 에만 듭니다. 거절 이유는 자기 개선의 실패 코드로 나눕니다 (C 의 계획에 없는 묶음만 `unplanned_bundle`).
 
 | 지표 | 분자 | 분모 |
 |---|---|---|
@@ -595,7 +619,7 @@ A 는 모든 round 의 출력을 셉니다. 거절 이유는 자기 개선의 �
 | 출처 정확성 | 근거 대조를 마친 항목 중 근거와 답이 맞지 않아(`table_relation` · `unanswerable` · `answer_mismatch`) 거절되지 않은 것 | 근거 대조를 마친 항목: 검증한 항목에서 대조 전에 걸릴 수 있는 거절(`type_mismatch` · `missing_condition` · `duplicate`)을 뺀 것 |
 | 유형 준수 | 주제 구조 검사를 통과한 출력 (생성 · 검증의 `type_mismatch` 를 뺀 것) | 주제 구조 검사까지 간 출력: 모든 항목과, 항목이 되지 못한 출력 중 `type_mismatch` · `evidence_owned` |
 | 중복 | `duplicate` 로 거절된 항목 | 검증한 항목 |
-| 커버리지 | `auto_validated` 항목이 하나라도 있는 계획의 근거 묶음 | 계획의 그 주제 근거 묶음 |
+| 커버리지 | `auto_validated` 항목이 하나라도 있는 계획의 근거 묶음 | 계획의 그 주제 근거 묶음. A 를 견줄 때는 세 방식 모두 train 묶음만 |
 | 난도 분포 | `easy` · `medium` · `hard` 각각의 `auto_validated` 항목 | `auto_validated` 항목 |
 | 유효 문항당 비용 | 총비용 | `auto_validated` 항목 |
 

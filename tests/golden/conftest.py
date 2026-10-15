@@ -6,7 +6,7 @@ import unicodedata
 
 import pytest
 
-from golden_pipeline import generation, storage
+from golden_pipeline import adoption, generation, plan, storage
 
 DOC_SHA = "a" * 64
 IMAGE_SHA = "b" * 64
@@ -60,6 +60,29 @@ ITEM = {
 def one_worker(monkeypatch):
     """가짜 생성기 · 검증기는 받은 차례대로 답한다. 호출 차례가 정해지도록 테스트에서는 한 번에 하나씩 보낸다."""
     monkeypatch.setattr(generation, "WORKERS", 1)
+
+
+@pytest.fixture
+def measure_bundles(monkeypatch):
+    """loop 는 계획의 validation · held-out 몫으로 정책을 잰다. 계획에 예산 묶음을 본뜬 묶음을 몫마다 하나씩 더한다.
+
+    본뜬 묶음은 단위 id 만 달라 묶음 id 가 다르고 근거 · 본문은 같다. 나머지 묶음은 모두 train 몫이다.
+    """
+    def add(plan_id):
+        path = storage.OUTPUTS / "plans" / f"{plan_id}.json"
+        planned = json.loads(path.read_text(encoding="utf-8"))
+        budget = next(bundle for bundle in planned["bundles"] if "130,000,000원" in bundle["context"])
+        parts = {}
+        for part in ("validation", "held_out"):
+            units = [{**{key: value for key, value in unit.items() if key != "label"}, "unit_id": f"{unit['unit_id']}-{part}"}
+                     for unit in budget["units"]]
+            bundle = plan._bundle(budget["topic"], units, budget["doc"])
+            planned["bundles"].append(bundle)
+            parts[bundle["bundle_id"]] = part
+        path.write_text(json.dumps(planned, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        monkeypatch.setattr(adoption, "split", lambda bundle_id: parts.get(bundle_id, "train"))
+        return parts
+    return add
 
 
 @pytest.fixture
