@@ -252,6 +252,7 @@ CSV는 UTF-8 without BOM입니다.
 | Grounding | 답이 검색한 청크 안에서만 나왔나 (환각) | RAGAS `faithfulness` |
 | End-to-End | 최종 답이 정답과 맞나 · 얼마나 걸리고 들었나 | RAGAS `factual_correctness`, 질문당 `latency_s` · 입력/출력/추론 토큰 · 예상 비용 `cost_usd` |
 
+- 답할 수 없음(`unanswerable`) 질문은 찾아 올 정답 근거가 없고 맞는 답이 거절 문장이라, 그 질문의 `context_precision` · `context_recall` · `key_facts_in_context` · `answer_relevancy`(거절을 0 으로 매김)는 잘 해도 0 이 나옵니다. 평가 항목의 `answerable` 이 `false` 인 질문은 이 지표를 빈 칸(NaN)으로 두어 평균에서 뺍니다.
 - Retrieval 이 낮으면 검색 문제, Retrieval 은 높은데 Grounding 이 낮으면 환각, 둘 다 높은데 End-to-End 가 낮으면 정답 · 질문을 다시 볼 차례입니다.
 - 심판 LLM 은 `config.yaml` 의 `evaluation.judge_model`(`gpt-5-mini`)입니다. 평가할 때마다 OpenAI 비용이 듭니다.
 - 프로젝트 책임자는 Langfuse Cloud 에서 질문마다 추적 하나(`answer-question` 안에 검색 `retrieve-context` · 생성 `generate-answer` — 모델 · 토큰 · 비용 포함)를 보고, 05 의 질문별 점수도 그 추적에 붙어 있습니다. 키가 없는 팀원은 노트북 표와 CSV 로 봅니다.

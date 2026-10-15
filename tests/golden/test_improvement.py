@@ -228,6 +228,23 @@ def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_fai
     assert improvement.failure_code(rule_reason({**item, field: value}, units)) == code
 
 
+@pytest.mark.parametrize("topic, question, code", [
+    # 배점표의 '5건 이상 | 10' 을 제출 요건으로 물어, 점수와 자격을 가르는 답이 틀린 답으로 매겨졌다.
+    ("false_premise", "유사 사업 실적을 4건 이상 제출해야 하나요?", "scoring_as_requirement"),
+    ("false_premise", "유사 사업 실적 4건 이상이면 배점 10점을 받나요?", None),
+    # 배점표 주석에는 '필수 자격' 같은 진짜 요건도 적혀 있다. 값을 답하지 않는 주제는 보지 않는다.
+    ("condition", "유사 사업 실적을 4건 이상 제출해야 하나요?", None),
+])
+def test_a_threshold_from_a_scoring_table_is_not_asked_as_a_requirement(topic, question, code):
+    item = {"primary_topic": topic, "question": question, "answer": "5건 이상입니다.",
+            "evidence": [{"chunk_id": "c1"}], "structure": {"stated": "4건 이상", "actual": "5건 이상"}}
+    table = {"kind": "table", "grid": "logical_restored", "cell": None}
+    units = [{"text": "평가방법 | 평가기준 | 배 점", "ref": {"location": {**table, "row": 0}}},
+             {"text": "유사 사업 실적 | 5건 이상 | 10", "ref": {"location": {**table, "row": 1}}}]
+    reason = rule_reason(item, units)
+    assert (reason and improvement.failure_code(reason)) == code
+
+
 @pytest.mark.parametrize("limits, reason, rounds", [
     ({}, "max_rounds", 3),
     ({"max_calls": 4}, "call_cap", 1),

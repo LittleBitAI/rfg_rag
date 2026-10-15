@@ -38,8 +38,10 @@ SCREEN_CODES = ("structure_question", "ordinal_reference", "evidence_reference",
 BLANK_CELL = re.compile(r"(^|\n) *\||\| *\|")
 # unanswerable 생성기는 다른 문서의 근거 라벨([E1 · 머리글 행])을 질문에 옮겨 적곤 한다. 질문자는 근거를 보지 못한다.
 EVIDENCE_LABEL = re.compile(r"(?<![A-Za-z])E\d+(?!\d)|머리글 행")
-# unanswerable 검증기에 주는 대상 문서의 근거 단위 수.
-BEST_MATCHING = 5
+# 배점표의 값을 배점 · 평가 기준으로 묻는 질문의 낱말 (공백을 지운 질문에서 찾는다).
+SCORING_WORDS = re.compile(r"배점|점수|평가|\d+점|만점|득점|감점|가점")
+# unanswerable 검증기에 한 번에 주는 대상 문서의 글자 수. 문서(중앙 6만 6천 자, 가장 긴 것 20만 자)를 몇 번에 나눠 모두 읽힌다.
+DOCUMENT_BATCH_CHARS = 60_000
 
 
 def validate(topic, method, run_id, config_path, client):
@@ -110,9 +112,9 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     judged, status = [], "complete"
     while len(judged) < len(to_judge):
         rest = to_judge[len(judged):]
-        batch = _batch(config, calls, rest, units)
+        batch = _batch(config, calls, rest, units, documents)
         if not batch:
-            needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]])
+            needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]], documents.get(rest[0]["candidate_id"]))
             status = generation.limit_reached(config, len(calls), generation._cost(config, calls), needed)
             break
         verdicts = generation.parallel(lambda item: _verdict(
@@ -309,11 +311,11 @@ def evidence_units(item, bundle):
     return plan._with_headers(cited, headers)
 
 
-def _batch(config, calls, candidates, units):
+def _batch(config, calls, candidates, units, documents):
     """함께 검증할 앞쪽 후보들 (많아야 WORKERS 개). 후보마다 쓸 수 있는 호출 수를 더해 한도 안에 드는 데까지 고른다."""
     batch, needed = [], 0
     for item in candidates[:generation.WORKERS]:
-        needed += _calls_needed(item, units[item["candidate_id"]])
+        needed += _calls_needed(item, units[item["candidate_id"]], documents.get(item["candidate_id"]))
         if generation.limit_reached(config, len(calls), generation._cost(config, calls), needed):
             break
         batch.append(item)
@@ -549,7 +551,27 @@ def _static_reason(item, spec, units, survivors, document):
 
 def rule_reason(item, units):
     """독립 답과 맞아 검증을 통과하지만 평가에 쓸 수 없던 꼴이면 그 이유, 아니면 None. 돈이 들지 않아 검증 앞과 출시 앞에서 본다."""
-    topic, question = item["primary_topic"], DOCUMENT_PREFIX.sub("", item["question"]).strip()
+    question = DOCUMENT_PREFIX.sub("", item["question"]).strip()
+    return _topic_rule(item, question, units) or _scoring_rule(item, question, units)
+
+
+def _scoring_rule(item, question, units):
+    """값을 답하는 주제(CLAIMED)가 인용한 표가 배점표(머리글에 '배점')인데 질문이 배점 · 평가를 묻지 않으면 그 이유.
+
+    배점표의 기준값(실적 5건 이상 | 10점)은 그 점수를 받는 조건이지 제출 · 참가 요건이 아니다.
+    검증기는 그 칸의 값만 맞춰 보므로, 기준값을 요건처럼 묻는 질문('5건 이상 제출해야 하나요?')도 통과시킨다.
+    조건 · 비교 주제는 뺀다. 배점표 주석의 필수 자격처럼 배점표에도 진짜 요건이 적혀 있다.
+    """
+    if item["primary_topic"] not in CLAIMED:
+        return None
+    scoring = any(plan._table_row(unit) == 0 and "배점" in re.sub(r"\s", "", unit["text"]) for unit in units)
+    if scoring and not SCORING_WORDS.search(re.sub(r"\s", "", question)):
+        return "배점 기준: 인용한 표가 배점표인데 질문이 배점 · 평가를 묻지 않아 기준값을 요건처럼 묻습니다"
+    return None
+
+
+def _topic_rule(item, question, units):
+    topic = item["primary_topic"]
     if topic == "numeric" and re.fullmatch(
             r"(?:사업의\s*)?(?:값과 단위|수치와 단위|첫 번째 값)(?:은|는)?\s*(?:(?:무엇|얼마)인가)?[?？]?", question):
         return "모호한 대상: 질문이 '값과 단위' · '첫 번째 값' 처럼 대상을 이름으로 가리키지 않습니다"
@@ -650,28 +672,34 @@ ANSWER_CHECKS = (_answerable, _numeric_answer, _not_copied)
 
 
 def _absent_verdict(item, document, ask):
-    """unanswerable: 대상 문서에서 질문 낱말을 가장 많이 담은 근거 단위만 준 검증기도 답하지 못해야 한다.
+    """unanswerable: 대상 문서의 모든 근거 단위를 나눠 받은 검증기가 어느 묶음으로도 답하지 못해야 한다.
 
     핵심어 검사(_key_terms_absent)는 글자로만 본다. 핵심어를 다른 말로 쓴 근거(하자보수 · 하자담보책임)는 검증기가 찾는다.
+    일부 단위만 주면 그 밖의 단위에 있는 답을 놓치므로, 없음은 문서 전체를 읽고서야 정한다.
+    근거 충돌도 거절한다. 같은 사실의 값이 근거마다 다르다는 것은 속성이 문서에 있다는 뜻이다.
+    ponytail: 묶음 경계에 걸친 답(표 머리글과 그 행이 다른 묶음)이나 묶음 사이의 충돌은 보지 못한다. 놓치면 묶음을 겹쳐 나눈다.
     """
-    found, error = ask(item["question"], best_matching(item["question"], document))
-    if error:
-        return "rejected", f"검증기 출력 오류: {error}"
-    if found["answerable"]:
-        return "rejected", f"대상 문서에 있음: 검증기가 대상 문서의 근거로 답했습니다: {found['answer']!r}"
-    return "auto_validated", "자동 검증 통과: 대상 문서의 근거로 답이 나오지 않습니다"
+    for batch in document_batches(document):
+        found, error = ask(item["question"], batch)
+        if error:
+            return "rejected", f"검증기 출력 오류: {error}"
+        if found["conflict"]:
+            return "rejected", "근거 충돌: 검증기가 대상 문서의 근거끼리 같은 사실의 값이 다르다고 답했습니다"
+        if found["answerable"]:
+            return "rejected", f"대상 문서에 있음: 검증기가 대상 문서의 근거로 답했습니다: {found['answer']!r}"
+    return "auto_validated", "자동 검증 통과: 대상 문서의 모든 근거로 답이 나오지 않습니다"
 
 
-def best_matching(question, document):
-    """대상 문서의 근거 단위 중 질문의 내용 형태소를 가장 많이 담은 BEST_MATCHING 개 (같으면 문서 차례). 검증기에 줄 라벨을 붙인다."""
-    words = _content_words(question)
-
-    def score(unit):
-        text = _norm(unit["text"])
-        return -sum(word in text for word in words)
-
-    scored = sorted(document, key=score)
-    return [{**unit, "label": f"E{n}"} for n, unit in enumerate(scored[:BEST_MATCHING], 1)]
+def document_batches(document):
+    """대상 문서의 근거 단위를 문서 차례대로 DOCUMENT_BATCH_CHARS 자 안팎씩 나눈다. 라벨(E1 …)은 문서 전체에서 이어 붙인다."""
+    batches, size = [[]], 0
+    for n, unit in enumerate(document, 1):
+        if batches[-1] and size + len(unit["text"]) > DOCUMENT_BATCH_CHARS:
+            batches.append([])
+            size = 0
+        batches[-1].append({**unit, "label": f"E{n}"})
+        size += len(unit["text"])
+    return batches
 
 
 def _table_relation(item, units, document):
@@ -884,11 +912,14 @@ def _valid_comparison(comparison):
     )
 
 
-def _calls_needed(item, units):
+def _calls_needed(item, units, document):
     """후보 하나에 드는 호출 수: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 한 번 더.
+    unanswerable 은 독립 답 대신 대상 문서의 묶음마다 한 번이다.
 
     한 후보의 검증을 도중에 끊지 않도록 후보를 시작하기 전에 이만큼을 한도와 견준다.
     ponytail: 출력 오류의 다시 묻기 · 판정기 호출은 세지 않아 그만큼 한도를 넘을 수 있다. 정확히 막아야 하면 최대치로 센다.
     """
+    if item["primary_topic"] == "unanswerable":
+        return len(document_batches(document))
     singles = sum(plan._table_row(unit) != 0 for unit in units) if item["primary_topic"] == "multi_hop" else 0
     return 1 + singles

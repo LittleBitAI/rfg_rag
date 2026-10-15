@@ -17,23 +17,26 @@ def release(make_item, topics, version, evidence_doc=lambda doc: doc, docs=DOCS)
 
     묶음은 계획 p-{version} 에 둔다. unanswerable 은 근거 문서(evidence_doc)와 묻는 문서(묶음의 doc_sha)가 다를 수 있다.
     """
-    asked, bundles = {}, []
+    asked, bundles, released = {}, [], []
     for topic in topics:
-        accepted = []
         for d, doc in enumerate(docs):
             for k in range(2):
                 item = make_item(candidate_id=f"{topic}-A-{version}-{d}{k}", run_id=version, primary_topic=topic,
                                  secondary_tags=[], question=f"{topic} 문서 {d} 질문 {k}은?", bundle_id=f"b-{topic}-{d}{k}")
                 cited = evidence_doc(doc) if topic == "unanswerable" else doc
                 item["evidence"] = [{**item["evidence"][0], "doc_sha": cited, "chunk_id": f"c-{topic}-{d}{k}"}]
-                accepted.append(transition(item, "auto_validated", "통과", validator_version="val-0.1",
+                released.append(transition(item, "auto_validated", "통과", validator_version="val-0.1",
                                            difficulty="hard" if topic == "multi_hop" else "easy"))
                 asked[item["candidate_id"]] = doc
                 bundles.append({"bundle_id": item["bundle_id"], "topic": topic, "doc_sha": doc})
-        storage.write_run(topic, "A", version, accepted, info={"plan_id": f"p-{version}"})
+    plan_path = storage.OUTPUTS / "plans" / f"p-{version}.json"
+    plan_path.parent.mkdir(exist_ok=True)
+    plan_path.write_text(json.dumps({"bundles": bundles}), encoding="utf-8")
+    for topic in topics:
+        accepted = [item for item in released if item["primary_topic"] == topic]
+        storage.write_run(topic, "A", version, accepted,
+                          info={"plan_id": f"p-{version}", "plan_sha256": storage._sha256(plan_path)})
         storage.write_release(topic, version, [transition(item, "released", "출시") for item in accepted], [("A", version)])
-    (storage.OUTPUTS / "plans").mkdir(exist_ok=True)
-    (storage.OUTPUTS / "plans" / f"p-{version}.json").write_text(json.dumps({"bundles": bundles}), encoding="utf-8")
     return asked
 
 
@@ -88,3 +91,16 @@ def test_adding_a_topic_refuses_a_question_on_a_document_the_base_split_lacks(ou
 
     with pytest.raises(ValueError, match="분할 v1 에 없습니다"):
         split.split("v2", base="v1")
+
+
+def test_a_plan_changed_after_generation_cannot_decide_which_document_an_unanswerable_question_asks(outputs, make_item):
+    # 출시 뒤 계획의 묶음 doc_sha 를 바꾸면, 해시를 보지 않는 분할은 바뀐 문서의 쪽으로 질문을 보냈다.
+    release(make_item, TOPICS, "v1")
+    plan_path = storage.OUTPUTS / "plans" / "p-v1.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    changed = next(bundle for bundle in plan["bundles"] if bundle["topic"] == "unanswerable")
+    changed["doc_sha"] = DOCS[-1] if changed["doc_sha"] != DOCS[-1] else DOCS[0]
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="계획 p-v1 가 생성 run v1 을 만든 뒤 바뀌었습니다"):
+        split.split("v1")

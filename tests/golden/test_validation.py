@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from golden_pipeline import storage
+from golden_pipeline import storage, validation
 from golden_pipeline.generation import comparison_answer, generate, import_c, with_document
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.plan import topic_spec as load_topic_spec
@@ -531,6 +531,8 @@ def test_an_attribute_found_only_in_a_held_unit_of_the_asked_document_is_rejecte
     (verdict("", answerable=False), "auto_validated", "자동 검증 통과"),
     # 핵심어를 다른 말로 쓴 근거는 글자 검사를 지나므로, 대상 문서에서 고른 근거로 검증기가 답하면 거절한다.
     (verdict("11월 3일까지"), "rejected", "대상 문서에 있음: 검증기"),
+    # 근거끼리 값이 다르면 속성은 문서에 있다. 답을 고르지 못했다고 없는 것으로 통과시키지 않는다.
+    (verdict("", answerable=False, conflict=True), "rejected", "근거 충돌"),
 ])
 def test_an_attribute_absent_from_every_unit_of_the_asked_document_is_kept_unless_the_validator_answers(
         borrowed, reply, state, reason):
@@ -546,6 +548,21 @@ def test_an_attribute_absent_from_every_unit_of_the_asked_document_is_kept_unles
     [request] = validator.requests
     sent = {unit["text"] for unit in json.loads(request[1]["content"])["evidence"]}
     assert sent == {body for _, doc, body, _ in UNITS if doc == DOC_2} | {GRID_CELL}
+
+
+def test_absence_is_certified_only_after_the_validator_has_read_every_unit_of_the_asked_document(borrowed, monkeypatch):
+    # 질문 낱말을 많이 담은 단위 몇 개만 주면, 다른 말로 적힌 답(문서 끝의 하자 보수 셀)은 검증기가 보지 못해 통과했다.
+    monkeypatch.setattr(validation, "DOCUMENT_BATCH_CHARS", 1)
+    row = unanswerable("계약 기간은 얼마인가?", "계약 기간", ["계약"], ["E1"])
+    generate("A", "unanswerable", "p3", "a1", borrowed, Generator(row))
+    last = f"E{sum(doc == DOC_2 for _, doc, _, _ in UNITS) + 1}"
+    validator = Validator({(last,): verdict("2년"), "*": verdict("", answerable=False)})
+
+    run_dir = validate("unanswerable", "A", "a1", borrowed, validator)
+
+    [item] = validated(run_dir).values()
+    assert item["state_history"][-1]["reason"].startswith("대상 문서에 있음: 검증기")
+    assert [Validator.labels(request) for request in validator.requests][-1] == (last,)
 
 
 def test_an_unanswerable_release_names_the_asked_document_and_tells_the_screen_why_it_refuses(borrowed):

@@ -38,8 +38,9 @@ def test_golden_release_row_becomes_eval_item(tmp_path, topic, answer, structure
 
     [item] = load_eval_items([str(path)])
 
-    assert {k: item[k] for k in ("id", "reference", "key_facts")} == {
-        "id": f"{topic}-A-night1-r1-0001", "reference": answer, "key_facts": key_facts}
+    assert {k: item[k] for k in ("id", "reference", "key_facts", "answerable")} == {
+        "id": f"{topic}-A-night1-r1-0001", "reference": answer, "key_facts": key_facts,
+        "answerable": topic != "unanswerable"}
 
 
 def test_bundled_dev_key_facts_score_the_requested_answer():

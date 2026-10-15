@@ -195,6 +195,12 @@ def _table(rows: list[dict], scores: list[dict], path: Path) -> pd.DataFrame:
     return table
 
 
+def _unanswerable_as_nan(rows: list[dict], scores: list[dict], names: tuple[str, ...]) -> list[dict]:
+    """답이 문서에 없는 질문(answerable False)에서 names 지표를 NaN 으로 — 평균 · Langfuse 에서 빠진다.
+    그 질문은 찾아 올 정답 근거가 없고 맞는 답이 거절 문장('확인할 수 없습니다')이라, 이 지표들은 잘 해도 0 이 나온다"""
+    return [s if r["answerable"] else {**s, **dict.fromkeys(names, math.nan)} for r, s in zip(rows, scores)]
+
+
 def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Retrieval: 검색한 청크가 정답에 필요한 내용을 담았나"""
     rows = read_jsonl(answers_path)
@@ -202,6 +208,7 @@ def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
     scores = [{"context_precision": s["llm_context_precision_with_reference"], "context_recall": s["context_recall"],
                "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))}
               for r, s in zip(rows, ragas)]
+    scores = _unanswerable_as_nan(rows, scores, ("context_precision", "context_recall", "key_facts_in_context"))
     _send_scores(rows, scores)
     return _table(rows, scores, answers_path.with_name("retrieval.csv"))
 
@@ -212,6 +219,8 @@ def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
     ragas = _ragas(rows, [ResponseRelevancy()], cfg, "generation", embeddings=Embedder(cfg["embedding"]))
     scores = [{"answer_relevancy": s["answer_relevancy"], "key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])}
               for r, s in zip(rows, ragas)]
+    # answer_relevancy 는 얼버무린 답(거절 포함)을 0 으로 매긴다. 거절이 정답인 질문에서는 뺀다
+    scores = _unanswerable_as_nan(rows, scores, ("answer_relevancy",))
     _send_scores(rows, scores)
     return _table(rows, scores, answers_path.with_name("generation.csv"))
 

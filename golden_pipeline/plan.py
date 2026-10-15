@@ -127,11 +127,17 @@ def _side_documents(version, part):
 
 
 def asked_document(item):
-    """질문이 묻는 문서의 SHA. 대개 근거의 문서이고, unanswerable 은 근거와 다른 문서라 계획 묶음의 doc_sha 다."""
+    """질문이 묻는 문서의 SHA. 대개 근거의 문서이고, unanswerable 은 근거와 다른 문서라 계획 묶음의 doc_sha 다.
+
+    생성 뒤 계획 파일이 바뀌었으면 묶음의 doc_sha 가 질문을 만들 때의 문서가 아닐 수 있으므로 멈춘다.
+    """
     if item["primary_topic"] != "unanswerable":
         return item["evidence"][0]["doc_sha"]
     run_dir = storage.run_path(item["primary_topic"], item["method"], item["run_id"])
-    planned = load_plan(storage._read_json(run_dir / "manifest.json")["generation"]["plan_id"])[0]
+    generated = storage._read_json(run_dir / "manifest.json")["generation"]
+    planned, sha = load_plan(generated["plan_id"])
+    if sha != generated["plan_sha256"]:
+        raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {item['run_id']} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
     return next(bundle["doc_sha"] for bundle in planned["bundles"] if bundle["bundle_id"] == item["bundle_id"])
 
 

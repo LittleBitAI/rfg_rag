@@ -148,7 +148,7 @@ def _golden_key_facts(row: dict, field_names: set[str]) -> list[str]:
 def _golden_row(row: dict, field_names: set[str]) -> dict:
     """골든 릴리스 행 → 평가 질문과 같은 필드"""
     return {"id": row["candidate_id"], "question": row["question"], "reference": row["answer"],
-            "key_facts": _golden_key_facts(row, field_names)}
+            "key_facts": _golden_key_facts(row, field_names), "answerable": row["primary_topic"] != "unanswerable"}
 
 
 def _eval_item(row: dict, field_names: set[str]) -> dict:
@@ -156,11 +156,12 @@ def _eval_item(row: dict, field_names: set[str]) -> dict:
         row = _golden_row(row, field_names)
     return {"id": row["id"], "question": (row.get("question") or "").strip(), "reference": row.get("reference") or "",
             "key_facts": row.get("key_facts") or row.get("must_include") or [], "conv": row.get("conv"),
-            "reset_context": bool(row.get("reset_context"))}
+            "reset_context": bool(row.get("reset_context")), "answerable": row.get("answerable", True)}
 
 
 def load_eval_items(paths: list[str]) -> list[dict]:
-    """골든 릴리스(jsonl)·평가 질문(yaml) → {id, question, reference, key_facts, conv, reset_context}"""
+    """골든 릴리스(jsonl)·평가 질문(yaml) → {id, question, reference, key_facts, conv, reset_context, answerable}.
+    answerable 은 답이 문서에 있는가 — 골든 unanswerable 만 False 이고, 05 평가가 그 질문에 맞지 않는 지표를 뺀다"""
     items = []
     for path in paths:
         path = ROOT / path
@@ -186,7 +187,7 @@ def _problem(item: dict, questions: set, convs: set) -> str:
 
 def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:
     """평가에 쓸 수 없는 항목을 사유와 함께 걸러낸다
-    → (평가 데이터셋 {id, question, reference, key_facts, reset_context}, 점검 표)"""
+    → (평가 데이터셋 {id, question, reference, key_facts, reset_context, answerable}, 점검 표)"""
     kept, report, questions, convs = [], [], set(), set()
     for it in items:
         problem = _problem(it, questions, convs)
@@ -196,5 +197,5 @@ def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:
         if not problem:
             # 통과한 항목만 질문을 차지한다 — 정답 없는 골든 항목이 같은 질문의 온전한 yaml 항목을 막지 않게
             questions.add(it["question"])
-            kept.append({k: it[k] for k in ("id", "question", "reference", "key_facts", "reset_context")})
+            kept.append({k: it[k] for k in ("id", "question", "reference", "key_facts", "reset_context", "answerable")})
     return kept, pd.DataFrame(report)

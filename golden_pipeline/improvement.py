@@ -42,6 +42,7 @@ FAILURE_CODES = (
     ("대상 문서에 있음", "present_in_target"),
     ("전제가 문서에 있음", "premise_in_document"),
     ("근거 지칭", "evidence_reference"),
+    ("배점 기준", "scoring_as_requirement"),
 )
 # 규칙 글을 바꾸면 PREVENTION_VERSION 을 올린다. 기록 항목은 쓸 때의 버전을 남긴다.
 PREVENTION_RULES = {
@@ -69,6 +70,7 @@ PREVENTION_RULES = {
     "answer_dump": "답에는 묻는 내용만 쓰고, 근거 원문이나 '(조건: …)' 같은 덧붙임을 붙이지 않는다.",
     "invalid_comparison": "같은 종류의 대상끼리만 비교하고, 표 머리글 · 합계와 그 부분 · 서로 다른 속성(예: 인원과 기간)은 비교하지 않는다.",
     "malformed_question": "질문은 끊기지 않은 완결된 한 문장으로 쓴다.",
+    "scoring_as_requirement": "배점표의 기준값은 배점 · 평가 기준으로 묻고, 제출 · 참가 요건처럼 묻지 않는다.",
     "personal_info": "사람 이름 · 연락처 · 결재란을 묻지 않는다.",
     "structure_question": "목차 번호 · 항목 위치 · 표 형식을 묻지 말고 내용을 묻는다.",
     "evidence_reference": "질문자는 근거를 보지 못하므로 'E1 · E2' · '근거들' · '이 요구사항' 처럼 근거를 가리키지 말고 이름으로 묻는다.",
