@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from golden_pipeline import improvement, storage
+from golden_pipeline import adoption, improvement, storage
 from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
@@ -68,9 +68,11 @@ class Validator:
 
 
 @pytest.fixture
-def loop_config(evidence_run, tmp_path):
-    """계획 p3: numeric 묶음 셋 (예산 · 보증금 · 표). 목표 개수도 3 이다."""
+def loop_config(evidence_run, measure_bundles, tmp_path):
+    """계획 p3: train 몫 numeric 묶음 셋 (예산 · 보증금 · 표) 과 예산 묶음을 본뜬 validation · held-out 묶음 하나씩.
+    loop 의 목표는 train 묶음 셋이다."""
     make_plan("p3", "ev1", {"numeric": 3}, 2000, package=evidence_run)
+    measure_bundles("p3")
 
     def write(**overrides):
         path = tmp_path / "loop.json"
@@ -149,8 +151,9 @@ def test_next_round_gets_rules_for_the_topics_failure_codes_and_records_its_poli
     assert first["policy"]["failures"] == {} and "예방 규칙" not in generator.requests[0][0]["content"]
     entry_ids = {entry["failure_code"]: [entry["entry_id"]] for entry in memory(1)}
     assert second["policy"]["failures"] == entry_ids
-    assert (second["policy"]["version"], second["policy"]["round"]) == (PREVENTION_VERSION, 2)
-    system = generator.requests[3][0]["content"]
+    assert (second["policy"]["version"], second["policy"]["round"]) == (PREVENTION_VERSION, "r2")
+    # 요청 차례: round 1 의 셋, 채택을 재는 v0 · v2 하나씩, round 2 의 예산 · 표.
+    system = generator.requests[5][0]["content"]
     assert PREVENTION_RULES["answer_mismatch"] in system and PREVENTION_RULES["output_format"] in system
     assert PREVENTION_RULES["table_relation"] not in system
     assert second["prompt_sha256"] == first["prompt_sha256"] == storage._sha256(storage.PROMPTS / "A" / "numeric.txt")
@@ -162,7 +165,7 @@ def test_a_retried_bundle_is_told_its_own_failed_question_and_why_but_not_an_ans
     generator = Generator()
     improve("numeric", "p3", "l1", loop_config(), generator, Validator())
 
-    budget, table = generator.requests[3][1]["content"], generator.requests[4][1]["content"]
+    budget, table = generator.requests[5][1]["content"], generator.requests[6][1]["content"]
     note = "\n\n이 근거 묶음에서 거절된 지난 시도\n"
     asked = with_document(BUDGET["question"], {"agency": "가기관", "title": "가사업 구축"})
     assert budget.endswith(f"{note}- 질문 {asked!r}: {PREVENTION_RULES['answer_mismatch']}")
@@ -201,7 +204,8 @@ def test_an_item_the_release_screen_drops_reaches_the_next_loops_first_round_wit
 
     policy = json.loads((storage.run_path("numeric", "A", "l2-r1") / "manifest.json").read_text(encoding="utf-8"))
     assert policy["generation"]["policy"]["failures"]["ordinal_reference"] == ["screen-v1:1"]
-    assert PREVENTION_RULES["ordinal_reference"] in generator.requests[0][0]["content"]
+    # 요청 차례: 채택을 재는 v0 · v1 하나씩 뒤에 round 1.
+    assert PREVENTION_RULES["ordinal_reference"] in generator.requests[2][0]["content"]
 
 
 @pytest.mark.parametrize("topic, field, value, code", [
@@ -277,8 +281,9 @@ def test_a_loop_refuses_a_run_under_its_name_that_it_did_not_make(loop_config, e
         make_plan("p1", "ev1", {"numeric": 1}, 2000, package=evidence_run)
         generate("A", "numeric", "p1", "l1-r1", run, Generator())
     else:
+        # round 2 검증에서 끊긴다 (round 1 의 둘, v0 · v2 의 하나씩 뒤). 이어 돌면 생성 없이 round 3 에 닿는다.
         with pytest.raises(ConnectionError):
-            improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=3))
+            improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=5))
         if collision == "standalone_run_after_an_interruption":
             generate("A", "numeric", "p3", "l1-r3", run, Generator())
         else:
@@ -287,7 +292,7 @@ def test_a_loop_refuses_a_run_under_its_name_that_it_did_not_make(loop_config, e
 
     config = loop_config(max_calls=99) if collision == "recreated_loop_record" else loop_config()
     generator = Generator()
-    with pytest.raises(ValueError, match=re.escape(f"{run_id} 은 loop l1 가 round {run_id[-1]} 에 만든 run 이 아닙니다: {changed}")):
+    with pytest.raises(ValueError, match=re.escape(f"{run_id} 은 loop l1 가 {run_id[3:]} 로 만든 run 이 아닙니다: {changed}")):
         improve("numeric", "p3", "l1", config, generator, Validator())
     assert not generator.requests
     assert not (storage.OUTPUTS / "goldens/numeric/loops/l1/report.json").exists()
@@ -358,3 +363,52 @@ def test_a_topic_short_of_its_target_is_reported_with_thresholds_unchanged(loope
         record = json.loads((run_dir(round_no) / "validation.json").read_text(encoding="utf-8"))
         assert record["prompt_sha256"] == before["validator_prompt_sha256"]
         assert record["difficulty_rule"] == before["difficulty_rule"]
+
+
+def test_one_lucky_bundle_is_not_enough_to_adopt_a_rule():
+    # 생성은 매번 흔들린다. 한 묶음이 우연히 통과한 차이로 채택하면 효과 없는 규칙이 쌓인다.
+    old = {f"b{i}": 0 for i in range(20)}
+    assert adoption.paired_gain({**old, "b0": 1}, old) == (0.05, 0.0)
+    assert adoption.paired_gain(dict.fromkeys(old, 1), old) == (1.0, 1.0)
+
+
+def test_rules_are_adopted_on_validation_bundles_and_judged_once_more_on_held_out(looped):
+    report, _ = looped
+    [first, second, third] = [round_["adoption"] for round_ in report["rounds"]]
+
+    assert first == {"adopted": [], "reference": "v0", "retired": [], "tried": [], "gain": None, "floor": None}
+    assert second == {"adopted": ["answer_mismatch", "output_format"], "reference": "v2", "retired": [],
+                      "tried": ["answer_mismatch", "output_format"], "gain": 1.0, "floor": 1.0}
+    assert third["adopted"] == second["adopted"] and third["tried"] == []
+    # held-out 의 통과는 validation 에서 통과한 같은 질문과 겹쳐도 중복으로 거절되지 않는다.
+    assert report["held_out"] == {"measured": True, "adopted": second["adopted"], "bundles": 1, "base_passed": 0,
+                                  "final_passed": 1, "gain": 1.0, "floor": 1.0}
+    # 실패 기록 · 다음 round 의 묶음은 train run 에서만 나온다. validation · held-out 은 정책을 재는 데만 쓴다.
+    memory_files = (storage.OUTPUTS / "goldens/numeric/failure_memory").glob("*.jsonl")
+    assert sorted(path.name for path in memory_files) == [f"A_l1-r{n}.jsonl" for n in (1, 2, 3)]
+    parts = {"r1": "train", "r2": "train", "r3": "train", "v0": "validation", "v2": "validation",
+             "h-base": "held_out", "h-final": "held_out"}
+    for name, part in parts.items():
+        generated = json.loads((storage.run_path("numeric", "A", f"l1-{name}") / "manifest.json")
+                               .read_text(encoding="utf-8"))["generation"]
+        assert generated["policy"]["part"] == part
+        assert {adoption.split(bundle) for bundle in generated["bundle_ids"]} == {part}
+
+
+def test_a_rule_that_does_not_help_on_validation_is_retired_and_never_reaches_a_round(loop_config):
+    class Stubborn(Generator):
+        """예방 규칙을 받아도 예산 묶음에 틀린 값을 답한다."""
+
+        def __call__(self, model, reasoning_effort, messages):
+            system = messages[0]["content"].replace(PREVENTION_RULES["answer_mismatch"], "")
+            return super().__call__(model, reasoning_effort, [{"content": system}, messages[1]])
+
+    generator = Stubborn()
+    report = improve("numeric", "p3", "l1", loop_config(), generator, Validator())
+
+    retired = ["answer_mismatch", "output_format"]
+    assert report["rounds"][1]["adoption"] == {"adopted": [], "reference": "v0", "retired": retired, "tried": retired,
+                                               "gain": 0.0, "floor": 0.0}
+    assert manifest(2)["policy"]["failures"] == manifest(3)["policy"]["failures"] == {}
+    assert report["rounds"][2]["adoption"]["tried"] == []
+    assert report["held_out"] == {"measured": False, "reason": "채택한 예방 규칙이 없습니다"}

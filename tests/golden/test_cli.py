@@ -84,12 +84,15 @@ def api(monkeypatch):
 
 
 @pytest.fixture
-def planned(evidence_run, monkeypatch):
-    """CLI 로 계획 p3 을 만든다: numeric 묶음 셋 (예산 · 보증금 · 표)."""
+def planned(evidence_run, measure_bundles, monkeypatch):
+    """CLI 로 계획 p3 을 만든다: train 몫 numeric 묶음 셋 (예산 · 보증금 · 표) 과
+    A loop 가 정책을 재는, 예산 묶음을 본뜬 validation · held-out 묶음 하나씩."""
     monkeypatch.setattr(evidence, "PACKAGE", evidence_run)
     golden("plan", "p3", "ev1", "--count", "numeric", "3", "--max-context-chars", "2000")
-    return {"budget" if "130,000,000원" in b["context"] else "bond" if "5%" in b["context"] else "table": b["bundle_id"]
-            for b in load_plan("p3")[0]["bundles"]}
+    bundles = {"budget" if "130,000,000원" in b["context"] else "bond" if "5%" in b["context"] else "table": b["bundle_id"]
+               for b in load_plan("p3")[0]["bundles"]}
+    measure_bundles("p3")
+    return bundles
 
 
 def golden(*args):
@@ -147,9 +150,9 @@ def test_a_b_and_c_run_through_audit_release_and_report(planned, api, tmp_path, 
     assert a["generation"] == {"input_tokens": 60, "output_tokens": 60, "cost_usd": pytest.approx(6 * CALL_USD)}
     assert a["total_cost_usd"] == pytest.approx(9 * CALL_USD)
     assert a["cost_per_valid_item"]["value"] == pytest.approx(9 * CALL_USD / 2)
-    # B: 고정 프롬프트라 예산은 끝까지 틀린 값이다.
-    assert (b["outputs"], b["valid_rate"], b["source_accuracy"], b["coverage"]) == (3, ratio(1, 3), ratio(1, 2), ratio(1, 3))
-    assert b["total_cost_usd"] == pytest.approx(5 * CALL_USD)
+    # B: 계획의 다섯 묶음을 모두 부르고, 고정 프롬프트라 예산 셋은 끝까지 틀린 값이다. 커버리지는 train 묶음 셋으로 잰다.
+    assert (b["outputs"], b["valid_rate"], b["source_accuracy"], b["coverage"]) == (5, ratio(1, 5), ratio(1, 4), ratio(1, 3))
+    assert b["total_cost_usd"] == pytest.approx(9 * CALL_USD)
     # C: 계획에 없는 묶음 · JSON 아닌 줄은 항목이 되지 못해 유형 검사까지 가지 못한다.
     assert (c["outputs"], c["valid_rate"], c["type_compliance"], c["coverage"]) == (4, ratio(2, 4), ratio(2, 2), ratio(2, 3))
     # 추론 강도는 역할마다 API 호출에 실리고, loop 시작 기록 · 생성 매니페스트 · 검증 기록에 남는다.
@@ -160,7 +163,7 @@ def test_a_b_and_c_run_through_audit_release_and_report(planned, api, tmp_path, 
     assert json.loads((run / "manifest.json").read_text(encoding="utf-8"))["generation"]["run_config"]["reasoning_effort"] == "low"
     assert json.loads((run / "validation.json").read_text(encoding="utf-8"))["run_config"]["reasoning_effort"] == "high"
     table = capsys.readouterr().out
-    assert "| 유효 문항률 | 2/6 = 33.3% | 1/3 = 33.3% | 2/4 = 50.0% |" in table
+    assert "| 유효 문항률 | 2/6 = 33.3% | 1/5 = 20.0% | 2/4 = 50.0% |" in table
 
 
 def test_c_unobserved_cost_and_tokens_are_reported_as_unobserved_not_zero(planned, api, tmp_path, capsys):
@@ -220,7 +223,7 @@ def test_paid_commands_refuse_to_start_without_model_effort_call_cap_and_budget(
 
 
 def test_a_resumed_loop_continues_from_its_pinned_config_without_duplicate_ids(planned, api):
-    # round 2 의 첫 검증 호출에서 끊긴다 (round 1 검증 두 번 뒤).
+    # round 2 의 채택을 재는 v0 검증 호출에서 끊긴다 (round 1 검증 두 번 뒤).
     api.crash_on = 3
     with pytest.raises(ConnectionError):
         golden("run", "--topic", "numeric", "--method", "A", "--plan", "p3", "--id", "l1", *GENERATOR, *LIMITS, *A_ONLY)
@@ -230,10 +233,10 @@ def test_a_resumed_loop_continues_from_its_pinned_config_without_duplicate_ids(p
 
     loop = storage.OUTPUTS / "goldens/numeric/loops/l1"
     assert json.loads((loop / "report.json").read_text(encoding="utf-8"))["stop_reason"] == "max_rounds"
-    # 끝난 round 1 과 생성까지 끝난 round 2 는 다시 생성하지 않는다: 3 + 2 + 1 번.
-    assert sum(not user.startswith("{") for _, _, user in api.requests) == 6
+    # 끝난 round 1 과 생성까지 끝난 v0 은 다시 생성하지 않는다: r1 3 + v0 · v2 1 + r2 2 + r3 1 + h-base · h-final 1 번.
+    assert sum(not user.startswith("{") for _, _, user in api.requests) == 10
     ids = [entry["candidate_id"] for entry in storage.read_catalog()]
-    assert len(ids) == len(set(ids)) == 3
+    assert len(ids) == len(set(ids)) == 7
     # 끝난 loop 는 다시 돌지 않는다.
     with pytest.raises(FileExistsError):
         golden("resume", "--topic", "numeric", "--method", "A", "--id", "l1")

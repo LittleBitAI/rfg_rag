@@ -652,19 +652,33 @@ def _refuse_duplicates(items):
         raise ValueError(f"같은 근거 묶음이나 같은 질문의 항목이 출시본에 함께 들어 있습니다: {duplicates}")
 
 
+def measuring(run_dir):
+    """자기 개선 loop 가 정책을 재려고 validation · held-out 묶음으로 만든 run 인지 (출시용 후보가 아니다).
+
+    B 의 policy 는 None 이고 C 매니페스트에는 policy 가 없다.
+    """
+    policy = storage._read_json(run_dir / "manifest.json")["generation"].get("policy") or {}
+    return policy.get("part") in ("validation", "held_out")
+
+
 def _survivors(topic, method, run_id):
     """카탈로그로 찾은 같은 주제 · 방식의 다른 run 에서 검증을 통과한 항목의 중복 키.
 
     거절된 항목은 넣지 않는다. 같은 근거로 다시 만든 항목(자기 개선)이 중복으로 막히지 않게 하기 위해서다.
     다른 방식(A · B · C)은 같은 계획을 받아 같은 근거 묶음을 쓰는 것이 비교의 전제라 중복으로 보지 않는다.
+    정책을 재는 run 은 같은 묶음을 정책마다 다시 부르므로, 다른 run 과 서로 중복으로 보지 않는다.
+    다른 run 을 중복으로 보면 앞 정책이 통과시킨 묶음에서 새 정책은 언제나 거절되어 정책끼리 견줄 수 없다.
     """
+    if measuring(storage.run_path(topic, method, run_id)):
+        return {}
     runs = {
         entry["run_id"] for entry in storage.read_catalog()
         if (entry["topic"], entry["method"]) == (topic, method) and entry["run_id"] != run_id
     }
     survivors = {}
     for other in sorted(runs):
-        if (storage.run_path(topic, method, other) / "validation.json").exists():
+        other_dir = storage.run_path(topic, method, other)
+        if (other_dir / "validation.json").exists() and not measuring(other_dir):
             for item in storage.read_validated(topic, method, other):
                 for key in _keys(item):
                     survivors.setdefault(key, item["candidate_id"])

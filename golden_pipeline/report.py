@@ -6,7 +6,7 @@ C 는 사람이 웹에서 만들어 생성 토큰 · 비용을 관측할 수 없
 import json
 from collections import Counter
 
-from golden_pipeline import improvement, plan, storage
+from golden_pipeline import adoption, improvement, plan, storage
 from golden_pipeline.generation import UNOBSERVED
 
 # 근거와 답이 맞지 않아 거절된 실패 코드. 출처 정확성의 분자에서 빠진다.
@@ -43,7 +43,9 @@ def compare(topic, runs):
     planned, current_sha = plan.load_plan(plan_id)
     if current_sha != plan_sha:
         raise ValueError(f"계획 {plan_id} 가 run 을 만든 뒤 바뀌었습니다")
-    bundles = {bundle["bundle_id"] for bundle in planned["bundles"] if bundle["topic"] == topic}
+    # A 의 출시용 후보는 train 묶음에서만 나온다. A 를 견줄 때는 세 방식 모두 train 묶음 커버리지로 잰다.
+    bundles = {bundle["bundle_id"] for bundle in planned["bundles"] if bundle["topic"] == topic
+               and ("A" not in runs or adoption.split(bundle["bundle_id"]) == "train")}
     methods = {}
     for method, data in collected.items():
         quality = _quality(data["outputs"], bundles)
