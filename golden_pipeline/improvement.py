@@ -240,15 +240,18 @@ def _generate(topic, plan_id, loop_id, n, config, clients):
 def _adopt(topic, plan_id, loop_id, n, config, clients):
     """round n 이 쓸 예방 규칙을 정해 r{n}-adoption.json 에 남긴다. 멈추면 그 이유를, 정했으면 None 을 돌려준다.
 
-    주제의 실패 코드 중 이 loop 가 아직 채택하지도 버리지도 않은 코드가 있으면, 그 코드를 더한 정책으로
+    주제의 실패 코드 중 이 loop 가 아직 채택하지도 버리지도 않은 코드에서 기록이 가장 많은 하나를 더한 정책으로
     validation 묶음을 생성 · 검증해 지금 정책의 validation 결과와 묶음끼리 짝지어 견준다.
     짝지은 통과 차이의 부트스트랩 하한이 0 보다 클 때만 채택하고, 채택되지 않은 코드는 이 loop 에서 다시 시도하지 않는다.
+    코드를 한 번에 하나만 시험한다. 여럿을 함께 붙이면 도움이 되는 규칙이 해로운 규칙과 함께 버려진다 (fill1 의 table · comparison).
     """
     path = _loop_path(topic, loop_id) / f"r{n}-adoption.json"
     if path.exists():
         return None
     state = _policy(topic, loop_id, n - 1)
-    new = sorted(set(related_failures(topic)) - set(state["adopted"]) - set(state["retired"]))
+    related = related_failures(topic)
+    untried = set(related) - set(state["adopted"]) - set(state["retired"])
+    new = sorted(untried, key=lambda code: (-len(related[code]), code))[:1]
     decision = {**state, "tried": new, "gain": None, "floor": None}
     if new:
         candidate = sorted(state["adopted"] + new)
