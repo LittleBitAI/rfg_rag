@@ -102,6 +102,8 @@ def test_negation_outside_the_match_rejects_positive_fact(text):
     ("포함", "부가세 불포함, 유지보수 포함"),
     ("포함", "포함123456없음"),
     ("포함", "미 해당: 포함"),
+    ("생성된 문서", "생성된 문서는 별도 시건장치가 된 곳에 안전하게 보관"),
+    ("보안서약서", "보안서약서는 별도로 제출"),
 ])
 def test_negation_window_preserves_negative_facts_and_other_occurrences(fact, text):
     assert _key_fact_ratio([fact], text) == 1

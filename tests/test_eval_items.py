@@ -48,10 +48,11 @@ def test_bundled_dev_key_facts_score_the_requested_answer():
     assert not [f for fs in facts.values() for f in fs if " | " in f]
     for n, row in enumerate(rows, 1):
         if facts[n]:
-            # 정답 그대로 답하면 만점이어야 한다 — 'SFR-009\n분류' 의 009 가 9분으로 읽히지 않게
+            # 정답 그대로 답하거나 근거를 모두 찾으면 만점이어야 한다 — 'SFR-009\n분류' 의 009 가 9분으로,
+            # '생성된 문서는 별도 시건장치…' 가 부정으로 읽히지 않게
             assert _key_fact_ratio(facts[n], row["answer"]) == 1, n
-        if row["primary_topic"] == "multi_hop" and facts[n]:
             assert _key_fact_ratio(facts[n], row["context"]) == 1, n
+        if row["primary_topic"] == "multi_hop" and facts[n]:
             assert not [v for v in _labelled_cell_values(row) if v not in {a for f in facts[n] for a in f.split("|")}], n
 
     assert _key_fact_ratio(facts[270], "MAR-006입니다.") == 1

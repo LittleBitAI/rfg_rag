@@ -134,8 +134,11 @@ def _canonical_text(text: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 def _negated(text: str, start: int, end: int) -> bool:
-    return (start > 0 and text[start - 1] in "미불비"
-            or re.search(r"않|제외|별도|없", text[end:end + 6]) is not None)
+    if start > 0 and text[start - 1] in "미불비" or re.search(r"않|제외|없", text[end:end + 6]):
+        return True
+    # '별도' 는 '부가세 별도' 처럼 말이 끝날 때만 부정이다. '별도 시건장치' · '별도로' 처럼 뒤를 꾸미면 '따로' 다
+    separate = re.search(r"별도", text[end:end + 6])
+    return separate is not None and not re.match(r"\s*\w", text[end + separate.end():])
 
 
 def _fact_pattern(fact: str) -> str:
