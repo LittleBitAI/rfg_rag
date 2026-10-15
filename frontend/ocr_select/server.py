@@ -1,6 +1,7 @@
 """OCR 이미지 라벨링 화면의 API — 그림 목록 · 그림 파일 · 라벨 저장.
 
-라벨은 artifacts/ocr_labels/labels.jsonl 에 덧붙이기만 한다. 다시 매긴 라벨도 새 줄이고, 읽을 때 그림마다 마지막 줄이 이긴다.
+화면의 카드는 그림이 나온 위치 하나씩이다 (같은 그림이 여러 곳에 나오면 카드도 여러 장).
+라벨은 artifacts/ocr_labels/labels.jsonl 에 덧붙이기만 한다. 다시 매긴 라벨도 새 줄이고, 읽을 때 위치마다 마지막 줄이 이긴다.
 artifacts/ocr_selection.jsonl(CRAFT 선별 기록)이 있으면 위치마다 CRAFT 분류를 붙여 보여 주기만 한다.
 저장소 최상위에서 실행: .venv\\Scripts\\python -m uvicorn frontend.ocr_select.server:app --port 8766
 """
@@ -24,8 +25,15 @@ _append_lock = threading.Lock()
 
 
 class LabelRequest(BaseModel):
-    image_sha256: str
+    key: str  # occurrence_key — 카드 하나 = 그림이 나온 위치 하나
     label: Literal[1, 2, 3]  # 1 꼭 인식 · 2 인식해야 하나 어려움 · 3 필요 없음
+
+
+def occurrence_key(o: dict) -> str:
+    """그림이 나온 위치 하나의 이름. 한 문서에서 같은 그림이 여러 번 나오면 HWP 는 marker_start 로 가른다."""
+    if o["format"] == "pdf":
+        return f'{o["document_sha256"]}:pdf:{o["page"]}:{o["image_index"]}:{o["xref"]}'
+    return f'{o["document_sha256"]}:hwp:{o["image_name"]}:{o["marker_start"]}'
 
 
 def location_key(document_sha256: str, location: dict) -> tuple:
@@ -41,16 +49,20 @@ def craft_verdicts(rows: list[dict]) -> dict[tuple, str]:
 
 
 def latest_labels(rows: list[dict]) -> dict[str, int]:
-    """그림 해시 → 라벨. 같은 그림의 마지막 줄이 이긴다."""
-    return {r["image_sha256"]: r["label"] for r in rows}
+    """위치 → 라벨. 라벨 줄의 occurrences 마다 적용하고, 같은 위치는 마지막 줄이 이긴다."""
+    return {occurrence_key(o): r["label"] for r in rows for o in r["occurrences"]}
 
 
 def cards(images: list[dict], labels: dict[str, int], verdicts: dict[tuple, str]) -> list[dict]:
-    """images.jsonl 의 줄마다 지금 라벨과 위치별 CRAFT 분류(없으면 None)를 붙인다."""
-    return [{**row, "label": labels.get(row["image_sha256"]),
-             "occurrences": [{**o, "craft": verdicts.get(location_key(o["document_sha256"], o))}
-                             for o in row["occurrences"]]}
-            for row in images]
+    """images.jsonl 의 위치마다 카드 하나 — 그림 정보에 그 위치의 라벨과 CRAFT 분류(없으면 None)를 붙인다."""
+    out = []
+    for row in images:
+        image = {k: v for k, v in row.items() if k != "occurrences"}
+        for o in row["occurrences"]:
+            key = occurrence_key(o)
+            out.append({**image, "key": key, "occurrence": o, "label": labels.get(key),
+                        "craft": verdicts.get(location_key(o["document_sha256"], o))})
+    return out
 
 
 def _read_images() -> list[dict]:
@@ -81,13 +93,14 @@ def file_endpoint(path: str) -> FileResponse:
 
 @app.post("/ocr-api/labels")
 def label_endpoint(req: LabelRequest) -> dict:
-    row = next((r for r in _read_images() if r["image_sha256"] == req.image_sha256), None)
-    if row is None:
-        raise HTTPException(404, "images.jsonl 에 없는 그림입니다.")
-    entry = {"image_sha256": req.image_sha256, "label": req.label,
+    found = next(((r, o) for r in _read_images() for o in r["occurrences"] if occurrence_key(o) == req.key), None)
+    if found is None:
+        raise HTTPException(404, "images.jsonl 에 없는 위치입니다.")
+    row, occurrence = found
+    entry = {"image_sha256": row["image_sha256"], "label": req.label,
              "labelled_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-             "occurrences": row["occurrences"]}
+             "occurrences": [occurrence]}
     LABELS.parent.mkdir(parents=True, exist_ok=True)
-    with _append_lock, LABELS.open("a", encoding="utf-8") as f:  # 반복 로고 한 줄은 수십 KB — 동시 저장이 줄을 섞지 않게
+    with _append_lock, LABELS.open("a", encoding="utf-8") as f:  # 동시 저장이 한 줄 안에서 섞이지 않게
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    return {"image_sha256": req.image_sha256, "label": req.label}
+    return {"key": req.key, "label": req.label}

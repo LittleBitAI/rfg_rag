@@ -1,4 +1,4 @@
-"""OCR 라벨링 화면: 같은 그림 묶기, 라벨 · CRAFT 기록의 마지막 줄 우선, 1~3 밖 라벨 거부, images/ 밖 파일 차단."""
+"""OCR 라벨링 화면: 같은 그림 묶기, 위치마다 카드 하나와 라벨 · CRAFT 기록의 마지막 줄 우선, 1~3 밖 라벨 거부, images/ 밖 파일 차단."""
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -28,8 +28,10 @@ def test_group_images_one_row_per_hash_with_every_location():
     assert rows[1]["viewable"] is False and rows[1]["reason"] == "Unsupported vector image encoding"
 
 
-def test_last_label_and_last_craft_row_win():
-    labels = server.latest_labels([{"image_sha256": "s1", "label": 3}, {"image_sha256": "s1", "label": 1}])
+def test_one_card_per_location_with_its_last_label_and_last_craft_row():
+    # 첫 줄은 그림의 두 위치를 함께 3 으로, 다음 줄은 PDF 위치만 1 로 다시 매겼다
+    labels = server.latest_labels([{"image_sha256": "s1", "label": 3, "occurrences": [LOGO_1, PAGE_IMG]},
+                                   {"image_sha256": "s1", "label": 1, "occurrences": [PAGE_IMG]}])
     craft_rows = [
         {"classification": "REVIEW_REQUIRED", "source": {"document_sha256": "doc-a"}, "location": LOGO_1},
         {"classification": "OCR_CANDIDATE", "source": {"document_sha256": "doc-a"},
@@ -43,15 +45,22 @@ def test_last_label_and_last_craft_row_win():
 
     out = server.cards(images, labels, server.craft_verdicts(craft_rows))
 
-    assert [c["label"] for c in out] == [1, None]
-    assert [o["craft"] for o in out[0]["occurrences"]] == ["OCR_CANDIDATE", "OCR_UNNECESSARY"]
-    assert out[1]["occurrences"][0]["craft"] is None
+    assert [(c["image_sha256"], c["occurrence"]) for c in out] == [
+        ("s1", LOGO_1), ("s1", PAGE_IMG), ("s2", {**LOGO_1, "image_name": "BIN2.wmf"})]
+    assert [c["label"] for c in out] == [3, 1, None]
+    assert [c["craft"] for c in out] == ["OCR_CANDIDATE", "OCR_UNNECESSARY", None]
+    assert len({c["key"] for c in out}) == 3
+
+
+def test_same_hwp_image_twice_in_one_document_gets_two_keys():
+    again = {**LOGO_1, "marker_start": 500, "repeated_occurrences": 2}
+    assert server.occurrence_key(LOGO_1) != server.occurrence_key(again)
 
 
 @pytest.mark.parametrize("label", [0, 4, "1", None])
 def test_label_outside_1_to_3_is_rejected(label):
     with pytest.raises(ValidationError):
-        server.LabelRequest(image_sha256="s1", label=label)
+        server.LabelRequest(key="k", label=label)
 
 
 def test_file_endpoint_refuses_paths_outside_images(tmp_path, monkeypatch):

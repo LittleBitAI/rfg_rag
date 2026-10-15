@@ -202,9 +202,9 @@ API 서버는 켤 때 색인과 KURE-v1 을 읽느라 수십 초 걸립니다. A
 04 노트북의 행과 구분하는 열이 없어 `timestamp` 로만 가릴 수 있고, 노트북의 누적 사용량 표에 함께 잡힙니다. 평가 점수 CSV 에는 영향이 없습니다.
 
 ## OCR 이미지 라벨링 화면
-RFP 문서에서 꺼낸 그림마다 OCR 이 필요한지 사람이 매기는 화면입니다. 같은 그림(바이트가 같은 반복 로고 등)은 카드 하나로 묶이고, 카드에 나온 위치가 모두 적힙니다.
+RFP 문서에서 꺼낸 그림마다 OCR 이 필요한지 사람이 매기는 화면입니다. 카드 하나가 그림이 나온 위치 하나입니다. 같은 그림(반복 로고 등)도 나온 곳마다 카드가 따로 있고 따로 매깁니다.
 라벨은 `1` 꼭 인식해야 함 · `2` 인식해야 하나 어려움 · `3` 인식할 필요 없음 셋이고, 누르는 즉시 저장됩니다. 화면을 다시 열면 매긴 라벨이 그대로 보입니다.
-WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카드(파일 이름 · 형식 · 위치)로 나오고 라벨을 매길 수 있습니다.
+WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카드(형식 · 문서 이름 · 위치)로 나오고 라벨을 매길 수 있습니다.
 `artifacts/ocr_selection.jsonl`(CRAFT 선별 기록)이 있으면 카드에 CRAFT 분류를 함께 보여 줍니다. 없어도 화면은 그대로 동작합니다.
 라벨은 기록만 합니다. 01 전처리가 라벨을 읽어 OCR 대상을 고르게 하는 일은 전처리 담당의 별도 변경입니다.
 
@@ -215,7 +215,7 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 결과 — `artifacts/ocr_labels/`
 - `images/<doc_id>/<파일>`: 꺼낸 그림. extract 를 다시 실행하면 이 폴더만 새로 만듭니다.
 - `images.jsonl`: 서로 다른 그림 한 줄씩 — `image_sha256`, `file`, `viewable`, `reason`, `occurrences`(위치마다 `doc_id` · `source` · `document_sha256` · `format`, HWP 는 `image_name` · `marker_start` · `repeated_occurrences`, PDF 는 `page` · `image_index` · `xref` · `bbox_points` — CRAFT 기록과 같은 이름). 문서에 들어 있지만 본문에 `[IMAGE]` 표시가 없는 HWP 그림(쪽에 놓이지 않은 그림 등)은 `marker_start` 가 `null` 이고, 01 전처리 · CRAFT 는 이 그림을 보지 않습니다.
-- `labels.jsonl`: 라벨을 누를 때마다 `{image_sha256, label, labelled_at, occurrences}` 한 줄을 덧붙입니다. 다시 매긴 라벨도 새 줄이고, 그림마다 마지막 줄이 지금 라벨입니다. extract 를 다시 실행해도 지우지 않습니다.
+- `labels.jsonl`: 라벨을 누를 때마다 `{image_sha256, label, labelled_at, occurrences}` 한 줄을 덧붙입니다. `occurrences` 에는 매긴 위치 하나가 들어갑니다. 다시 매긴 라벨도 새 줄이고, 위치마다 마지막 줄이 지금 라벨입니다. extract 를 다시 실행해도 지우지 않습니다.
 
 ## API 사용량 자동 기록
 

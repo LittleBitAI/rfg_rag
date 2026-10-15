@@ -7,7 +7,7 @@ const LABELS = [
 ]
 
 export default function Ocr() {
-  // 카드: images.jsonl 한 줄 + label(없으면 null) + 위치마다 craft(없으면 null)
+  // 카드: 그림이 나온 위치 하나 — images.jsonl 의 그림 정보 + key · occurrence · label · craft (없으면 null)
   const [cards, setCards] = useState(null)
   const [error, setError] = useState(null)
 
@@ -18,15 +18,15 @@ export default function Ocr() {
   }, [])
 
   // 누르는 즉시 바꿔 보이고, 저장에 실패하면 원래 라벨로 되돌린다.
-  // 저장하는 동안 그 카드의 버튼을 막아 두어 한 그림의 라벨이 누른 순서대로 파일에 쌓인다
-  async function label(sha, value) {
-    const before = cards.find((c) => c.image_sha256 === sha).label
-    const patch = (fields) => setCards((cs) => cs.map((c) => (c.image_sha256 === sha ? { ...c, ...fields } : c)))
+  // 저장하는 동안 그 카드의 버튼을 막아 두어 한 위치의 라벨이 누른 순서대로 파일에 쌓인다
+  async function label(key, value) {
+    const before = cards.find((c) => c.key === key).label
+    const patch = (fields) => setCards((cs) => cs.map((c) => (c.key === key ? { ...c, ...fields } : c)))
     patch({ label: value, error: null, saving: true })
     const res = await fetch('/ocr-api/labels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_sha256: sha, label: value }),
+      body: JSON.stringify({ key, label: value }),
     }).catch(() => null)
     if (res?.ok) patch({ saving: false })
     else patch({ label: before, error: res ? await errorText(res) : UNREACHABLE, saving: false })
@@ -46,7 +46,7 @@ export default function Ocr() {
         {error && <p className="error">{error}</p>}
         {!cards && !error && <p className="meta lead">그림 목록을 읽는 중…</p>}
         <div className="grid">
-          {cards?.map((card) => <Card key={card.image_sha256} card={card} onLabel={label} />)}
+          {cards?.map((card) => <Card key={card.key} card={card} onLabel={label} />)}
         </div>
       </main>
     </>
@@ -55,7 +55,7 @@ export default function Ocr() {
 
 function Card({ card, onLabel }) {
   const name = card.file.split('/').at(-1)
-  const verdicts = [...new Set(card.occurrences.map((o) => o.craft).filter(Boolean))]
+  const o = card.occurrence
   return (
     <article className="card">
       {card.viewable ? (
@@ -66,17 +66,12 @@ function Card({ card, onLabel }) {
           <span>{card.reason}</span>
         </div>
       )}
-      <p className="label">{name}</p>
-      {verdicts.length > 0 && (
-        <p className="badges">{verdicts.map((v) => <span key={v} className="badge">CRAFT {v}</span>)}</p>
-      )}
-      <details>
-        <summary>위치 {card.occurrences.length}곳 · {card.occurrences[0].source}</summary>
-        <ul>{card.occurrences.map((o, i) => <li key={i}>{where(o)}</li>)}</ul>
-      </details>
+      <p className="label">{o.source}</p>
+      <p className="meta where">{where(o)}</p>
+      {card.craft && <p className="badges"><span className="badge">CRAFT {card.craft}</span></p>}
       <div className="choices">
         {LABELS.map((l) => (
-          <button key={l.value} aria-pressed={card.label === l.value} disabled={card.saving} onClick={() => onLabel(card.image_sha256, l.value)}>
+          <button key={l.value} aria-pressed={card.label === l.value} disabled={card.saving} onClick={() => onLabel(card.key, l.value)}>
             {l.text}
           </button>
         ))}
@@ -87,10 +82,9 @@ function Card({ card, onLabel }) {
 }
 
 function where(o) {
+  if (o.format === 'pdf') return `p.${o.page} · ${o.image_index + 1}번째 그림`
   // marker_start 가 null 이면 문서에 들어 있지만 본문에 표시가 없는 그림 — 01 전처리가 보지 않는다
-  const hwp = o.marker_start === null ? `${o.image_name} · 본문 표시 없음` : o.image_name
-  const at = o.format === 'pdf' ? `p.${o.page} · ${o.image_index + 1}번째 그림` : hwp
-  return `${o.source} · ${at}${o.craft ? ` · ${o.craft}` : ''}`
+  return o.marker_start === null ? `${o.image_name} · 본문 표시 없음` : o.image_name
 }
 
 // doc_id 에 한글 · 괄호가 있어 경로 조각마다 인코딩한다
