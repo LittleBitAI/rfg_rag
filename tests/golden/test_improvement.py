@@ -9,7 +9,7 @@ from golden_pipeline import adoption, improvement, storage
 from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
-from golden_pipeline.validation import SCREEN_CODES, release, rule_reason, validate
+from golden_pipeline.validation import SCREEN_CODES, release, rename, rule_reason, validate
 
 PRICED = {"usd_per_million_input_tokens": 1.0, "usd_per_million_output_tokens": 4.0}
 LOOP = {
@@ -428,6 +428,28 @@ def test_a_release_names_each_document_by_the_current_data_list(looped, evidence
     [released] = read_jsonl(release_dir / "golden.jsonl")
     assert made["question"] == with_document(BOND["question"], {"agency": "나기관", "title": "나사업 운영"})
     assert released["question"] == with_document(BOND["question"], {"agency": "새기관", "title": "나사업 운영"})
+
+
+def test_a_rename_reissues_releases_under_current_names_without_screening(looped, evidence_run, tmp_path):
+    # 이름만 바뀌었는데 판정을 다시 사면 크레딧이 든다. 판정 결과는 앞 출시본의 것을 그대로 쓴다.
+    def useful(**kwargs):
+        return {"model": "screen-test", "text": '{"useful": true, "code": null, "reason": "보증금"}',
+                "input_tokens": 10, "output_tokens": 10}
+
+    config = tmp_path / "screen.json"
+    config.write_text(json.dumps({**LOOP["validator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
+    first = release("numeric", "v1", [("A", "l1-r1")], config, useful)
+    data_list = evidence_run.parent / "data_list.csv"
+    data_list.write_text(data_list.read_text(encoding="utf-8").replace(",나기관", ",새기관"), encoding="utf-8")
+
+    renamed = rename("numeric", "v2", ["v1"])
+
+    [before] = read_jsonl(first / "golden.jsonl")
+    [after] = read_jsonl(renamed / "golden.jsonl")
+    assert after == {**before, "question": with_document(BOND["question"], {"agency": "새기관", "title": "나사업 운영"})}
+    manifest = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["release"] == {"renamed_from": {"v1": storage._sha256(first / "golden.jsonl")}}
+    assert manifest["runs"] == ["A/l1-r1"]
 
 
 @pytest.mark.parametrize("run_id", ["l1-v2", "l1-h-final"])

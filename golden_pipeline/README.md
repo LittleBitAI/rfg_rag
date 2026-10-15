@@ -47,6 +47,7 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `audit` | B · C run 의 독립 검증. A 는 loop 안에서 검증합니다 | 유료 |
 | `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
 | `release` | 검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (아래 출시) | 유료 |
+| `rename` | 출시본들을 합쳐 질문 앞 문서 이름만 지금 `data/data_list.csv` 의 이름으로 바꾼 새 출시본으로. 쓸모 판정은 다시 하지 않습니다 | 없음 |
 | `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
 
 ```
@@ -63,6 +64,7 @@ golden_pipeline\golden.cmd resume --topic numeric --method A --id a1
 golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls 40 --budget 1
 
 golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 400 --budget 2
+golden_pipeline\golden.cmd rename --topic numeric --version final --source v1 --source v2
 golden_pipeline\golden.cmd plan p2 v11-20261014 --count numeric 20 --max-context-chars 4000 --skip-plan p1
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```

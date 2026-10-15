@@ -224,10 +224,31 @@ def _release_items(topic, runs):
         units.update((item["candidate_id"], evidence_units(item, bundles[item["bundle_id"]])) for item in accepted)
         docs.update((item["candidate_id"], bundles[item["bundle_id"]]["doc_sha"]) for item in accepted)
         items.extend(accepted)
+    return _current_names(items, docs), units
+
+
+def rename(topic, version, sources):
+    """이미 낸 출시본들을 쓸모 판정 없이 합쳐, 질문 앞 문서 이름만 지금 data_list.csv 의 이름으로 바꿔 releases/{version}/ 로 낸다.
+
+    팀이 기관 이름을 고친 뒤 판정을 다시 사지 않으려는 것이다. 항목 내용은 write_release 가 카탈로그 기록과 대조한다.
+    """
+    items, runs, golden = [], set(), {}
+    for source in sources:
+        release_dir = storage._child(storage._topic_dir(topic) / "releases", source)
+        manifest = storage._read_json(release_dir / "manifest.json")
+        items += storage._read_jsonl(release_dir / "golden.jsonl")
+        runs.update(tuple(run.split("/", 1)) for run in manifest["runs"])
+        golden[source] = manifest["golden_sha256"]
+    _refuse_duplicates(items)
+    docs = {item["candidate_id"]: item["evidence"][0]["doc_sha"] for item in items}
+    return storage.write_release(topic, version, _current_names(items, docs), runs, {"renamed_from": golden})
+
+
+def _current_names(items, docs):
+    """docs 는 candidate_id → 문서 SHA. 한 출시본에서 한 문서는 지금 data_list.csv 의 한 이름으로 나간다."""
     names = plan.doc_names(evidence.PACKAGE, set(docs.values()))
-    items = [{**item, "question": generation.with_document(DOCUMENT_PREFIX.sub("", item["question"], count=1),
-                                                           names[docs[item["candidate_id"]]])} for item in items]
-    return items, units
+    return [{**item, "question": generation.with_document(DOCUMENT_PREFIX.sub("", item["question"], count=1),
+                                                          names[docs[item["candidate_id"]]])} for item in items]
 
 
 def _screener(client, config, instructions, calls):
