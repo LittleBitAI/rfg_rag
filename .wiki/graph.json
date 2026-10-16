@@ -39,12 +39,18 @@
    "kind": "link"
   },
   {
+   "a": "README.md",
+   "b": "docs/eval_ir_sample.md",
+   "kind": "link"
+  },
+  {
    "a": "docs/craft_ocr_selection.md",
    "b": "README.md",
    "kind": "link"
   }
  ],
  "orphans": [
+  "docs/research/review-eval-ir-retrieval-metrics-f1-1.md",
   "docs/research/review-feature-eval-golden-input-f4-1.md",
   "docs/research/review-feature-eval-golden-input-f4-2.md",
   "docs/research/review-feature-golden-absent-premise-f2-1.md",
@@ -56,10 +62,10 @@
   "docs/research/review-feature-golden-data-validation-f1-2.md"
  ],
  "counts": {
-  "docs": 13,
-  "linked": 4,
+  "docs": 15,
+  "linked": 5,
   "read": 0,
-  "orphans": 9,
+  "orphans": 10,
   "pages": 1,
   "decisions": 38,
   "injectable_decisions": 7

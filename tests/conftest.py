@@ -18,3 +18,4 @@ def no_langfuse_keys(monkeypatch):
     """
     for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         monkeypatch.setenv(key, "")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "false")

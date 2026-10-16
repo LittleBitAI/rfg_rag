@@ -7,6 +7,7 @@ from openai.types.chat import ChatCompletion
 from rag.generation import generation
 from rag.retrieval import rewrite
 from rag.retrieval.retrieval import HybridIndex
+from test_retrieval import ranked
 
 
 @pytest.mark.parametrize("content,details,expected_question,reasoning_tokens", [
@@ -64,9 +65,9 @@ def test_rewrite_sends_last_ten_turns_as_chat_messages(monkeypatch):
 @pytest.mark.parametrize("route",[{}, {"A": {"doc-a"}}, {"A": {"doc-a"}, "B": {"doc-b"}}])
 def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypatch, route):
     for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL"):
-        monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv(key, "")
     item = {"id": "q1", "question": "원본 기관 비교 질문", "reference": "정답", "key_facts": ["근거"],
-            "reset_context": False, "answerable": True}
+            "reset_context": False, "answerable": True, "primary_topic": None, "evidence": []}
     rewrite_result = {"question": "검색용 질문", "model": "rewrite-model", "input_tokens": 10,
                       "output_tokens": 5, "reasoning_tokens": 2, "latency_s": 0.1}
     rewrite_fn = MagicMock(return_value=rewrite_result)
@@ -74,12 +75,13 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
     hit = {"chunk_id": "c1", "doc_id": "doc-a", "body": "근거", "source": "문서.pdf", "page": 3}
     index = HybridIndex.__new__(HybridIndex)
     index.rcfg = {"token_budget": 2500}
+    index.chunk_file = "fixture/chunks.jsonl"
     index.chunks = [hit]
     index.embedder = MagicMock()
     index.embedder.token_counts.return_value = [1]
     index.router = MagicMock()
     index.router.route.return_value = route
-    index._rank = MagicMock(return_value=[(0, 1.0)])
+    index._rank = MagicMock(return_value=ranked([(0, 1.0)]))
     generate_fn = MagicMock(return_value={"answer": "답변", "input_tokens": 100,
                                           "output_tokens": 50, "reasoning_tokens": 20})
     monkeypatch.setattr(generation, "generate", generate_fn)
@@ -100,5 +102,8 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
     assert row["rewrite"] == rewrite_result
     assert row["input_tokens"] == 100
     assert row["contexts"] == ["근거"]
+    assert row["context_chunk_ids"] == ["c1"]
+    assert row["ranked_candidates"][0]["chunk_id"] == "c1"
+    assert row["retrieval_settings"]["stored_rewrites_reused"] is False
     assert row["sources"] == ["문서.pdf p.3"]
     assert row["trace_id"] is None
