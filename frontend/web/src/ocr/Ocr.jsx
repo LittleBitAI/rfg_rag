@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const LABELS = [
   { value: 1, text: '1 꼭 인식' },
@@ -13,6 +13,8 @@ export default function Ocr() {
   const [batch, setBatch] = useState(() => Number(new URLSearchParams(location.search).get('batch')) || null)
   // 크게 보는 그림: 이 묶음에서 미리보기가 있는 카드 중 몇 번째인지 (닫혀 있으면 null)
   const [zoom, setZoom] = useState(null)
+  // 원본 보기로 앞뒤 본문을 띄운 HWP 카드 (닫혀 있으면 null). 크게 보기에서 열면 닫을 때 그 그림으로 돌아간다
+  const [context, setContext] = useState(null)
 
   // StrictMode 는 개발 중 이 effect 를 두 번 돌린다. 물러난 실행의 늦은 응답이 그 사이 매긴 라벨을 덮지 않게 버린다
   useEffect(() => {
@@ -45,6 +47,7 @@ export default function Ocr() {
   function chooseBatch(n) {
     setBatch(n)
     setZoom(null)
+    setContext(null)
     history.replaceState(null, '', `?batch=${n}`)
     window.scrollTo(0, 0)
   }
@@ -80,15 +83,16 @@ export default function Ocr() {
         {error && <p className="error">{error}</p>}
         {!cards && !error && <p className="meta lead">그림 목록을 읽는 중…</p>}
         <div className="grid">
-          {shown.map((card) => <Card key={card.key} card={card} onLabel={label} onZoom={() => setZoom(viewable.indexOf(card))} />)}
+          {shown.map((card) => <Card key={card.key} card={card} onLabel={label} onZoom={() => setZoom(viewable.indexOf(card))} onContext={setContext} />)}
         </div>
       </main>
-      {zoom !== null && <Zoom cards={viewable} at={zoom} setAt={setZoom} />}
+      {zoom !== null && !context && <Zoom cards={viewable} at={zoom} setAt={setZoom} onContext={setContext} />}
+      {context && <Context card={context} setCard={setContext} />}
     </>
   )
 }
 
-function Card({ card, onLabel, onZoom }) {
+function Card({ card, onLabel, onZoom, onContext }) {
   const name = card.file.split('/').at(-1)
   const o = card.occurrence
   return (
@@ -104,7 +108,7 @@ function Card({ card, onLabel, onZoom }) {
         </div>
       )}
       <p className="label">{o.source}</p>
-      <p className="meta where">{where(o)}</p>
+      <p className="meta where">{where(o)} <SourceLink card={card} onContext={onContext} /></p>
       {card.craft && <p className="badges"><span className="badge">CRAFT {card.craft}</span></p>}
       <div className="choices">
         {LABELS.map((l) => (
@@ -120,7 +124,7 @@ function Card({ card, onLabel, onZoom }) {
 
 // 크게 보기: 바깥을 누르거나 Esc 로 닫고, ◀ ▶ · ← → 로 이 묶음의 앞뒤 그림으로 간다.
 // 끝에서 돌아 들어가지 않고 그쪽 화살표를 감춰, 묶음 끝에 닿았음을 보인다
-function Zoom({ cards, at, setAt }) {
+function Zoom({ cards, at, setAt, onContext }) {
   const card = cards[at]
   const hasPrev = at > 0
   const hasNext = at < cards.length - 1
@@ -139,8 +143,56 @@ function Zoom({ cards, at, setAt }) {
       {hasPrev && <button className="step prev" aria-label="이전 그림" onClick={() => setAt(at - 1)}>◀</button>}
       <img key={card.key} src={fileUrl(card.file)} alt={card.file.split('/').at(-1)}
         onLoad={(e) => e.target.style.setProperty('--ratio', e.target.naturalWidth / e.target.naturalHeight)} />
-      <p className="label caption">{card.occurrence.source} · {where(card.occurrence)}</p>
+      <div className="caption">
+        <p className="label">{card.occurrence.source} · {where(card.occurrence)}</p>
+        <SourceLink card={card} onContext={onContext} />
+      </div>
       {hasNext && <button className="step next" aria-label="다음 그림" onClick={() => setAt(at + 1)}>▶</button>}
+    </div>
+  )
+}
+
+// 원본 보기: PDF 는 새 탭에서 그 쪽으로 연다. HWP 는 쪽 번호가 없어(쪽은 한컴이 그릴 때 정해진다) 그림 앞뒤 본문을 띄운다.
+// 본문에 표시가 없는 HWP 그림은 앞뒤 글도 없어 링크를 두지 않는다
+function SourceLink({ card, onContext }) {
+  const o = card.occurrence
+  if (o.format === 'pdf') {
+    return <a className="source-link" href={`/ocr-api/documents/${o.document_sha256}#page=${o.page}`} target="_blank" rel="noreferrer">원본 보기</a>
+  }
+  if (o.marker_start === null) return null
+  return <button className="source-link" onClick={() => onContext(card)}>원본 보기</button>
+}
+
+// HWP 원본 보기: 그림 표시 앞뒤 본문. 바깥을 누르거나 Esc 로 닫는다
+function Context({ card, setCard }) {
+  const [body, setBody] = useState(null) // { before, marker, after } 또는 { error }
+  const mark = useRef(null)
+  useEffect(() => {
+    let retired = false
+    fetch(`/ocr-api/context?key=${encodeURIComponent(card.key)}`)
+      .then(async (res) => {
+        const b = res.ok ? await res.json() : { error: await errorText(res) }
+        if (!retired) setBody(b)
+      })
+      .catch(() => retired || setBody({ error: UNREACHABLE }))
+    return () => { retired = true }
+  }, [card.key])
+  useEffect(() => { mark.current?.scrollIntoView({ block: 'center' }) }, [body])
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === 'Escape') setCard(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setCard])
+  return (
+    <div className="zoom" onClick={(e) => e.target === e.currentTarget && setCard(null)}>
+      <div className="context">
+        <p className="label">{card.occurrence.source} · {where(card.occurrence)}</p>
+        {!body && <p className="meta">원본을 읽는 중…</p>}
+        {body?.error && <p className="error">{body.error}</p>}
+        {body?.marker && <p className="context-text">{body.before}<mark ref={mark}>{body.marker}</mark>{body.after}</p>}
+      </div>
     </div>
   )
 }

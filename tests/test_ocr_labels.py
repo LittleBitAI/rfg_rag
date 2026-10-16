@@ -160,3 +160,12 @@ def test_file_endpoint_refuses_paths_outside_images(tmp_path, monkeypatch):
     assert server.file_endpoint("a_1/BIN1.png").path == (images / "a_1" / "BIN1.png").resolve()
     with pytest.raises(HTTPException):
         server.file_endpoint("../labels.jsonl")
+
+
+def test_context_cuts_whole_lines_around_the_marker(monkeypatch):
+    monkeypatch.setattr(server, "CONTEXT_CHARS", 10)
+    text = "first line\nnear\n[IMAGE: BIN2.png] after\nlast line\n"
+    start = text.index("[IMAGE")
+
+    assert server.context(text, start) == {"before": "near\n", "marker": "[IMAGE: BIN2.png]", "after": " after"}
+    assert server.context("[IMAGE: BIN1.png]", 0) == {"before": "", "marker": "[IMAGE: BIN1.png]", "after": ""}

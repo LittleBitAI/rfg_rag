@@ -151,10 +151,31 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .caption {
   max-width: 100%;
+  display: flex; align-items: baseline; gap: 12px;
   color: var(--on-accent);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   cursor: default;
 }
+.caption .label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 원본 보기: 강조색은 라벨 · 묶음에만 쓰므로 둘레 글자색 그대로 밑줄만 */
+.source-link {
+  flex: none;
+  padding: 0; border: 0; background: none;
+  color: inherit; font-size: 15px; font-weight: 400;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+/* HWP 원본 보기: 그림 표시 앞뒤 본문. 표는 Markdown 글 그대로 보인다 */
+.context {
+  width: 100%; max-width: 860px; max-height: 100%;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 20px 24px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  cursor: default;
+}
+.context-text { margin: 0; font-size: 15px; line-height: 1.7; white-space: pre-wrap; }
+.context-text mark { padding: 0 4px; border-radius: 4px; background: var(--accent-soft); font-weight: 600; }
 .step {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 44px; height: 44px;
