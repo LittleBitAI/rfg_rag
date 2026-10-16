@@ -201,14 +201,49 @@ def _table(rows: list[dict], scores: list[dict], path: Path) -> pd.DataFrame:
 ANSWER_FIELDS = ("id", "question", "reference", "key_facts", "answerable", "answer", "contexts", "trace_id", "latency_s",
                  "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "cost_usd", "rewrite",
                  "ranked_candidates", "context_chunk_ids", "retrieval_settings", "evidence", "primary_topic")
+ANSWER_RECORD_FIELDS = {
+    "rewrite": ("question", "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "cost_usd"),
+    "retrieval_settings": ("dense_weight", "candidate_k", "token_budget", "chunk_file", "k_values", "stored_rewrites_reused"),
+}
+ANSWER_LIST_RECORD_FIELDS = {
+    "ranked_candidates": ("chunk_id", "doc_id", "fused_rank", "dense_score", "dense_rank", "bm25_score", "bm25_rank",
+                          "exact_code_match"),
+    "evidence": ("doc_id", "chunk_id"),
+}
+
+
+def _missing_record_fields(record, fields: tuple, prefix: str) -> list[str]:
+    if not isinstance(record, dict):
+        return [prefix]
+    return [f"{prefix}.{field}" for field in fields if field not in record]
+
+
+def _missing_answer_fields(row: dict, prefix: str) -> list[str]:
+    if not isinstance(row, dict):
+        return [prefix]
+    missing = _missing_record_fields(row, ANSWER_FIELDS, prefix)
+    for field, fields in ANSWER_RECORD_FIELDS.items():
+        if field in row:
+            missing.extend(_missing_record_fields(row[field], fields, f"{prefix}.{field}"))
+    for field, fields in ANSWER_LIST_RECORD_FIELDS.items():
+        if field not in row:
+            continue
+        records = row[field]
+        if not isinstance(records, list):
+            missing.append(f"{prefix}.{field}")
+            continue
+        for i, record in enumerate(records):
+            missing.extend(_missing_record_fields(record, fields, f"{prefix}.{field}[{i}]"))
+    return missing
 
 
 def _read_answers(answers_path: Path) -> list[dict]:
     """답변 파일을 읽고, 평가가 읽을 필드가 빠진 행이 있으면 RAGAS 호출(유료) 전에 멈춘다"""
     answers = read_jsonl(answers_path)
-    missing = sorted({field for r in answers for field in ANSWER_FIELDS if field not in r})
+    missing = [field for i, row in enumerate(answers, 1) for field in _missing_answer_fields(row, f"row[{i}]")]
     if missing:
-        raise ValueError(f"{answers_path} 에 {missing} 필드가 없습니다. 03 → 02 설정 셀 → 04 를 다시 실행해 답변 파일을 만드세요")
+        raise ValueError(f"{answers_path} 에 {missing} 필드가 없거나 형식이 잘못되었습니다. "
+                         "03 → 02 설정 셀 → 04 를 다시 실행해 답변 파일을 만드세요")
     return answers
 
 

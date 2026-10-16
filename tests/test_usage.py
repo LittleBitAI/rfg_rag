@@ -271,17 +271,57 @@ def test_each_evaluation_function_saves_scores_without_notebook(monkeypatch, tmp
     pd.testing.assert_frame_equal(pd.read_csv(tmp_path / f"{name}.csv"), table.replace("", float("nan")))
 
 
-@pytest.mark.parametrize("name", ["retrieval", "generation", "grounding", "end_to_end"])
-@pytest.mark.parametrize("field", ["answerable", "rewrite", "ranked_candidates", "context_chunk_ids", "retrieval_settings"])
+@pytest.mark.parametrize("name", ["retrieval", "generation", "grounding", "end_to_end", "rerun"])
+@pytest.mark.parametrize("field", [
+    "answerable", "rewrite", "ranked_candidates", "context_chunk_ids", "retrieval_settings",
+    "rewrite.question", "rewrite.input_tokens", "rewrite.output_tokens", "rewrite.cached_input_tokens",
+    "rewrite.reasoning_tokens", "rewrite.cost_usd",
+    "ranked_candidates.chunk_id", "ranked_candidates.doc_id", "ranked_candidates.fused_rank",
+    "ranked_candidates.dense_score", "ranked_candidates.dense_rank", "ranked_candidates.bm25_score",
+    "ranked_candidates.bm25_rank", "ranked_candidates.exact_code_match", "evidence.doc_id", "evidence.chunk_id",
+    "retrieval_settings.dense_weight", "retrieval_settings.candidate_k", "retrieval_settings.token_budget",
+    "retrieval_settings.chunk_file", "retrieval_settings.k_values", "retrieval_settings.stored_rewrites_reused",
+])
 def test_incomplete_answers_stop_before_ragas_is_paid(monkeypatch, tmp_path, name, field):
-    # 옛 answers.jsonl 은 RAGAS 채점을 다 산 뒤 KeyError: 'answerable' 로 멈추고 CSV 도 남기지 않았다.
     calculate = MagicMock()
     monkeypatch.setattr(evaluation, "_ragas", calculate)
     answers = tmp_path / "answers.jsonl"
-    write_jsonl([{k: v for k, v in _answer_row().items() if k != field}], answers)
+    row = _answer_row()
+    parent, _, key = field.rpartition(".")
+    record = row[parent] if parent else row
+    if isinstance(record, list):
+        record.append(record[0].copy())
+        record = record[-1]
+        field = f"{parent}[1].{key}"
+    del record[key]
+    write_jsonl([_answer_row(), row], answers)
+    index = MagicMock()
+
+    with pytest.raises(ValueError, match="03 → 02 설정 셀 → 04") as error:
+        if name == "rerun":
+            evaluation.rerun_retrieval(answers, tmp_path / "rerun.jsonl", index)
+        else:
+            getattr(evaluation, f"evaluate_{name}")(answers, {})
+    assert f"row[2].{field}" in str(error.value)
+    calculate.assert_not_called()
+    index.search_with_candidates.assert_not_called()
+    assert not list(tmp_path.glob("*.csv"))
+    assert not (tmp_path / "rerun.jsonl").exists()
+
+
+@pytest.mark.parametrize("name", ["grounding", "end_to_end"])
+@pytest.mark.parametrize("field,value", [
+    ("rewrite", None), ("retrieval_settings", None), ("ranked_candidates", None), ("evidence", None),
+    ("ranked_candidates", [None]), ("evidence", [None]),
+])
+def test_malformed_nested_records_stop_before_ragas_is_paid(monkeypatch, tmp_path, name, field, value):
+    calculate = MagicMock()
+    monkeypatch.setattr(evaluation, "_ragas", calculate)
+    answers = tmp_path / "answers.jsonl"
+    write_jsonl([{**_answer_row(), field: value}], answers)
 
     with pytest.raises(ValueError, match=field + r".*03 → 02 설정 셀 → 04"):
-        getattr(evaluation, f"evaluate_{name}")(answers, load_config())
+        getattr(evaluation, f"evaluate_{name}")(answers, {})
     calculate.assert_not_called()
 
 
