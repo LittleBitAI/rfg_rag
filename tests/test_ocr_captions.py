@@ -50,6 +50,17 @@ def test_saved_hwp_caption_at_marker_and_unplaced_at_end(tmp_path, monkeypatch):
     ]
 
 
+def test_positioned_captions_keep_existing_table_minimum():
+    records = [{"page": 1, "kind": "text", "text": "앞의 짧은 본문"},
+               {"page": 1, "kind": "table", "text": "| A | B |\n| C | D |"},
+               {"page": 1, "kind": "image_caption", "text": "[그림/도표 설명] 42"},
+               {"page": 1, "kind": "text", "text": "뒤의 짧은 본문"}]
+    doc = {"doc_id": "short", "source": "short.hwp", "title": "Short", "doc_type": "hwp", "records": records}
+    cfg = {"chunk_size": 200, "overlap_ratio": 0, "table_size_factor": 1, "min_chunk_chars": 30}
+    chunks = chunk_documents([doc], cfg, position_captions=True)
+    assert [(c["kind"], c["body"]) for c in chunks] == [(r["kind"], r["text"]) for r in records if r["kind"] != "table"]
+
+
 def test_pdf_captions_split_body_at_image_positions_and_keep_cover(tmp_path):
     import io
     import pymupdf

@@ -9,6 +9,9 @@
     "data/ocr_labels/ocr_labels_batch5.jsonl": "8e539abe4fb25f4d8946ca8775e5100c10a763559aca273aebf2aee34f0d6ff0"
   },
   "label_resolution": "frontend.ocr_select.merge.merge; latest labelled_at per occurrence",
+  "extracted_places": 1044,
+  "labelled_places": 1040,
+  "unlabelled_places": 4,
   "places": 391,
   "distinct_images": 320,
   "hwp_null_markers": 80,
@@ -84,11 +87,11 @@
     "table:2": 10,
     "text:2": 10
   },
-  "base_comparison": "98 documents, 17614 chunks; parsed/chunked on base and with saved captions absent; every row identical.",
-  "placement_check": "391 synthetic captions in 79 actual source documents and positioned output chunks; all 80 null HWP captions at document ends; caption order, multiplicities and existing chunk keys match; no API usage added.",
+  "base_comparison": "Final actual 01 notebook cells with a configured missing captions path: 98 documents, 17614 chunks; every row identical to base 58b8b15; network disabled and no API usage added.",
+  "placement_check": "Final actual 01 notebook cells with all saved OCR: 98 documents, 391 caption records, 846 caption chunks, 22108 total chunks; all 80 null HWP captions at document ends; record order, caption text and occurrence counts match; existing 10 chunk keys; 19 unselected documents match base; network disabled, API keys removed, usage CSV and shared output files unchanged.",
   "document_hash_check": "All 391 selected places match the current source document SHA-256.",
   "api_access_check": "Both exact model IDs completed 55 paid OCR calls after explicit benchmark approval.",
-  "gate": "1064 passed, 12 warnings in 96.82s (0:01:36)",
+  "gate": "1065 passed, 12 warnings in 154.47s (0:02:34)",
   "test_cleanup": {
     "audited": [
       "tests/test_ocr_benchmark.py",
@@ -100,7 +103,20 @@
       "tests/test_usage.py"
     ],
     "removed": [],
-    "result": "Kept current metric, winner, paid-call logging, HWP/PDF placement, legacy Vision/CRAFT and ingestion checks. Folded the uncommitted page-layout prototype into the final whole-image Paddle contract test; no stale skips, xfails or duplicate observations remain in the changed tests."
+    "result": "Kept current metric, winner, paid-call logging, HWP/PDF placement, existing short-table minimum, legacy Vision/CRAFT and ingestion checks. Folded the uncommitted page-layout prototype into the final whole-image Paddle contract test; no stale skips, xfails or duplicate observations remain in the changed tests."
+  },
+  "frozen_reference_storage": "Git preserves the original reference bytes with data/ocr_benchmark/references.jsonl -text. The working file and staged Git blob match the pre-call SHA-256; transcriptions and key tokens are unchanged.",
+  "full_run": {
+    "approval_record": "data/ocr_benchmark/full_run_plan.json",
+    "results": "data/ocr_benchmark/full_results.jsonl",
+    "summary": "data/ocr_benchmark/full_run_summary.json",
+    "captions": "data/ocr_captions.jsonl",
+    "new_calls": 265,
+    "reused_images": 55,
+    "empty_images": 0,
+    "empty_places": 0,
+    "new_cost_usd": 0.3876259,
+    "total_task_cost_usd": 0.4929609
   },
   "benchmark_approval": {
     "date": "2026-10-16",
@@ -111,7 +127,7 @@
     "estimated_usd": {"gpt-6-luna": 0.066, "gemini-3.5-flash-lite": 0.308},
     "maximum_output_tokens_per_call": 8192,
     "estimate_with_8192_output_and_2000_input_usd": 1.39568,
-    "full_run_approved": false
+    "full_run_approved": true
   },
   "api_measurements": {
     "calls": {"gpt-6-luna": 55, "gemini-3.5-flash-lite": 55},

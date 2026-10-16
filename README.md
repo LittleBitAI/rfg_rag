@@ -414,6 +414,7 @@ test 실패는 각각 19 · 188 · 50 · 674항목입니다. 문서 미연결 �
 로컬 Windows PC의 별도 환경에서 실행하는 PaddleOCR-VL-1.5입니다.
 유료 OCR 호출은 모두 `rag/usage.py`의 `record_usage`로 비용을 기록하고, PaddleOCR는 이미지당 실행 시간을 기록합니다.
 벤치마크 첫 유료 호출과 전체 실행 전에는 모델별 토큰·단가 예상액을 보여 주고 승인을 기다립니다.
+이번 비교의 승자는 표·글의 Gemini와 도식의 GPT이며, 320개 이미지의 결과를 391개 위치로 저장했습니다. 측정값과 비용은 [OCR 비교 보고서](docs/ocr_benchmark.md)에 있습니다.
 
 `config.yaml`의 `paths.ocr_captions`(기본 `data/ocr_captions.jsonl`)가 있으면
 01은 그 파일을 읽어 그림 위치에 `[그림/도표 설명] …` 레코드를 넣습니다. 이 결과를 읽는 데 API 키나 호출은 필요 없습니다.

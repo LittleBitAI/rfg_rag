@@ -1,0 +1,58 @@
+{
+  "completed_at": "2026-10-16T14:08:56.896665+00:00",
+  "distinct_images": 320,
+  "caption_places": 391,
+  "reused_benchmark_images": 55,
+  "new_calls": 265,
+  "usage_rows_verified": 265,
+  "models": [
+    {
+      "engine": "gemini-3.5-flash-lite",
+      "new_calls": 135,
+      "reused_images": 35,
+      "input_tokens": 158058,
+      "cached_input_tokens": 0,
+      "output_tokens": 81595,
+      "reasoning_tokens": 0,
+      "cost_usd": 0.25140490000000004,
+      "seconds": 486.3867604000843,
+      "finish_reasons": {
+        "stop": 135
+      }
+    },
+    {
+      "engine": "gpt-6-luna",
+      "new_calls": 130,
+      "reused_images": 20,
+      "input_tokens": 122625,
+      "cached_input_tokens": 0,
+      "output_tokens": 247917,
+      "reasoning_tokens": 197162,
+      "cost_usd": 0.136221,
+      "seconds": 2515.706855500088,
+      "finish_reasons": {
+        "stop": 130
+      }
+    }
+  ],
+  "new_cost_usd": 0.38762590000000025,
+  "empty_images": 0,
+  "empty_places": 0,
+  "by_type": {
+    "table": {
+      "engine": "gemini-3.5-flash-lite",
+      "images": 150,
+      "empty": 0
+    },
+    "text": {
+      "engine": "gemini-3.5-flash-lite",
+      "images": 20,
+      "empty": 0
+    },
+    "diagram": {
+      "engine": "gpt-6-luna",
+      "images": 150,
+      "empty": 0
+    }
+  }
+}

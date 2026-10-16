@@ -139,9 +139,10 @@ def _doc_pieces(doc: dict, splitter, size: int, table_size: int, position_captio
 
 def _chunk_pieces(doc, splitter, size, table_size, ccfg, position_captions):
     positioned = position_captions and any(r["kind"] == "image_caption" for r in doc["records"])
-    minimum = 1 if positioned else int(ccfg["min_chunk_chars"])
+    minimum = int(ccfg["min_chunk_chars"])
     pieces = _doc_pieces(doc, splitter, size, table_size, positioned)
-    return [piece for piece in pieces if len(piece[0].strip()) >= minimum]
+    return [piece for piece in pieces
+            if len(piece[0].strip()) >= (1 if positioned and piece[2] != "table" else minimum)]
 
 
 def chunk_documents(docs: list[dict], ccfg: dict, *, position_captions=False) -> list[dict]:

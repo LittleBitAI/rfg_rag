@@ -1,5 +1,5 @@
 {
-  "status": "Awaiting separate full-run approval; no new full-run calls made",
+  "status": "Completed: 320 winning outputs and 391 saved caption places",
   "distinct_images": 320,
   "places": 391,
   "reused_benchmark_images": 55,
@@ -112,5 +112,12 @@
   "expected_api_usd": 0.24884138333333333,
   "estimate_with_8192_output_usd": 3.3527888,
   "estimate_with_2000_input_and_output_usd": 0.912,
-  "note": "Token estimates use type-specific reference means, no cache discount; these are estimates, not spending caps."
+  "note": "Token estimates use type-specific reference means, no cache discount; these are estimates, not spending caps.",
+  "full_run_approval": {
+    "user_response": "1번.",
+    "approved_at": "2026-10-16T13:26:57.496026+00:00",
+    "scope": "265 new winning-engine calls plus 55 reused benchmark outputs; 391 saved caption places",
+    "presented_expected_usd": 0.24884138333333333,
+    "presented_8192_output_scenario_usd": 3.3527888
+  }
 }
