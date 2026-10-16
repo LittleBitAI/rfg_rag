@@ -4,6 +4,7 @@ import pytest
 
 from rag.config import write_jsonl
 from rag.preprocessing import parsing
+from rag.preprocessing.chunking import chunk_documents
 from rag.preprocessing.ocr_captions import add_pdf_captions
 
 
@@ -37,6 +38,16 @@ def test_saved_hwp_caption_at_marker_and_unplaced_at_end(tmp_path, monkeypatch):
         {"page": None, "kind": "text", "text": "뒤 본문"},
         {"page": None, "kind": "image_caption", "text": "[그림/도표 설명] 별도 그림"},
     ]
+    cfg = {"chunk_size": 200, "overlap_ratio": 0, "table_size_factor": 1, "min_chunk_chars": 5}
+    positioned = chunk_documents(docs, cfg, position_captions=True)
+    assert [(c["kind"], c["body"]) for c in positioned] == [(r["kind"], r["text"]) for r in docs[0]["records"]]
+    assert all(set(c) == {"chunk_id", "doc_id", "source", "title", "doc_type", "page", "kind", "section", "text", "body"}
+               for c in positioned)
+    assert [(c["kind"], c["body"]) for c in chunk_documents(docs, cfg)] == [
+        ("text", "앞 본문\n\n뒤 본문"),
+        ("image_caption", "[그림/도표 설명] 표: 금액 42원"),
+        ("image_caption", "[그림/도표 설명] 별도 그림"),
+    ]
 
 
 def test_pdf_captions_split_body_at_image_positions_and_keep_cover(tmp_path):
@@ -52,21 +63,30 @@ def test_pdf_captions_split_body_at_image_positions_and_keep_cover(tmp_path):
     path = tmp_path / "source.pdf"
     with pymupdf.open() as pdf:
         pdf.new_page().insert_image((72, 100, 100, 150), stream=png("red"))
-        pdf.new_page()
+        page = pdf.new_page()
+        page.insert_text((72, 72), "1. Overview")
+        page.insert_text((72, 100), "Previous page")
         page = pdf.new_page()
         for y, text in [(72, "Before"), (200, "Middle"), (350, "After")]:
             page.insert_text((72, y), text)
         page.insert_image((72, 100, 100, 150), stream=png("red"))
         page.insert_image((72, 250, 100, 300), stream=png("blue"))
         pdf.save(path)
-    records = [{"page": 3, "kind": "text", "text": "Before\nMiddle\nAfter"}]
+    previous = "1. Overview\nPrevious page"
+    records = [{"page": 2, "kind": "text", "text": previous},
+               {"page": 3, "kind": "text", "text": "Before\nMiddle\nAfter"}]
     rows = [{"page": 3, "image_index": 1, "text": "두 번째"},
             {"page": 1, "image_index": 0, "text": "표지 그림"},
             {"page": 3, "image_index": 0, "text": "첫 번째"},
             {"page": 3, "image_index": 0, "text": ""}]
-    assert [(r["page"], r["text"].strip()) for r in add_pdf_captions(records, rows, str(path))] == [
-        (1, "[그림/도표 설명] 표지 그림"), (3, "Before"), (3, "[그림/도표 설명] 첫 번째"),
+    positioned = add_pdf_captions(records, rows, str(path))
+    assert [(r["page"], r["text"].strip()) for r in positioned] == [
+        (1, "[그림/도표 설명] 표지 그림"), (2, previous), (3, "Before"), (3, "[그림/도표 설명] 첫 번째"),
         (3, "Middle"), (3, "[그림/도표 설명] 두 번째"), (3, "After")]
+    doc = {"doc_id": "pdf", "source": str(path), "title": "PDF", "doc_type": "pdf", "records": positioned}
+    cfg = {"chunk_size": 25, "overlap_ratio": 0, "table_size_factor": 1, "min_chunk_chars": 5}
+    chunks = chunk_documents([doc], cfg, position_captions=True)
+    assert [(c["page"], c["body"]) for c in chunks] == [(r["page"], r["text"].strip()) for r in positioned]
 
 
 def test_changed_saved_image_stops_instead_of_dropping_document(tmp_path, monkeypatch):

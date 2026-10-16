@@ -85,10 +85,23 @@
     "text:2": 10
   },
   "base_comparison": "98 documents, 17614 chunks; parsed/chunked on base and with saved captions absent; every row identical.",
-  "placement_check": "391 synthetic captions in 79 actual source documents, including all 80 null HWP markers; per-caption multiplicities match the selected places.",
+  "placement_check": "391 synthetic captions in 79 actual source documents and positioned output chunks; all 80 null HWP captions at document ends; caption order, multiplicities and existing chunk keys match; no API usage added.",
   "document_hash_check": "All 391 selected places match the current source document SHA-256.",
   "api_access_check": "Both exact model IDs completed 55 paid OCR calls after explicit benchmark approval.",
-  "gate": "1062 passed, 12 warnings in 179.71s (0:02:59)",
+  "gate": "1064 passed, 12 warnings in 96.82s (0:01:36)",
+  "test_cleanup": {
+    "audited": [
+      "tests/test_ocr_benchmark.py",
+      "tests/test_ocr_captions.py",
+      "tests/test_paddle_ocr.py",
+      "tests/test_notebook_settings.py",
+      "tests/test_ocr_selection.py",
+      "tests/test_evidence_mapping.py",
+      "tests/test_usage.py"
+    ],
+    "removed": [],
+    "result": "Kept current metric, winner, paid-call logging, HWP/PDF placement, legacy Vision/CRAFT and ingestion checks. Folded the uncommitted page-layout prototype into the final whole-image Paddle contract test; no stale skips, xfails or duplicate observations remain in the changed tests."
+  },
   "benchmark_approval": {
     "date": "2026-10-16",
     "user_response": "1",
@@ -106,8 +119,8 @@
     "actual_usd": {"gpt-6-luna": 0.0450572, "gemini-3.5-flash-lite": 0.0602778},
     "empty_outputs": 0,
     "truncated_outputs": 0,
-    "paddle_results_available": false,
-    "winners_selected": false
+    "paddle_results_available": true,
+    "winners_selected": true
   },
   "vm_cleanup": {
     "deleted": [
@@ -125,9 +138,9 @@
     "current_runtime": "PaddleOCR-VL-1.5 in C:/Users/dasdk/.venvs/rfg-ocr-vl15 on the local Windows PC",
     "reason": "The official Linux GPU environment needs more disk space than codeit has after approved cleanup, and the shared VM has under 1 GiB available system RAM. The user proposed local execution and selected native Windows.",
     "gpu": "NVIDIA GeForce RTX 3080, 10240 MiB",
-    "installed_versions": {"paddlepaddle-gpu": "3.2.1", "paddleocr": "3.7.0", "paddlex": "3.7.2"},
+    "installed_versions": {"paddlepaddle-gpu": "3.2.1", "paddleocr": "3.7.0", "paddlex": "3.7.2", "nvidia-cudnn-cu12": "9.9.0.52"},
     "cuda_preflight": "Paddle imports successfully, CUDA compiled True, one GPU detected.",
-    "model_preparation": "Official PP-DocLayoutV3 and PaddleOCR-VL-1.5 weights downloaded; the v1.5 pipeline initialized with device=cpu. No inference run.",
+    "model_preparation": "Official weights downloaded; the v1.5 pipeline initialized, then completed 55 GPU reference inferences with final whole-image OCR settings.",
     "project_venv_changed": false,
     "codeit_installation": "Stopped this task's pip process before CUDA dependencies filled the disk; preserved the completed Paddle wheel. No other processes terminated."
   },
@@ -139,10 +152,24 @@
     "torch_allocated_mib": 1092.61962890625,
     "torch_reserved_mib": 3176,
     "kernel_responsive": true,
-    "kernel_stopped": false,
+    "kernel_stopped": true,
+    "kernel_shutdown_approval": "The user selected option 2: shut down the 02 kernel, then run PaddleOCR.",
+    "kernel_shutdown_result": "shutdown_reply: status ok, restart false; PID absent; 8346 MiB GPU memory free.",
     "frontend_pid": 36444,
     "frontend_app": "frontend.server:app on port 8765",
     "frontend_status": "Exited between checks without intervention by this agent."
+  },
+  "local_setup_corrections": {
+    "discarded_attempts": [
+      {"file": "artifacts/ocr_benchmark/paddle_cudnn95_results.jsonl", "reason": "The official Windows Paddle wheel reported compiled cuDNN 9.9 against its declared cuDNN 9.5 dependency; corrected the isolated runtime to 9.9.0.52 and excluded all outputs from the earlier runtime."},
+      {"file": "artifacts/ocr_benchmark/paddle_no_image_ocr_results.jsonl", "reason": "The page parser's default image-region OCR was disabled, producing generated image links instead of transcription."},
+      {"file": "artifacts/ocr_benchmark/paddle_page_layout_results.jsonl", "reason": "Enabling image/chart/seal recognition still omitted much of a cropped form and a diagram took 376.31 seconds with about 2.5 GiB shared GPU memory. Replaced page-layout analysis with uniform whole-image OCR mode for these already-cropped inputs; excluded every result from the page-layout attempt."}
+    ],
+    "scored_settings": {"pipeline_version": "v1.5", "device": "gpu:0", "use_layout_detection": false, "prompt_label": "ocr (pipeline default without layout detection)", "clear_unused_cuda_cache_before_each_image": true},
+    "cache_policy_remeasurement": "Remeasure all initial 14 images after adding per-image CUDA cache cleanup, replacing every earlier measurement for those images regardless of quality.",
+    "output_extraction": "Join parsing_res_list block.content without generated image links. Convert generated HTML table markup to row/cell text; timing excludes that serialization cleanup.",
+    "reference_or_scoring_changes": false,
+    "extra_paid_calls": 0
   },
   "expanded_at": "2026-10-16T11:22:07.697153+00:00",
   "reference_sha256": "3fcb71d4fa9d457d92824b83777c2c2d9dbcb48683eeba8bee94d19e826cc892",

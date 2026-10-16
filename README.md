@@ -418,6 +418,7 @@ test 실패는 각각 19 · 188 · 50 · 674항목입니다. 문서 미연결 �
 `config.yaml`의 `paths.ocr_captions`(기본 `data/ocr_captions.jsonl`)가 있으면
 01은 그 파일을 읽어 그림 위치에 `[그림/도표 설명] …` 레코드를 넣습니다. 이 결과를 읽는 데 API 키나 호출은 필요 없습니다.
 HWP 본문 표시가 없는 그림은 문서 끝에, PDF 그림은 해당 쪽의 이미지 위 본문 다음에 들어갑니다.
+기본 원본 입력(`PREPROCESSED = None`)에서는 설명 청크도 해당 위치에 넣고, 그림 경계에서 나뉜 짧은 본문도 유지합니다.
 결과 파일이 없으면 저장 OCR을 추가하지 않으며 기존 전처리 출력을 유지합니다.
 
 `01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.

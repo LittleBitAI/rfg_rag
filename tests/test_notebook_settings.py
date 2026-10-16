@@ -97,10 +97,15 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
         used_cfg["rewrite"])
 
 
-@pytest.mark.parametrize("package", [None, "data/RFP_Preprocessing_Final_v11_Team"])
-def test_preprocessing_notebook_selects_input(tmp_path, package):
+@pytest.mark.parametrize("package,captions_present", [(None, False), (None, True),
+                                                     ("data/RFP_Preprocessing_Final_v11_Team", False)])
+def test_preprocessing_notebook_selects_input(tmp_path, package, captions_present):
     docs, chunks = [{"doc_id": "d1"}], [{"chunk_id": "c1"}]
     defaults = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    if captions_present:
+        captions = tmp_path / defaults["paths"]["ocr_captions"]
+        captions.parent.mkdir(parents=True)
+        captions.write_text("", encoding="utf-8")
     namespace = {"cfg": defaults, "ROOT": tmp_path, "ARTIFACTS": tmp_path / "artifacts",
                  "collect_inputs": MagicMock(return_value=["test.pdf"]),
                  "parse_documents": MagicMock(return_value=docs),
@@ -121,7 +126,7 @@ def test_preprocessing_notebook_selects_input(tmp_path, package):
         namespace["parse_documents"].assert_called_once_with(
             ["test.pdf"], defaults["parsing"], ocr=False, ocr_cfg=defaults["ocr"],
             captions_path=tmp_path / defaults["paths"]["ocr_captions"])
-        namespace["chunk_documents"].assert_called_once_with(docs, defaults["chunking"])
+        namespace["chunk_documents"].assert_called_once_with(docs, defaults["chunking"], position_captions=captions_present)
         namespace["load_v11_package"].assert_not_called()
     else:
         namespace["load_v11_package"].assert_called_once_with(tmp_path / package)

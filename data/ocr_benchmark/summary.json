@@ -1,8 +1,39 @@
 {
-  "status": "API measurements complete; PaddleOCR pending; no winners selected",
   "reference_sha256": "3fcb71d4fa9d457d92824b83777c2c2d9dbcb48683eeba8bee94d19e826cc892",
-  "usage_rows_verified": 110,
   "summary": [
+    {
+      "engine": "PaddleOCR-VL-1.5",
+      "image_type": "diagram",
+      "n": 20,
+      "edit_similarity": -1.602409061545116,
+      "key_recall": 0.6630319418610661,
+      "key_precision": 0.8492219545160722,
+      "seconds": 17.902917734997754,
+      "empty": 0.0,
+      "cost_usd": null
+    },
+    {
+      "engine": "PaddleOCR-VL-1.5",
+      "image_type": "table",
+      "n": 20,
+      "edit_similarity": 0.1929392870413848,
+      "key_recall": 0.4007145509719039,
+      "key_precision": 0.47298654971055853,
+      "seconds": 42.433762849999766,
+      "empty": 0.0,
+      "cost_usd": null
+    },
+    {
+      "engine": "PaddleOCR-VL-1.5",
+      "image_type": "text",
+      "n": 15,
+      "edit_similarity": -0.1826474668434799,
+      "key_recall": 0.46985582251264035,
+      "key_precision": 0.658705130832821,
+      "seconds": 45.79651534666967,
+      "empty": 0.0,
+      "cost_usd": null
+    },
     {
       "engine": "gemini-3.5-flash-lite",
       "image_type": "diagram",
@@ -10,9 +41,9 @@
       "edit_similarity": 0.37849612799661697,
       "key_recall": 0.9529810014864364,
       "key_precision": 0.8505470531166626,
-      "cost_usd": 0.0007408899999999999,
       "seconds": 2.381538009994256,
-      "empty": 0.0
+      "empty": 0.0,
+      "cost_usd": 0.0007408899999999999
     },
     {
       "engine": "gemini-3.5-flash-lite",
@@ -21,9 +52,9 @@
       "edit_similarity": 0.632756285832587,
       "key_recall": 0.9336057422969188,
       "key_precision": 0.85218895666412,
-      "cost_usd": 0.0013428599999999998,
       "seconds": 2.8243312400009017,
-      "empty": 0.0
+      "empty": 0.0,
+      "cost_usd": 0.0013428599999999998
     },
     {
       "engine": "gemini-3.5-flash-lite",
@@ -32,9 +63,9 @@
       "edit_similarity": 0.7890482416837025,
       "key_recall": 0.9510886435371562,
       "key_precision": 0.8066129678531676,
-      "cost_usd": 0.0012401866666666666,
       "seconds": 2.866839853334629,
-      "empty": 0.0
+      "empty": 0.0,
+      "cost_usd": 0.0012401866666666666
     },
     {
       "engine": "gpt-6-luna",
@@ -43,9 +74,9 @@
       "edit_similarity": 0.4993693732130313,
       "key_recall": 0.9563403337923798,
       "key_precision": 0.7930279999984567,
-      "cost_usd": 0.000523605,
       "seconds": 10.652848690000246,
-      "empty": 0.0
+      "empty": 0.0,
+      "cost_usd": 0.000523605
     },
     {
       "engine": "gpt-6-luna",
@@ -54,9 +85,9 @@
       "edit_similarity": 0.6566572960935927,
       "key_recall": 0.9240276610644258,
       "key_precision": 0.8027458597543197,
-      "cost_usd": 0.0009272250000000001,
       "seconds": 17.65030505500181,
-      "empty": 0.0
+      "empty": 0.0,
+      "cost_usd": 0.0009272250000000001
     },
     {
       "engine": "gpt-6-luna",
@@ -65,18 +96,25 @@
       "edit_similarity": 0.7290534191448206,
       "key_recall": 0.9278238196396765,
       "key_precision": 0.7942955762523672,
-      "cost_usd": 0.0010693733333333336,
       "seconds": 20.003968106668133,
-      "empty": 0.0
+      "empty": 0.0,
+      "cost_usd": 0.0010693733333333336
     }
   ],
-  "totals": [
+  "winners": {
+    "table": "gemini-3.5-flash-lite",
+    "text": "gemini-3.5-flash-lite",
+    "diagram": "gpt-6-luna"
+  },
+  "usage_rows_verified": 110,
+  "api_totals": [
     {
       "engine": "gpt-6-luna",
       "calls": 55,
       "input_tokens": 44127,
       "cached_input_tokens": 0,
       "output_tokens": 81289,
+      "reasoning_tokens": 63726,
       "cost_usd": 0.04505719999999998,
       "seconds": 866.1225965000631,
       "empty": 0,
@@ -90,6 +128,7 @@
       "input_tokens": 64276,
       "cached_input_tokens": 0,
       "output_tokens": 16398,
+      "reasoning_tokens": 0,
       "cost_usd": 0.060277800000000006,
       "seconds": 147.11998279992258,
       "empty": 0,
@@ -97,5 +136,20 @@
         "stop": 55
       }
     }
-  ]
+  ],
+  "local_hardware": "Windows, NVIDIA GeForce RTX 3080 10 GiB",
+  "local_versions": {
+    "paddlepaddle-gpu": "3.2.1",
+    "paddleocr": "3.7.0",
+    "paddlex": "3.7.2",
+    "nvidia-cudnn-cu12": "9.9.0.52"
+  },
+  "local_settings": {
+    "use_layout_detection": false,
+    "prompt_label": "ocr",
+    "clear_unused_cuda_cache_before_each_image": true
+  },
+  "local_remeasured_images": 14,
+  "local_total_seconds": 1893.6813418999955,
+  "local_empty": 0
 }
