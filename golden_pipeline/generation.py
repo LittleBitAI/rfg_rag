@@ -25,6 +25,8 @@ RUN_CONFIG = ("model", "reasoning_effort", "max_calls", "budget_usd", "usd_per_m
 ROW_FIELDS = ("question", "answer", "evidence", "structure", "secondary_tags")
 SIDECAR = ("model_label", "run_date", "provided_files", "tool_use", "input_limits")
 UNOBSERVED = "unobserved"
+# unanswerable 의 정답. ④ 생성이 컨텍스트에 답이 없을 때 쓰는 문장과 같다 (rag/generation/generation.py).
+REFUSAL = "제공된 문서에서 확인할 수 없습니다."
 # 부호는 글자로 가린다. Kiwi 는 - 를 SO, △ 를 SW, ± 를 SL 로 달리 단다.
 SIGNS = ("+", "-", "−", "±", "△", "▲")
 RANGES = ("~", "∼", "〜")
@@ -130,16 +132,15 @@ def check_structure(topic, spec, row, cited):
     if set(structure) != set(spec["structure"]):
         # 필드가 없는 주제(multi_hop)에 "필드는 [] 여야" 라고 하면 생성기가 고치지 못하고 필드를 채워 거듭 거절됐다.
         return f"structure 필드는 {sorted(spec['structure'])} 여야 합니다" if spec["structure"] else "structure 는 빈 객체 {} 여야 합니다"
-    texts = [unit["text"] for unit in cited]
-    return CHECKS[topic](structure, row["answer"], cited, texts)
+    return CHECKS[topic](structure, row, cited, spec)
 
 
-def _numeric(structure, answer, cited, texts):
+def _numeric(structure, row, cited, spec):
     value, unit = structure["value"], structure["unit"]
     if not (_is_text(value) and _is_text(unit) and re.search(r"\d", value)):
         return "숫자가 든 값과 단위가 있어야 합니다"
     pair = (_norm(value), _norm(unit))
-    if pair not in _pairs(answer):
+    if pair not in _pairs(row["answer"]):
         return f"답에 값과 단위({value}{unit})가 없습니다"
     if not any(pair in _pairs(source["text"]) for source in cited):
         return f"값과 단위({value}{unit})가 근거에 없습니다"
@@ -208,17 +209,17 @@ def tokens(text):
         return _kiwi().tokenize(unicodedata.normalize("NFC", text))
 
 
-def _table(structure, answer, cited, texts):
+def _table(structure, row, cited, spec):
     if not any(unit["ref"]["location"]["kind"] == "table" for unit in cited):
         return "표 행 근거가 없습니다"
-    return _quoted([structure["row"], structure["column"]], texts, "행·열 이름")
+    return _quoted([structure["row"], structure["column"]], _texts(cited), "행·열 이름")
 
 
-def _condition(structure, answer, cited, texts):
-    return _quoted([structure["condition"]], texts, "조건·예외 문구")
+def _condition(structure, row, cited, spec):
+    return _quoted([structure["condition"]], _texts(cited), "조건·예외 문구")
 
 
-def _comparison(structure, answer, cited, texts):
+def _comparison(structure, row, cited, spec):
     """대상마다 값과 고른 대상을 structure 에 두고, 답은 그 structure 로 만든 글이어야 한다.
 
     결론(어느 대상을 골랐는지)을 글에서 읽을 수 없으므로, 검증은 structure 를 견주고 답 글은 structure 와 같게 묶는다.
@@ -236,11 +237,12 @@ def _comparison(structure, answer, cited, texts):
         return "대상의 값이 대상 이름이라 견줄 값이 없습니다"
     if choice not in entities:
         return "choice 는 entities 중 하나여야 합니다 (고르지 않는 비교는 나란한 조회다)"
+    texts = _texts(cited)
     reason = _quoted(entities, texts, "비교 대상") or _quoted(list(values.values()), texts, "대상의 값")
     if reason:
         return reason
     expected = comparison_answer(structure)
-    return None if _norm(answer) == _norm(expected) else f"답은 structure 로 만든 글 {expected!r} 이어야 합니다"
+    return None if _norm(row["answer"]) == _norm(expected) else f"답은 structure 로 만든 글 {expected!r} 이어야 합니다"
 
 
 def comparison_answer(structure):
@@ -249,14 +251,59 @@ def comparison_answer(structure):
     return f"{text}. 답: {structure['choice']}"
 
 
-def _multi_hop(structure, answer, cited, texts):
+def _multi_hop(structure, row, cited, spec):
     return None if len(cited) >= 2 else "근거 단위가 둘 이상이어야 합니다"
+
+
+def _unanswerable(structure, row, cited, spec):
+    """다른 문서의 근거에서 빌린 속성(attribute)을 묻고, 답은 거절 문장이다.
+
+    대상 문서에 그 속성이 없는지는 문서 전체를 읽어야 해서 검증(validation)이 본다. 여기서는 출력만 본다.
+    """
+    terms = structure["key_terms"]
+    if _norm(row["answer"]) != _norm(REFUSAL):
+        return f"답은 정확히 {REFUSAL!r} 이어야 합니다"
+    reason = _quoted([structure["attribute"]], _texts(cited), "속성")
+    if reason:
+        return reason
+    if not (isinstance(terms, list) and terms and all(_is_text(term) and not re.search(r"\s", term) for term in terms)):
+        return "key_terms 는 띄어쓰기 없는 낱말의 비어 있지 않은 리스트여야 합니다"
+    question = _norm(storage.DOCUMENT_PREFIX.sub("", row["question"], count=1))
+    missing = [term for term in terms if _norm(term) not in _norm(structure["attribute"]) or _norm(term) not in question]
+    return f"핵심어가 속성과 질문에 모두 있어야 합니다: {missing}" if missing else None
+
+
+def _false_premise(structure, row, cited, spec):
+    """질문은 문서와 다른 값(stated)을 전제하고, 답은 근거에 적힌 값(actual)으로 바로잡는다.
+
+    값은 numeric 과 같은 (수, 단위) 쌍으로 읽는다. 단위가 같아야 수만 다른 값이 된다 (1년 과 12개월 은 같은 기간이다).
+    stated 가 대상 문서 어디에도 없는지는 문서 전체를 읽어야 해서 검증(validation)이 본다.
+    """
+    stated, actual = structure["stated"], structure["actual"]
+    if not (_is_text(stated) and _is_text(actual) and re.search(spec["pattern"], stated) and re.search(spec["pattern"], actual)):
+        return "stated · actual 은 금액 · 기간 · 개수 · 날짜의 수와 단위여야 합니다"
+    said, real = _pairs(stated), _pairs(actual)
+    if {unit for _, unit in said} != {unit for _, unit in real} or said == real:
+        return f"stated({stated})는 actual({actual})과 단위가 같고 수만 달라야 합니다"
+    asked = _pairs(storage.DOCUMENT_PREFIX.sub("", row["question"], count=1))
+    if not said <= asked or real <= asked:
+        return f"질문은 stated({stated})를 담고 actual({actual})은 담지 않아야 합니다"
+    if not real <= _pairs(row["answer"]):
+        return f"답에 actual({actual})이 없습니다"
+    if not any(real <= _pairs(unit["text"]) and _contains(unit["text"], actual) for unit in cited):
+        return f"actual({actual})이 인용한 근거에 그대로 없습니다"
+    return None
 
 
 CHECKS = {
     "numeric": _numeric, "table": _table, "condition": _condition,
     "comparison": _comparison, "multi_hop": _multi_hop,
+    "unanswerable": _unanswerable, "false_premise": _false_premise,
 }
+
+
+def _texts(cited):
+    return [unit["text"] for unit in cited]
 
 
 def _quoted(values, texts, label):

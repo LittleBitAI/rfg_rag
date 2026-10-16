@@ -11,6 +11,7 @@ from langfuse.openai import openai
 
 from ..retrieval.rewrite import rewrite_question
 from ..usage import record_usage
+from ..validation.validation import EVAL_ITEM_FIELDS
 
 SYSTEM_PROMPT = (
     "당신은 공공기관 제안요청서(RFP) 문서 기반 질의응답 도우미입니다.\n"
@@ -95,7 +96,11 @@ def answer_questions(eval_set: list[dict], index, llm_cfg: dict, rewrite_cfg: di
 
     테스트용 대화 기록은 이 함수 실행 중에만 유지된다.
     eval_set의 순서가 대화 순서가 되며, 이전 질문과 생성된 답변을 사용한다.
+    필드가 빠진 옛 eval_set 이면 유료 호출 전에 멈춘다. 답변 파일은 항목을 그대로 옮기므로 05 평가가 그 필드를 읽는다.
     """
+    missing = sorted({field for item in eval_set for field in EVAL_ITEM_FIELDS if field not in item})
+    if missing:
+        raise ValueError(f"eval_set 에 {missing} 필드가 없습니다. 03 검증을 다시 실행해 eval_set.jsonl 을 만드세요")
     rows = []
     history = []
 

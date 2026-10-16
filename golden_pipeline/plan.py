@@ -18,10 +18,12 @@ from golden_pipeline.schema import EVIDENCE_FIELDS, TOPICS
 TOC_LINE = re.compile(r"\S\s+\d{1,3}\s*$")
 
 
-def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE, skip_plans=()):
+def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence.PACKAGE, skip_plans=(), side=None):
     """근거 어댑터 run 의 eligible 단위로 주제별 근거 묶음을 골라 outputs/plans/{plan_id}.json 에 쓴다.
 
     skip_plans 의 계획이 쓴 단위는 넣지 않는다. 묶음은 늘 같은 순서로 고르므로, 빼지 않으면 앞 계획의 묶음이 다시 뽑힌다.
+    side 는 (분할 version, dev 또는 test) 이고, 주면 질문이 묻는 문서가 그 분할의 그쪽에 있는 묶음만 고른다.
+    새 주제를 앞 분할에 더할 때 한쪽만 모자라면 그쪽 문서로만 다시 만들어, 반대쪽에 쓸 호출을 아낀다.
     """
     unknown = sorted(set(counts) - set(TOPICS))
     if unknown or not all(isinstance(n, int) and n > 0 for n in counts.values()):
@@ -37,9 +39,13 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     bundles = []
     skipped = {skipped_id: load_plan(skipped_id) for skipped_id in skip_plans}
     used = {unit["unit_id"] for planned, _ in skipped.values() for bundle in planned["bundles"] for unit in bundle["units"]}
+    wanted = _side_documents(*side) if side else None
     # 한 단위는 한 주제의 묶음에만 들어간다. 카탈로그가 같은 근거 묶음을 두 주제에 두지 않기 때문이다.
     for topic, (spec, _) in specs.items():
-        chosen = _pick(_groups(topic, spec, units, used, max_context_chars, names), counts[topic])
+        groups = _groups(topic, spec, units, used, max_context_chars, names)
+        if wanted is not None:
+            groups = {doc: [b for b in found if b["doc_sha"] in wanted] for doc, found in groups.items()}
+        chosen = _pick(groups, counts[topic])
         used.update(unit["unit_id"] for bundle in chosen for unit in bundle["units"])
         bundles += chosen
 
@@ -49,6 +55,8 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         "code_commit": storage._code_commit(),
         "evidence_run": evidence_run,
         "skipped_plans": {skipped_id: sha for skipped_id, (_, sha) in skipped.items()},
+        "side": side and {"split": side[0], "part": side[1],
+                          "manifest_sha256": storage._sha256(storage.OUTPUTS / "splits" / side[0] / "manifest.json")},
         "v11_manifest_sha256": pinned["manifest.json"],
         "topic_specs": {topic: sha for topic, (_, sha) in specs.items()},
         "max_context_chars": max_context_chars,
@@ -88,6 +96,57 @@ def eligible_units(run_dir, package):
     for unit in units:
         unit["text"] = _unit_text(unit["ref"], elements[unit["ref"]["element_id"]])
     return [unit for unit in units if unit["text"].strip()]
+
+
+def document_units(run_dir, package, docs):
+    """문서 SHA → 그 문서의 모든 근거 단위(eligible 과 held) {unit_id, element_id, location, text}, 패키지 순서대로.
+
+    element_id · location 은 표 행이 어느 표의 몇 행인지 알려, 검증기에 나눠 줄 때 머리글과 행을 떼지 않게 한다.
+    원본 그리드 셀은 rowspan 도 함께 준다. 세로로 합친 칸이 걸친 행들을 한 단위로 묶는 데 쓴다 (validation.document_batches).
+
+    문서에 무엇이 없음을 보이려면 보류된 단위(UNVERIFIED 원문, 범위 없는 OCR, 원본 그리드 셀)까지 읽어야 한다.
+    eligible 만 보면 보류된 글에 든 답을 놓친다. 원본 그리드 셀의 글은 원본 그리드 참고 파일에서 읽는다.
+    """
+    units = [unit for unit in evidence._iter_jsonl(run_dir / "units.jsonl") if unit["doc_sha"] in docs]
+    elements = _elements(package, {unit["element_id"] for unit in units if unit["chunk_id"]})
+    cells = {
+        f"grid:{grid['source_document_sha256']}:{grid['stream']}:{grid['control']}:{cell['row']}:{cell['col']}": cell
+        for grid in evidence._iter_jsonl(package / evidence.GRIDS) if grid["source_document_sha256"] in docs
+        for cell in grid["cells"]
+    }
+    found = defaultdict(list)
+    for unit in units:
+        given = {"unit_id": unit["unit_id"], "element_id": unit["element_id"], "location": unit["location"]}
+        if unit["chunk_id"]:
+            given["text"] = _unit_text(unit, elements[unit["element_id"]])
+        else:
+            cell = cells[unit["unit_id"]]
+            given.update(text=cell["text"], rowspan=cell["rowspan"])
+        found[unit["doc_sha"]].append(given)
+    return found
+
+
+def _side_documents(version, part):
+    """분할 version 의 part(dev · test) 질문이 묻는 문서들. 파일이 분할 매니페스트의 SHA-256 과 다르면 멈춘다."""
+    split_dir = storage._child(storage.OUTPUTS / "splits", version)
+    if storage._sha256(split_dir / f"{part}.jsonl") != storage._read_json(split_dir / "manifest.json")[part]["sha256"]:
+        raise ValueError(f"분할 {version} 의 {part}.jsonl 이 매니페스트의 SHA-256 과 다릅니다")
+    return {asked_document(item) for item in storage._read_jsonl(split_dir / f"{part}.jsonl")}
+
+
+def asked_document(item):
+    """질문이 묻는 문서의 SHA. 대개 근거의 문서이고, unanswerable 은 근거와 다른 문서라 계획 묶음의 doc_sha 다.
+
+    생성 뒤 계획 파일이 바뀌었으면 묶음의 doc_sha 가 질문을 만들 때의 문서가 아닐 수 있으므로 멈춘다.
+    """
+    if item["primary_topic"] != "unanswerable":
+        return item["evidence"][0]["doc_sha"]
+    run_dir = storage.run_path(item["primary_topic"], item["method"], item["run_id"])
+    generated = storage._read_json(run_dir / "manifest.json")["generation"]
+    planned, sha = load_plan(generated["plan_id"])
+    if sha != generated["plan_sha256"]:
+        raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {item['run_id']} 을 만든 뒤 바뀌었습니다. 새 run 을 만드세요")
+    return next(bundle["doc_sha"] for bundle in planned["bundles"] if bundle["bundle_id"] == item["bundle_id"])
 
 
 def doc_names(package, docs):
@@ -163,7 +222,20 @@ def _groups(topic, spec, units, used, max_context_chars, names):
         windows = [_with_headers(window, headers) for window in windows]
         bundles = [_bundle(topic, window, names[doc]) for window in windows if window]
         groups[doc] = [b for b in bundles if len(b["context"]) <= max_context_chars]
+    if topic == "unanswerable":
+        groups = {doc: [_borrowed(bundle, doc, names) for bundle in bundles] for doc, bundles in groups.items()}
     return groups
+
+
+def _borrowed(bundle, source, names):
+    """unanswerable 묶음은 문서 A(source)의 근거로 다른 문서 B 에 묻는다. doc_sha · doc 는 질문이 묻는 문서 B 다.
+
+    B 는 문서를 SHA 차례로 늘어놓은 고리에서 A 의 맞은편 문서다. 늘 같은 B 가 골라진다.
+    ponytail: 맞은편 문서가 비슷한 사업이면 속성이 B 에도 있어 거절된다. 거절이 많으면 사업 분야가 다른 문서를 고른다.
+    """
+    docs = sorted(names)
+    target = docs[(docs.index(source) + len(docs) // 2) % len(docs)]
+    return {**bundle, "doc_sha": target, "doc": names[target]}
 
 
 def _spanning(units, size):

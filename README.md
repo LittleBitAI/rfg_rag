@@ -165,6 +165,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 답변 생성도 실제 응답 모델·캐시 입력 토큰·비용을 저장합니다. 05는 저장된 비용을 사용하므로 평가 시 설정을 바꿔도 이전 생성 비용이 바뀌지 않습니다.
 `latency_s`는 재작성·검색·답변 생성 전체 시간입니다. `end_to_end.csv`의 `cost_usd`는 rewrite + 답변 생성 비용이며 `rewrite_cost_usd`, `answer_cost_usd`로 구분됩니다. OCR과 평가 비용은 별도로 집계합니다.
 이번 변경 전에 만든 `answers.jsonl`은 새 사용량 필드가 없으므로 02 설정 셀 → 04 → 05를 다시 실행하세요.
+평가 항목에 `answerable` 이 생기기 전에 만든 `eval_set.jsonl` · `answers.jsonl` 은 04 · 05 가 API 호출 전에 빠진 필드를 알리고 멈춥니다. 03 → 02 설정 셀 → 04 → 05 를 다시 실행하세요.
 
 ## 질문 화면 — 브라우저에서 묻고 답 받기
 채팅 화면입니다. 내 질문은 오른쪽 말풍선, 답변은 왼쪽 `문서 도우미` 아래에 나옵니다.
@@ -252,16 +253,17 @@ CSV는 UTF-8 without BOM입니다.
 | Grounding | 답이 검색한 청크 안에서만 나왔나 (환각) | RAGAS `faithfulness` |
 | End-to-End | 최종 답이 정답과 맞나 · 얼마나 걸리고 들었나 | RAGAS `factual_correctness`, 질문당 `latency_s` · 입력/출력/추론 토큰 · 예상 비용 `cost_usd` |
 
+- 답할 수 없음(`unanswerable`) 질문은 찾아 올 정답 근거가 없고 맞는 답이 거절 문장이라, 그 질문의 `context_precision` · `context_recall` · `key_facts_in_context` · `answer_relevancy`(거절을 0 으로 매김)는 잘 해도 0 이 나옵니다. 평가 항목의 `answerable` 이 `false` 인 질문은 이 지표를 빈 칸(NaN)으로 두어 평균에서 뺍니다.
 - Retrieval 이 낮으면 검색 문제, Retrieval 은 높은데 Grounding 이 낮으면 환각, 둘 다 높은데 End-to-End 가 낮으면 정답 · 질문을 다시 볼 차례입니다.
 - 심판 LLM 은 `config.yaml` 의 `evaluation.judge_model`(`gpt-5-mini`)입니다. 평가할 때마다 OpenAI 비용이 듭니다.
 - 프로젝트 책임자는 Langfuse Cloud 에서 질문마다 추적 하나(`answer-question` 안에 검색 `retrieve-context` · 생성 `generate-answer` — 모델 · 토큰 · 비용 포함)를 보고, 05 의 질문별 점수도 그 추적에 붙어 있습니다. 키가 없는 팀원은 노트북 표와 CSV 로 봅니다.
 
 ### 평가 데이터셋 (03 검증)
-- `eval/golden/dev.jsonl`: `golden_pipeline` 릴리스 `final2` 를 문서 단위로 나눈 dev 분할(30개 문서 396문항). 정답은 `answer`, 핵심 사실은 주제별로 뽑습니다 — 수치형은 값+단위(`180일`), 비교형은 고른 쪽(`MAR-006`), 조건형은 조건 문장, 표형은 정답 칸(` | ` 로 나뉜 칸은 각각), 다중 근거형은 정답이 언급한 근거 표 칸 값과 칸 속 글머리 항목(◦ · - · o 로 나뉜 줄)(근거 단위마다 따로 찾힘. 문서 3개 이상에서 행 첫 칸으로 되풀이되는 `요구사항 분류` 같은 항목 이름은 빼고, 맨 수는 정답의 단위도 받음 — `47|47개`). 표 칸 값이 없거나, 정답을 바꿔 말해 사실이 정답의 60% 를 못 덮거나, 묻는 항목의 값이 질문에도 다른 뜻으로 나와 질문이 준 값인지 가를 수 없는(분류 '기능' 과 질문의 '지도기반 기능') 다중 근거 24문항은 핵심 사실 없음으로 빠져 372문항이 남습니다.
-- `eval/golden/test.jsonl`: 같은 릴리스의 test 분할(68개 문서 930문항). 설정을 dev 에 맞춰 고르면 test 점수가 부풀지 않게 최종 점수에만 쓰며, 03 은 읽지 않습니다. `manifest.json` 은 두 분할의 개수 · 해시입니다.
+- `eval/golden/dev.jsonl`: `golden_pipeline` 분할 `final6` 의 dev 분할(30개 문서 408문항). `final2` 의 다섯 주제 396문항을 그대로 두고, 질문이 묻는 문서가 dev 에 있는 새 두 유형 12문항을 더했습니다 — 답할 수 없음(`unanswerable` 8문항: 다른 사업 문서의 속성을 묻고 정답은 `제공된 문서에서 확인할 수 없습니다.`. 검증기가 묻는 문서 전체를 표는 머리글과 함께 읽고도 답하지 못한 질문만 남김)과 틀린 전제(`false_premise` 4문항: 질문의 금액 · 기간 · 개수 · 날짜가 문서와 다르고 정답이 문서의 값으로 바로잡음). 정답은 `answer`, 핵심 사실은 주제별로 뽑습니다 — 수치형은 값+단위(`180일`), 비교형은 고른 쪽(`MAR-006`), 조건형은 조건 문장, 답할 수 없음은 `확인할 수 없`, 틀린 전제는 문서의 값+단위(`12개월`), 표형은 정답 칸(` | ` 로 나뉜 칸은 각각), 다중 근거형은 정답이 언급한 근거 표 칸 값과 칸 속 글머리 항목(◦ · - · o 로 나뉜 줄)(근거 단위마다 따로 찾힘. 문서 3개 이상에서 행 첫 칸으로 되풀이되는 `요구사항 분류` 같은 항목 이름은 빼고, 맨 수는 정답의 단위도 받음 — `47|47개`). 표 칸 값이 없거나, 정답을 바꿔 말해 사실이 정답의 60% 를 못 덮거나, 묻는 항목의 값이 질문에도 다른 뜻으로 나와 질문이 준 값인지 가를 수 없는(분류 '기능' 과 질문의 '지도기반 기능') 다중 근거 24문항은 핵심 사실 없음으로 빠져 384문항이 남습니다.
+- `eval/golden/test.jsonl`: 같은 분할의 test 분할(68개 문서 943문항: `final2` 930문항 + 답할 수 없음 8 · 틀린 전제 5). 설정을 dev 에 맞춰 고르면 test 점수가 부풀지 않게 최종 점수에만 쓰며, 03 은 읽지 않습니다. `manifest.json` 은 두 분할의 개수 · 해시입니다.
 - `eval/eval_questions.yaml`: 직접 만든 RFP 질문(멀티턴 대화 포함). 핵심 사실은 `must_include` (`'A|B'` = 둘 중 하나).
 - 질문 없음 · 중복 질문 · 대화의 후속 질문 · 정답 없음 · 핵심 사실 없음은 사유와 함께 제외합니다.
-- `eval/golden/` 은 `golden_pipeline/outputs/splits/final2/` 를 그대로 복사한 것입니다(`outputs/` 는 커밋되지 않음). 새 릴리스로 바꿀 때는 다시 복사합니다.
+- `eval/golden/` 은 `golden_pipeline/outputs/splits/final6/` 를 그대로 복사한 것입니다(`outputs/` 는 커밋되지 않음). 새 릴리스로 바꿀 때는 다시 복사합니다.
 
 ## OCR (선택, 기본 꺼짐)
 `01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
@@ -365,7 +367,7 @@ ruff check .                              # 함수 복잡도 (C901 ≤ 8, PLR091
 01_preprocessing.ipynb … 05_evaluation.ipynb   파이프라인별 노트북 (설정 · 호출 · 표만)
 config.yaml                설정 (① 전처리 ~ ⑤ 평가 구역)
 eval/
-  golden/                  골든 릴리스 final2 복사본 — dev.jsonl (03 입력) · test.jsonl (최종 점수용, 읽지 않음) · manifest.json
+  golden/                  골든 분할 final6 복사본 — dev.jsonl (03 입력) · test.jsonl (최종 점수용, 읽지 않음) · manifest.json
   eval_questions.yaml      평가 질문 세트 (질문 · 정답 · must_include)
 rag/
   config.py                config.yaml · .env 읽기, jsonl 읽기/쓰기

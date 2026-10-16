@@ -10,12 +10,13 @@ import json
 import re
 import unicodedata
 from decimal import Decimal
+from functools import lru_cache
 
 from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-4"
+VALIDATOR_VERSION = "validation-7"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -35,6 +36,14 @@ SCREEN_CODES = ("structure_question", "ordinal_reference", "evidence_reference",
                 "personal_info", "malformed_question", "invalid_comparison", "useless_answer")
 # 칸이 비어 행의 뜻이 정해지지 않는 표 행: 빈 칸으로 시작하거나 빈 칸이 이어진다 (조직도 · 간트 모양).
 BLANK_CELL = re.compile(r"(^|\n) *\||\| *\|")
+# unanswerable 생성기는 다른 문서의 근거 라벨([E1 · 머리글 행])을 질문에 옮겨 적곤 한다. 질문자는 근거를 보지 못한다.
+EVIDENCE_LABEL = re.compile(r"(?<![A-Za-z])E\d+(?!\d)|머리글 행")
+# 배점표의 값을 배점 · 평가 기준으로 묻는 질문의 낱말 (공백을 지운 질문에서 찾는다).
+SCORING_WORDS = re.compile(r"배점|점수|평가|\d+점|만점|득점|감점|가점")
+# unanswerable 검증기에 한 번에 주는 대상 문서의 글자 수. 문서(중앙 6만 6천 자, 가장 긴 것 20만 자)를 몇 번에 나눠 모두 읽힌다.
+DOCUMENT_BATCH_CHARS = 60_000
+# 새 묶음 앞에 다시 주는 앞 묶음 끝의 글자 수. 표 밖의 소제목('A시스템')과 그 아래 글이 경계로 갈리지 않게 한다.
+DOCUMENT_OVERLAP_CHARS = 2_000
 
 
 def validate(topic, method, run_id, config_path, client):
@@ -93,27 +102,28 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     plan_id, planned, spec = _pinned_plan(run_dir, topic)
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
     units = {item["candidate_id"]: evidence_units(item, bundles[item["bundle_id"]]) for item in candidates}
+    documents = _documents(topic, planned, bundles, candidates)
     prompt_path = storage.PROMPTS / "validator.txt"
     calls = []
     ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls)
     judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls)
-    free_rejects = _static_rejections(candidates, spec, units, survivors)
+    free_rejects = _static_rejections(candidates, spec, units, survivors, documents)
     rejected_ids = {item["candidate_id"] for item in free_rejects}
     to_judge = [item for item in candidates if item["candidate_id"] not in rejected_ids]
 
     judged, status = [], "complete"
     while len(judged) < len(to_judge):
         rest = to_judge[len(judged):]
-        batch = _batch(config, calls, rest, units)
+        batch = _batch(config, calls, rest, units, documents)
         if not batch:
-            needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]])
+            needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]], documents.get(rest[0]["candidate_id"]))
             status = generation.limit_reached(config, len(calls), generation._cost(config, calls), needed)
             break
-        verdicts = generation.parallel(
-            lambda item: _verdict(item, spec, units[item["candidate_id"]], ask, judge, survivors), batch)
+        verdicts = generation.parallel(lambda item: _verdict(
+            item, spec, units[item["candidate_id"]], ask, judge, survivors, documents.get(item["candidate_id"])), batch)
         judged += [_settle(item, verdict, units[item["candidate_id"]], survivors) for item, verdict in zip(batch, verdicts)]
     unjudged = to_judge[len(judged):]
-    free_rejects += _static_rejections(unjudged, spec, units, survivors)
+    free_rejects += _static_rejections(unjudged, spec, units, survivors, documents)
     rejected_ids.update(item["candidate_id"] for item in free_rejects)
     pending = [item["candidate_id"] for item in unjudged if item["candidate_id"] not in rejected_ids]
     if not pending:
@@ -143,10 +153,26 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     return [settled[item["candidate_id"]] for item in candidates if item["candidate_id"] in settled], info
 
 
-def _static_rejections(candidates, spec, units, survivors):
+def _static_rejections(candidates, spec, units, survivors, documents):
     """호출 한도가 부족해도 무료 검사로 거절할 후보는 실패 기록에 남기도록 먼저 판정한다."""
     return [_settle(item, ("rejected", reason), units[item["candidate_id"]], survivors)
-            for item in candidates if (reason := _static_reason(item, spec, units[item["candidate_id"]], survivors))]
+            for item in candidates
+            if (reason := _static_reason(item, spec, units[item["candidate_id"]], survivors,
+                                         documents.get(item["candidate_id"])))]
+
+
+def _documents(topic, planned, bundles, candidates):
+    """candidate_id → 질문이 묻는 문서의 모든 근거 단위. 문서 전체를 보는 주제(DOCUMENT_TOPICS)만 읽는다.
+
+    근거 어댑터 run 이 고정한 패키지와 지금 패키지가 다르면 판정과 본문이 맞지 않으므로 멈춘다.
+    """
+    if topic not in DOCUMENT_TOPICS:
+        return {}
+    run_dir = storage._child(storage.OUTPUTS / "evidence", planned["evidence_run"])
+    plan._check_package(evidence.PACKAGE, storage._read_json(run_dir / "manifest.json")["pinned_sha256"])
+    asked = {item["candidate_id"]: bundles[item["bundle_id"]]["doc_sha"] for item in candidates}
+    found = plan.document_units(run_dir, evidence.PACKAGE, set(asked.values()))
+    return {candidate_id: found[doc] for candidate_id, doc in asked.items()}
 
 
 def _pinned_plan(run_dir, topic):
@@ -171,8 +197,10 @@ def release(topic, version, runs, config_path, client):
     _refuse_duplicates(items)
     config, config_sha = generation._run_config(config_path)
     prompt_path = storage.PROMPTS / "screen.txt"
+    # 일부러 답이 없거나 전제가 틀린 질문은 판정기가 안내 문구 · 틀린 질문으로 빼지 않게, 주제 명세의 설명을 붙인다.
+    note = plan.topic_spec(topic)[0].get("screen")
     calls = []
-    screen = _screener(client, config, prompt_path.read_text(encoding="utf-8"), calls)
+    screen = _screener(client, config, prompt_path.read_text(encoding="utf-8") + (f"\n\n{note}" if note else ""), calls)
     ruled = {item["candidate_id"]: (False, None, rule)
              for item in items if (rule := rule_reason(item, units[item["candidate_id"]]))}
     to_screen = [item for item in items if item["candidate_id"] not in ruled]
@@ -193,6 +221,7 @@ def release(topic, version, runs, config_path, client):
                for item in items if not judged[item["candidate_id"]][0]]
     info = {
         "screen_prompt_sha256": storage._sha256(prompt_path),
+        "screen_note": note,
         "run_config": config,
         "run_config_sha256": config_sha,
         "model_reported": sorted({call["model"] for call in calls}),
@@ -238,7 +267,7 @@ def rename(topic, version, sources):
         items += released
         runs.update(tuple(run.split("/", 1)) for run in manifest["runs"])
         golden[source] = manifest["golden_sha256"]
-    docs = {item["candidate_id"]: item["evidence"][0]["doc_sha"] for item in items}
+    docs = {item["candidate_id"]: plan.asked_document(item) for item in items}
     items = _current_names(items, docs)
     # 이름이 같아진 뒤에 견준다. 옛 이름 · 새 이름 질문은 앞머리만 달라 이름을 바꾸기 전에는 같은 질문으로 보이지 않는다.
     _refuse_duplicates(items)
@@ -284,11 +313,11 @@ def evidence_units(item, bundle):
     return plan._with_headers(cited, headers)
 
 
-def _batch(config, calls, candidates, units):
+def _batch(config, calls, candidates, units, documents):
     """함께 검증할 앞쪽 후보들 (많아야 WORKERS 개). 후보마다 쓸 수 있는 호출 수를 더해 한도 안에 드는 데까지 고른다."""
     batch, needed = [], 0
     for item in candidates[:generation.WORKERS]:
-        needed += _calls_needed(item, units[item["candidate_id"]])
+        needed += _calls_needed(item, units[item["candidate_id"]], documents.get(item["candidate_id"]))
         if generation.limit_reached(config, len(calls), generation._cost(config, calls), needed):
             break
         batch.append(item)
@@ -456,17 +485,26 @@ def difficulty(question, units, proven_multi_hop):
     """
     if proven_multi_hop:
         return "hard"
-    question = DOCUMENT_PREFIX.sub("", question, count=1)
     evidence = _norm(" ".join(unit["text"] for unit in units))
-    words = [_norm(t.form) for t in generation.tokens(question) if t.tag in CONTENT_TAGS and t.form not in INTERROGATIVES]
-    return "easy" if all(word in evidence for word in words) else "medium"
+    return "easy" if all(word in evidence for word in _content_words(question)) else "medium"
 
 
-def _verdict(item, spec, units, ask, judge, survivors):
-    """(갈 상태, 이유). 돈이 들지 않는 검사를 먼저 하고, 그다음 독립 답을 받는다. 상태는 auto_validated 아니면 rejected 다."""
-    reason = _static_reason(item, spec, units, survivors)
+def _content_words(question):
+    """질문의 내용 형태소 (의문사와 앞에 붙인 문서 이름은 뺌)."""
+    question = DOCUMENT_PREFIX.sub("", question, count=1)
+    return [_norm(t.form) for t in generation.tokens(question) if t.tag in CONTENT_TAGS and t.form not in INTERROGATIVES]
+
+
+def _verdict(item, spec, units, ask, judge, survivors, document):
+    """(갈 상태, 이유). 돈이 들지 않는 검사를 먼저 하고, 그다음 독립 답을 받는다. 상태는 auto_validated 아니면 rejected 다.
+
+    document 는 질문이 묻는 문서의 모든 근거 단위다 (DOCUMENT_TOPICS 만, 아니면 None).
+    """
+    reason = _static_reason(item, spec, units, survivors, document)
     if reason:
         return "rejected", reason
+    if item["primary_topic"] == "unanswerable":
+        return _absent_verdict(item, document, ask)
     full, error = ask(item["question"], units)
     reason = _answer_reason(item, units, full, error, judge)
     if reason:
@@ -497,7 +535,7 @@ def _answer_reason(item, units, full, error, judge):
     return f"독립 답과 다릅니다: 독립 답 {independent!r}"
 
 
-def _static_reason(item, spec, units, survivors):
+def _static_reason(item, spec, units, survivors, document):
     cited = [unit for unit in units if unit["ref"] in item["evidence"]]
     mismatch = generation.check_structure(item["primary_topic"], spec, item, cited)
     if mismatch:
@@ -506,7 +544,7 @@ def _static_reason(item, spec, units, survivors):
     if rule:
         return rule
     check = RELATIONS.get(item["primary_topic"])
-    relation = check(item, units) if check else None
+    relation = check(item, units, document) if check else None
     if relation:
         return relation
     duplicate = next((survivors[key] for key in _keys(item) if key in survivors), None)
@@ -515,7 +553,27 @@ def _static_reason(item, spec, units, survivors):
 
 def rule_reason(item, units):
     """독립 답과 맞아 검증을 통과하지만 평가에 쓸 수 없던 꼴이면 그 이유, 아니면 None. 돈이 들지 않아 검증 앞과 출시 앞에서 본다."""
-    topic, question = item["primary_topic"], DOCUMENT_PREFIX.sub("", item["question"]).strip()
+    question = DOCUMENT_PREFIX.sub("", item["question"]).strip()
+    return _topic_rule(item, question, units) or _scoring_rule(item, question, units)
+
+
+def _scoring_rule(item, question, units):
+    """값을 답하는 주제(CLAIMED)가 인용한 표가 배점표(머리글에 '배점')인데 질문이 배점 · 평가를 묻지 않으면 그 이유.
+
+    배점표의 기준값(실적 5건 이상 | 10점)은 그 점수를 받는 조건이지 제출 · 참가 요건이 아니다.
+    검증기는 그 칸의 값만 맞춰 보므로, 기준값을 요건처럼 묻는 질문('5건 이상 제출해야 하나요?')도 통과시킨다.
+    조건 · 비교 주제는 뺀다. 배점표 주석의 필수 자격처럼 배점표에도 진짜 요건이 적혀 있다.
+    """
+    if item["primary_topic"] not in CLAIMED:
+        return None
+    scoring = any(plan._table_row(unit) == 0 and "배점" in re.sub(r"\s", "", unit["text"]) for unit in units)
+    if scoring and not SCORING_WORDS.search(re.sub(r"\s", "", question)):
+        return "배점 기준: 인용한 표가 배점표인데 질문이 배점 · 평가를 묻지 않아 기준값을 요건처럼 묻습니다"
+    return None
+
+
+def _topic_rule(item, question, units):
+    topic = item["primary_topic"]
     if topic == "numeric" and re.fullmatch(
             r"(?:사업의\s*)?(?:값과 단위|수치와 단위|첫 번째 값)(?:은|는)?\s*(?:(?:무엇|얼마)인가)?[?？]?", question):
         return "모호한 대상: 질문이 '값과 단위' · '첫 번째 값' 처럼 대상을 이름으로 가리키지 않습니다"
@@ -530,6 +588,8 @@ def rule_reason(item, units):
         return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
     if topic == "multi_hop" and len({ref["chunk_id"] for ref in item["evidence"]}) < 2:
         return "multi_hop 아님: 인용한 근거가 모두 한 청크 안에 있습니다"
+    if topic == "unanswerable" and EVIDENCE_LABEL.search(question):
+        return "근거 지칭: 질문에 'E1' · '머리글 행' 같은 근거 라벨이 있습니다"
     return None
 
 
@@ -554,12 +614,14 @@ def _answerable(item, full):
 
 
 def _numeric_answer(item, full):
-    if item["primary_topic"] != "numeric":
+    """수를 답하는 주제는 독립 답에도 그 수 · 단위가 있어야 한다. false_premise 는 바로잡은 값(actual)이다."""
+    claim = CLAIMED.get(item["primary_topic"])
+    if claim is None:
         return None
     found = quantities(full["answer"])
     if not found:
         return f"유형 불일치: 독립 답 {full['answer']!r} 에 수 · 단위가 없습니다"
-    claimed = item["structure"]["value"] + item["structure"]["unit"]
+    claimed = claim(item["structure"])
     if not quantities(claimed) <= found:
         return f"독립 답과 다릅니다: 값 · 단위 {claimed!r}, 독립 답 {full['answer']!r}"
     return None
@@ -606,10 +668,113 @@ def _not_copied(item, full):
     return f"복사형: 질문에 답 {full['answer']!r} 이 들어 있습니다"
 
 
+CLAIMED = {"numeric": lambda structure: structure["value"] + structure["unit"],
+           "false_premise": lambda structure: structure["actual"]}
 ANSWER_CHECKS = (_answerable, _numeric_answer, _not_copied)
 
 
-def _table_relation(item, units):
+def _absent_verdict(item, document, ask):
+    """unanswerable: 대상 문서의 모든 근거 단위를 나눠 받은 검증기가 어느 묶음으로도 답하지 못해야 한다.
+
+    핵심어 검사(_key_terms_absent)는 글자로만 본다. 핵심어를 다른 말로 쓴 근거(하자보수 · 하자담보책임)는 검증기가 찾는다.
+    일부 단위만 주면 그 밖의 단위에 있는 답을 놓치므로, 없음은 문서 전체를 읽고서야 정한다.
+    근거 충돌도 거절한다. 같은 사실의 값이 근거마다 다르다는 것은 속성이 문서에 있다는 뜻이다.
+    묶음은 저마다 따로 읽히므로, 표 행은 그 표의 머리글과 같은 묶음에 든다 (document_batches).
+    ponytail: 묶음 사이의 충돌과, 경계에서 DOCUMENT_OVERLAP_CHARS 보다 멀리 떨어진 표 밖 소제목은 보지 못한다.
+    """
+    for batch in document_batches(document):
+        found, error = ask(item["question"], batch)
+        if error:
+            return "rejected", f"검증기 출력 오류: {error}"
+        if found["conflict"]:
+            return "rejected", "근거 충돌: 검증기가 대상 문서의 근거끼리 같은 사실의 값이 다르다고 답했습니다"
+        if found["answerable"]:
+            return "rejected", f"대상 문서에 있음: 검증기가 대상 문서의 근거로 답했습니다: {found['answer']!r}"
+    return "auto_validated", "자동 검증 통과: 대상 문서의 모든 근거로 답이 나오지 않습니다"
+
+
+def document_batches(document):
+    """대상 문서의 근거 단위를 문서 차례대로 DOCUMENT_BATCH_CHARS 자 안팎씩 나눈다. 라벨(E1 …)은 문서 전체에서 이어 붙인다.
+
+    검증기는 묶음마다 따로 읽으므로, 묶음 하나가 홀로 읽혀야 한다.
+    한 표의 행은 한 묶음에 넣고, 한 묶음보다 큰 표는 행 경계에서 나누어 이어지는 묶음마다 그 표의 머리글(0행)을 다시 준다.
+    새 묶음은 앞 묶음 끝 DOCUMENT_OVERLAP_CHARS 자를 다시 받는다. 다시 주는 단위는 처음의 라벨을 그대로 쓴다.
+    그렇게 다시 받은 표 행은 머리글 없이 올 수 있지만, 그 행은 앞 묶음에서 머리글과 함께 이미 읽혔다.
+    원본 그리드는 셀이 단위라, 먼저 행 띠(_grid_bands)로 묶어 행 이름 칸과 값 칸이 한 단위가 되게 한다.
+    """
+    labelled = [{**unit, "label": f"E{n}"} for n, unit in enumerate(_grid_bands(document), 1)]
+    batches, size, fresh = [[]], 0, 0
+    for group in _table_groups(labelled):
+        headers = [unit for unit in group if _row(unit) == 0]
+        if fresh and size + sum(len(unit["text"]) for unit in group) > DOCUMENT_BATCH_CHARS:
+            batches.append(_tail(batches[-1]))
+            size, fresh = sum(len(unit["text"]) for unit in batches[-1]), 0
+        for unit in group:
+            if fresh and size + len(unit["text"]) > DOCUMENT_BATCH_CHARS:
+                carried = _tail(batches[-1])
+                batches.append([header for header in headers if _row(unit) and header not in carried] + carried)
+                size, fresh = sum(len(unit["text"]) for unit in batches[-1]), 0
+            batches[-1].append(unit)
+            size, fresh = size + len(unit["text"]), fresh + 1
+    return batches
+
+
+def _table_groups(units):
+    """단위를 문서 차례대로 두되, 한 표의 행은 처음 나온 자리에 모은다. 논리 표는 요소, 원본 그리드는 stream · control 이 한 표다.
+
+    논리 표에 이어진 원본 그리드 셀은 그 표의 element_id 를 갖지만 (evidence.grid_units), 행 번호가 다른 따로의 표다.
+    """
+    groups = {}
+    for unit in units:
+        if unit["unit_id"].startswith("grid:"):
+            key = unit["unit_id"].rsplit(":", 2)[0]
+        elif unit["location"]["kind"] == "table":
+            key = unit["element_id"]
+        else:
+            key = unit["unit_id"]
+        groups.setdefault(key, []).append(unit)
+    return list(groups.values())
+
+
+def _grid_bands(units):
+    """원본 그리드마다 셀을 행 띠 단위로 바꾼다. 띠는 세로로 합친 칸(rowspan)이 걸친 행들이다.
+
+    셀마다 따로 두면 묶음 경계가 행 이름 칸('A시스템')과 그 값 칸('1년') 사이에 떨어질 수 있었다.
+    띠의 글은 한 행의 칸을 ' | ' 로, 행을 줄바꿈으로 잇는다. 띠는 첫 셀의 unit_id · location 을 쓰므로 0행 띠가 머리글이다.
+    """
+    banded = []
+    for group in _table_groups(units):
+        if not group[0]["unit_id"].startswith("grid:"):
+            banded += group
+            continue
+        bands = []
+        for cell in sorted(group, key=lambda unit: (unit["location"]["row"], int(unit["unit_id"].rsplit(":", 1)[1]))):
+            row = cell["location"]["row"]
+            if not bands or row > bands[-1]["end"]:
+                bands.append({"first": cell, "end": row, "rows": {}})
+            bands[-1]["end"] = max(bands[-1]["end"], row + cell["rowspan"] - 1)
+            bands[-1]["rows"].setdefault(row, []).append(cell["text"].strip())
+        banded += [{**band["first"], "text": "\n".join(" | ".join(texts) for texts in band["rows"].values())}
+                   for band in bands]
+    return banded
+
+
+def _row(unit):
+    return unit["location"]["row"] if unit["location"]["kind"] == "table" else None
+
+
+def _tail(batch):
+    """묶음 끝에서 DOCUMENT_OVERLAP_CHARS 자 안에 드는 단위들."""
+    tail, size = [], 0
+    for unit in reversed(batch):
+        size += len(unit["text"])
+        if size > DOCUMENT_OVERLAP_CHARS:
+            break
+        tail.insert(0, unit)
+    return tail
+
+
+def _table_relation(item, units, document):
     """표 주제의 답은 인용한 표에서 행 이름과 열 이름이 만나는 칸의 값이어야 한다."""
     row, column = item["structure"]["row"], item["structure"]["column"]
     cell = _cell(units, row, column)
@@ -618,13 +783,41 @@ def _table_relation(item, units):
     return None if _states(item["answer"], cell) else f"표 관계: {row} · {column} 칸은 {cell!r} 인데 답에 없습니다"
 
 
-def _condition_relation(item, units):
+def _condition_relation(item, units, document):
     """조건 주제의 답은 그 조건 · 예외 문구를 함께 밝혀야 한다 (주제 명세 requires)."""
     condition = item["structure"]["condition"]
     return None if _states(item["answer"], condition) else f"조건 · 예외 누락: 답에 조건 {condition!r} 이 없습니다"
 
 
-RELATIONS = {"table": _table_relation, "condition": _condition_relation}
+def _key_terms_absent(item, units, document):
+    """unanswerable: 빌린 속성의 핵심어가 대상 문서의 어느 근거 단위에도 없어야 한다 (held 단위 포함, 공백 · 쉼표 무시)."""
+    for unit in document:
+        found = [term for term in item["structure"]["key_terms"] if _norm(term) in _norm(unit["text"])]
+        if found:
+            return f"대상 문서에 있음: 핵심어 {found} 가 근거 단위 {unit['unit_id']} 에 있습니다"
+    return None
+
+
+def _premise_absent(item, units, document):
+    """false_premise: 전제한 값(stated)이 대상 문서의 어느 근거 단위에도 없어야 한다 (held 단위 포함).
+
+    값은 quantities 로 견주므로 표기만 다른 같은 값(3천만원 · 30,000,000원)도 있는 것으로 본다. 13초 는 3초 가 아니다.
+    """
+    stated = quantities(item["structure"]["stated"])
+    unit = next((unit for unit in document if stated <= _unit_quantities(unit["text"])), None)
+    return f"전제가 문서에 있음: {item['structure']['stated']!r} 이 근거 단위 {unit['unit_id']} 에 있습니다" if unit else None
+
+
+@lru_cache(maxsize=None)
+def _unit_quantities(text):
+    # 한 문서의 단위 수천 개를 후보마다 다시 형태소 분석하지 않는다.
+    return frozenset(quantities(text))
+
+
+RELATIONS = {"table": _table_relation, "condition": _condition_relation,
+             "unanswerable": _key_terms_absent, "false_premise": _premise_absent}
+# 질문이 묻는 문서 전체를 읽어 검사하는 주제. 근거 묶음 밖에 답이나 전제가 있으면 틀린 문제다.
+DOCUMENT_TOPICS = ("unanswerable", "false_premise")
 
 
 def _cell(units, row, column):
@@ -791,11 +984,14 @@ def _valid_comparison(comparison):
     )
 
 
-def _calls_needed(item, units):
+def _calls_needed(item, units, document):
     """후보 하나에 드는 호출 수: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 한 번 더.
+    unanswerable 은 독립 답 대신 대상 문서의 묶음마다 한 번이다.
 
     한 후보의 검증을 도중에 끊지 않도록 후보를 시작하기 전에 이만큼을 한도와 견준다.
     ponytail: 출력 오류의 다시 묻기 · 판정기 호출은 세지 않아 그만큼 한도를 넘을 수 있다. 정확히 막아야 하면 최대치로 센다.
     """
+    if item["primary_topic"] == "unanswerable":
+        return len(document_batches(document))
     singles = sum(plan._table_row(unit) != 0 for unit in units) if item["primary_topic"] == "multi_hop" else 0
     return 1 + singles

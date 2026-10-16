@@ -1,46 +1,58 @@
 {
-  "version": "final2",
-  "created_at": "2026-10-15T07:13:56+00:00",
-  "code_commit": "45246ccbe27a8bffec26c03542e0f4ff49d579f1",
+  "version": "final6",
+  "created_at": "2026-10-16T00:17:41+00:00",
+  "code_commit": "24fe7195b588cf59901bf2e743def610e0317941",
   "dev_share": 0.3,
   "seed": 20261015,
+  "base": {
+    "version": "final2",
+    "manifest_sha256": "ffe69414ee4552dcd61dfa76dd9c9b64dbeaf343f3a4c8f587e585a84ca458fd"
+  },
   "sources": {
     "numeric": "a16d3420d77ae6a4c7b157a2f45a5ac7fc4fb4222dc7b6658cbbd3b9e9edb46b",
     "table": "b14c3a14538c06414912c931eb1555dc20d78ffdb2bda2e75a3a7a62980c844a",
     "condition": "0f4b50fc86cc6804f14a79b9eb4114352894cd27ac3a5c181362837de65bc544",
     "comparison": "7b4a8ef2bc05a775b489b88f4ce6cbd16e79e20f833b403fd8627f9e86ddce98",
-    "multi_hop": "fea451f0e6d1c36cb318c095656150086a8efd9f627176d4eb73b73b9b61bef3"
+    "multi_hop": "fea451f0e6d1c36cb318c095656150086a8efd9f627176d4eb73b73b9b61bef3",
+    "unanswerable": "d4d1a8e5a04b1f77f1baafcaa975b5c74be36dd541381939306b9828a48e1b53",
+    "false_premise": "d0989cd6da343dd8dd20f62685e3d184be7f8a169ec5d0f0fe014941d55ea2b5"
   },
   "dev": {
-    "count": 396,
+    "count": 408,
     "documents": 30,
-    "sha256": "67b5a36ed8d4bd670b08c8ee3ec56c98463d7331f9ba75cf9f5682a19ed5cb73",
+    "sha256": "d8d3603742192f2533f1ca11c0bf4d4c24e7f0ff9dabcdccb82900e674cad01d",
     "cells": {
       "comparison-easy": 20,
       "comparison-medium": 36,
       "condition-easy": 25,
       "condition-medium": 44,
+      "false_premise-easy": 1,
+      "false_premise-medium": 3,
       "multi_hop-hard": 71,
       "numeric-easy": 63,
       "numeric-medium": 41,
       "table-easy": 6,
-      "table-medium": 90
+      "table-medium": 90,
+      "unanswerable-medium": 8
     }
   },
   "test": {
-    "count": 930,
+    "count": 943,
     "documents": 68,
-    "sha256": "5de8e8ff6fd4339e3f44b44994f6bb8880ccb4e5f0661470ecfbf5dc1e17baee",
+    "sha256": "b99d5d87f00c272258b3d5d07defa01322697daeabcbf182ce8a059b275e74ac",
     "cells": {
       "comparison-easy": 45,
       "comparison-medium": 83,
       "condition-easy": 57,
       "condition-medium": 110,
+      "false_premise-easy": 1,
+      "false_premise-medium": 4,
       "multi_hop-hard": 176,
       "numeric-easy": 144,
       "numeric-medium": 90,
       "table-easy": 14,
-      "table-medium": 211
+      "table-medium": 211,
+      "unanswerable-medium": 8
     }
   }
 }
