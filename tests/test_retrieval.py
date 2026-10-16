@@ -144,6 +144,19 @@ def test_component_ranks_interleave_agencies_independently_of_fused_order():
     assert [c["bm25_rank"] for c in candidates] == [None, None, 1, 2]
 
 
+def test_shared_document_candidates_keep_each_occurrence_rank_before_packing():
+    index = make_index(["가 첫 근거", "공동 근거", "나 첫 근거"], [1] * 3,
+                       doc_ids=["a", "shared", "b"])
+    index.router.route.return_value = {"가": {"a", "shared"}, "나": {"b", "shared"}}
+    index._dense = MagicMock(side_effect=[{0: 0.9, 1: 0.8}, {2: 0.9, 1: 0.8}])
+    index._sparse = MagicMock(return_value={})
+    hits, candidates = index.search_with_candidates("가 나 비교")
+    assert [c["chunk_id"] for c in candidates] == ["c0", "c2", "c1", "c1"]
+    assert [c["dense_rank"] for c in candidates] == [1, 2, 3, 4]
+    assert [c["fused_rank"] for c in candidates] == [1, 2, 3, 4]
+    assert [h["chunk_id"] for h in hits] == ["c0", "c2", "c1"]
+
+
 @pytest.mark.parametrize("weight,disabled", [(0, "dense"), (1, "bm25")])
 def test_disabled_component_has_no_candidates_or_scores(weight, disabled):
     index = make_index(["근거"], [1])

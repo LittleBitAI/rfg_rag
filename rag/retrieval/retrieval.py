@@ -83,18 +83,16 @@ class HybridIndex:
         return self._pack([(c["index"], c["score"]) for c in ranked]), candidates
 
     def _candidate_snapshot(self, groups: list, ranked: list) -> tuple:
-        component_ranks = {}
         for component in ("dense", "bm25"):
             lists = [sorted((c for c in group if c[f"{component}_score"] is not None),
                             key=lambda c: c[f"{component}_rank"]) for group in groups]
             merged = [c for c in chain.from_iterable(zip_longest(*lists)) if c is not None]
-            component_ranks[component] = {}
             for rank, c in enumerate(merged, 1):
-                component_ranks[component].setdefault(c["index"], rank)
+                c[f"{component}_rank"] = rank
         return tuple(MappingProxyType({"chunk_id": self.chunks[c["index"]]["chunk_id"],
                      "doc_id": self.chunks[c["index"]]["doc_id"], "fused_rank": rank,
-                     "dense_score": c["dense_score"], "dense_rank": component_ranks["dense"].get(c["index"]),
-                     "bm25_score": c["bm25_score"], "bm25_rank": component_ranks["bm25"].get(c["index"]),
+                     "dense_score": c["dense_score"], "dense_rank": c["dense_rank"],
+                     "bm25_score": c["bm25_score"], "bm25_rank": c["bm25_rank"],
                      "exact_code_match": c["exact_code_match"]}) for rank, c in enumerate(ranked, 1))
 
     def _rank(self, question: str, codes: set[str], doc_ids: set | None) -> list[dict]:
