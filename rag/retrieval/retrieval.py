@@ -153,11 +153,11 @@ def _source_key(name: str) -> str:
 
 
 def read_csv_orgs(path: Path) -> dict[str, str]:
-    """담당자가 제공한 CSV의 파일명 · 발주 기관 열을 읽는다"""
+    """담당자가 제공한 CSV의 파일명 · 발주기관 열을 읽는다"""
     orgs: dict[str, str] = {}
     with open(path, encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
-            name, org = row["파일명"], row["발주 기관"]
+            name, org = row["파일명"], row["발주기관"]
             key = _source_key(name)
             if key in orgs and orgs[key] != org:
                 raise ValueError(f"CSV 파일명에 서로 다른 발주 기관이 지정되었습니다: {name}")
