@@ -191,7 +191,7 @@ def test_search_preserves_overlapping_evidence_from_distinct_documents(second_bo
 @pytest.mark.parametrize("bom", ["", "\ufeff"])
 def test_csv_routes_normalized_and_truncated_filenames_alongside_cover(tmp_path, bom):
     path = tmp_path / "orgs.csv"
-    path.write_text(bom + "파일명,발주 기관\n조달 사업 (최종).PDF,(재) 미래정보재단\n", encoding="utf-8")
+    path.write_text(bom + "파일명,발주기관\n조달 사업 (최종).PDF,(재) 미래정보재단\n", encoding="utf-8")
     docs = [{"doc_id": "a", "source": "조달_사업.pdf", "title": "조달 사업",
              "cover_text": "발주기관: 한국철도공사", "head_text": ""}]
     router = DocRouter(docs, read_csv_orgs(path))
@@ -235,7 +235,7 @@ def test_csv_ambiguous_normalized_or_truncated_filename_does_not_route(source):
 @pytest.mark.parametrize("first,second", [("사업.pdf", "사업.pdf"), ("RFP_A.pdf", "rfp_a.pdf")])
 def test_csv_conflicting_duplicate_filename_is_rejected(tmp_path, first, second):
     path = tmp_path / "orgs.csv"
-    path.write_text(f"파일명,발주 기관\n{first},기관가공사\n{second},기관나공사\n", encoding="utf-8")
+    path.write_text(f"파일명,발주기관\n{first},기관가공사\n{second},기관나공사\n", encoding="utf-8")
     with pytest.raises(ValueError, match=second):
         read_csv_orgs(path)
 
