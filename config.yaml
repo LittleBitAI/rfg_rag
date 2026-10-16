@@ -56,7 +56,7 @@ rewrite:
 
 # ── ③ 검증 (03_validation) ──
 validation:
-  # 골든 dev 분할 + RFP 평가 질문. 골든 test 분할(eval/golden/test.jsonl)은 최종 점수용으로 남겨 두고 읽지 않음
+  # 평가셋은 골든 dev + RFP 질문만 사용. test는 03의 근거 라벨 품질 보고서에서만 읽음
   golden_sets: [eval/golden/dev.jsonl, eval/eval_questions.yaml]
 
 # ── ④ 생성 (04_generation) ──

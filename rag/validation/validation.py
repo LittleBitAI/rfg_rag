@@ -152,15 +152,18 @@ def _golden_row(row: dict, field_names: set[str]) -> dict:
 
 
 def _eval_item(row: dict, field_names: set[str]) -> dict:
+    labels = {"evidence_source": "none", "primary_topic": None, "golden_evidence": [], "golden_context": ""}
     if "candidate_id" in row:
+        labels = {"evidence_source": "golden", "primary_topic": row["primary_topic"],
+                  "golden_evidence": row["evidence"], "golden_context": row["context"]}
         row = _golden_row(row, field_names)
     return {"id": row["id"], "question": (row.get("question") or "").strip(), "reference": row.get("reference") or "",
             "key_facts": row.get("key_facts") or row.get("must_include") or [], "conv": row.get("conv"),
-            "reset_context": bool(row.get("reset_context")), "answerable": row.get("answerable", True)}
+            "reset_context": bool(row.get("reset_context")), "answerable": row.get("answerable", True), **labels}
 
 
 def load_eval_items(paths: list[str]) -> list[dict]:
-    """골든 릴리스(jsonl)·평가 질문(yaml) → {id, question, reference, key_facts, conv, reset_context, answerable}.
+    """골든 릴리스(jsonl)·평가 질문(yaml) → 평가 항목과 라벨 연결용 골든 참조·context.
     answerable 은 답이 문서에 있는가 — 골든 unanswerable 만 False 이고, 05 평가가 그 질문에 맞지 않는 지표를 뺀다"""
     items = []
     for path in paths:
@@ -201,5 +204,5 @@ def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:
         if not problem:
             # 통과한 항목만 질문을 차지한다 — 정답 없는 골든 항목이 같은 질문의 온전한 yaml 항목을 막지 않게
             questions.add(it["question"])
-            kept.append({k: it[k] for k in EVAL_ITEM_FIELDS})
+            kept.append({k: v for k, v in it.items() if k != "conv"})
     return kept, pd.DataFrame(report)

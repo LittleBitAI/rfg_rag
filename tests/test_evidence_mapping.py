@@ -1,0 +1,145 @@
+"""실제 파일 SHA와 골든 좌표를 쓰되 API·색인 없이 라벨 연결을 검증한다."""
+import hashlib
+import unicodedata
+
+import pytest
+
+from rag.config import write_jsonl
+from rag.validation.evidence import (
+    correspondence_report,
+    document_report,
+    label_evidence,
+    labelled_sample,
+    mapping_report,
+)
+from rag.validation.validation import check_eval_items, load_eval_items
+
+
+TEXT = "사업 기간은 계약 체결일로부터 정확히 180일입니다."
+
+
+@pytest.fixture
+def mapping_input(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "문서.hwp").write_bytes(b"raw document bytes")
+    sha = hashlib.sha256(b"raw document bytes").hexdigest()
+    element = {"element_id": "el", "search_text": TEXT, "table": None,
+               "location": {"span_text_field": "search_text",
+                            "supplier_metadata": {"source_paths": ["문서.hwp"]}}}
+    write_jsonl([element], tmp_path / "final_elements.jsonl")
+    ref = {"doc_sha": sha, "chunk_id": "old", "element_id": "el",
+           "location": {"kind": "char", "start": 0, "end": len(TEXT)}}
+    golden = {"candidate_id": "q", "question": "기간은?", "answer": "180일", "primary_topic": "numeric",
+              "structure": {"value": "180", "unit": "일"}, "evidence": [ref], "context": "[E1]\n" + TEXT}
+    write_jsonl([golden], tmp_path / "dev.jsonl")
+    [item] = load_eval_items([str(tmp_path / "dev.jsonl")])
+    chunk = {"chunk_id": "live", "doc_id": "doc", "source": "문서.hwp", "body": TEXT}
+    return item, chunk, raw, tmp_path
+
+
+@pytest.mark.parametrize("case, expected", [
+    ("unique", None), ("duplicate", "ambiguous"), ("other_document", "not_found"),
+    ("unmapped", "doc_unmapped"), ("short", "too_short"),
+])
+def test_document_scoped_exact_label(mapping_input, case, expected):
+    item, chunk, raw, package = mapping_input
+    chunks = [chunk]
+    if case == "duplicate":
+        chunks.append({**chunk, "chunk_id": "second"})
+    if case == "other_document":
+        chunks = [{**chunk, "body": "다른 본문"}, {**chunk, "doc_id": "other", "chunk_id": "other-chunk"}]
+        # 원본 파일명은 한 문서에만 연결된다.
+        chunks[1]["source"] = "다른.hwp"
+    if case == "unmapped":
+        item["golden_evidence"][0]["doc_sha"] = "0" * 64
+    if case == "short":
+        item["golden_evidence"][0]["location"]["end"] = 3
+        item["golden_context"] = "[E1]\n" + TEXT[:3]
+
+    [labelled] = label_evidence([item], chunks, raw, package)
+    [evidence] = labelled["evidence"]
+
+    assert evidence["reason"] == expected
+    assert evidence["chunk_id"] == ("live" if expected is None else None)
+    assert evidence["golden_chunk_id"] == "old"
+    assert labelled["doc_ids"] == ([] if case == "unmapped" else ["doc"])
+
+
+def test_table_text_normalization_and_context_correspondence(mapping_input):
+    item, chunk, raw, package = mapping_input
+    text = "사업 기간 | 계약 체결 후\n180일 동안 모든 업무 수행"
+    element = {"element_id": "table", "table": {"cells": [
+        {"row": 1, "col": 1, "text": "계약 체결 후\n180일 동안 모든 업무 수행"},
+        {"row": 0, "col": 0, "text": "인용하지 않은 머리글"},
+        {"row": 1, "col": 0, "text": "사업 기간"},
+    ]}, "location": {"supplier_metadata": {"source_paths": ["문서.hwp"]}}}
+    write_jsonl([element], package / "final_elements.jsonl")
+    item["golden_evidence"][0].update(element_id="table", location={"kind": "table", "row": 1, "cell": None})
+    item["golden_context"] = "[E1 · 머리글 행]\n다른 글\n\n[E2]\n" + text + "\n\n[E3]\n" + text
+    chunk["body"] = unicodedata.normalize("NFD", "서문 사업 기간    계약 체결 후\t180일 동안 모든 업무 수행 맺음")
+    chunk["source"] = unicodedata.normalize("NFD", chunk["source"])
+
+    [labelled] = label_evidence([item], [chunk], raw, package)
+    [ref] = labelled["evidence"]
+
+    assert ref["text"] == text
+    assert ref["context_labels"] == ["E2", "E3"]
+    assert ref["chunk_id"] == "live"
+    assert correspondence_report([item], [labelled], [chunk]) == {
+        "questions": 1, "evidence_entries": 1, "context_blocks": 3, "entries_with_context_text": 1,
+        "entries_with_repeated_context_text": 1, "original_chunk_ids_live": 0, "minimum_normalized_length": 20}
+
+
+def test_context_mismatch_stops_instead_of_using_another_block(mapping_input):
+    item, chunk, raw, package = mapping_input
+    item["golden_context"] = "[E1]\n무관한 글"
+    with pytest.raises(ValueError, match="context"):
+        label_evidence([item], [chunk], raw, package)
+
+
+def test_labels_survive_validation_and_yaml_has_no_golden_evidence(mapping_input):
+    item, chunk, raw, package = mapping_input
+    path = package / "questions.yaml"
+    path.write_text("- {id: manual, question: 수동 질문, reference: 답, must_include: [답]}\n", encoding="utf-8")
+    yaml_items = load_eval_items([str(path)])
+    labelled = label_evidence([item, *yaml_items], [chunk], raw, package)
+
+    kept, _ = check_eval_items(labelled)
+
+    assert kept[0]["evidence"][0]["chunk_id"] == "live"
+    assert kept[0]["doc_ids"] == ["doc"]
+    assert kept[1]["evidence_source"] == "none"
+    assert kept[1]["evidence"] == kept[1]["doc_ids"] == []
+    assert "golden_context" not in kept[0] and "golden_evidence" not in kept[0]
+
+
+def test_reports_count_entries_and_question_completeness_separately(mapping_input):
+    item, chunk, raw, package = mapping_input
+    [labelled] = label_evidence([item], [chunk], raw, package)
+    ref = labelled["evidence"][0]
+    items = [
+        {**labelled, "primary_topic": "multi_hop", "evidence": [ref, ref]},
+        {**labelled, "primary_topic": "multi_hop", "evidence": [ref, {**ref, "chunk_id": None, "reason": "ambiguous"}]},
+        {**labelled, "primary_topic": "comparison", "evidence": [{**ref, "chunk_id": None, "reason": "too_short"}]},
+    ]
+    report = mapping_report({"dev": items, "test": [items[2]]}).set_index(["split", "primary_topic"])
+
+    assert report.loc[("dev", "ALL"), ["evidence_entries", "labelled", "ambiguous", "too_short"]].tolist() == [5, 3, 1, 1]
+    assert report.loc[("dev", "ALL"), ["fully_labelled", "partly_labelled", "not_labelled"]].tolist() == [1, 1, 1]
+    assert report.loc[("dev", "multi_hop"), "chunk_rate"] == 0.75
+    assert report.loc[("test", "comparison"), "not_labelled"] == 1
+    assert document_report({"dev": items})["doc_id"].tolist() == ["doc"]
+
+
+def test_sample_is_fixed_seed_30_pairs_with_full_chunk_body(mapping_input):
+    item, chunk, raw, package = mapping_input
+    chunk["body"] = "청크 앞부분\n" + TEXT + "\n청크 뒷부분"
+    [labelled] = label_evidence([item], [chunk], raw, package)
+    items = [{**labelled, "id": str(i)} for i in range(40)]
+    sample = labelled_sample(items, [chunk])
+
+    assert len(sample) == sample["question_id"].nunique() == 30
+    assert sample.equals(labelled_sample(list(reversed(items)), [chunk]))
+    assert sample["golden_evidence_text"].tolist() == [TEXT] * 30
+    assert sample["matched_chunk_text"].tolist() == [chunk["body"]] * 30
