@@ -209,7 +209,7 @@ RFP 문서에서 꺼낸 그림마다 OCR 이 필요한지 사람이 매기는 �
 WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카드(형식 · 문서 이름 · 위치)로 나오고 라벨을 매길 수 있습니다.
 `artifacts/ocr_selection.jsonl`(CRAFT 선별 기록)이 있으면 카드에 CRAFT 분류를 함께 보여 줍니다. 없어도 화면은 그대로 동작합니다.
 그림을 누르면 크게 보고(바깥 · Esc 로 닫기, ◀ ▶ · ← → 로 넘기기), `원본 보기` 를 누르면 문서 속 자리를 봅니다. PDF 는 새 탭에서 그 쪽으로 열리고, 쪽 번호가 없는 HWP 는 그림 앞뒤 본문을 보여 줍니다.
-라벨은 기록만 합니다. 01 전처리가 라벨을 읽어 OCR 대상을 고르게 하는 일은 전처리 담당의 별도 변경입니다.
+라벨은 위치별로 기록합니다. OCR 벤치마크는 합친 라벨의 1·2 위치를 사용하며, 01은 벤치마크가 저장한 전사 결과를 읽습니다.
 
 실행 — 저장소 최상위에서
 1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다. 문서 100개에 1분 남짓 걸립니다.
@@ -220,7 +220,7 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 
 결과 — `artifacts/ocr_labels/`
 - `images/<그림 해시>.<확장자>`: 꺼낸 그림. 같은 바이트의 그림은 파일 하나입니다. extract 를 다시 실행하면 이 폴더만 새로 만듭니다.
-- `images.jsonl`: 서로 다른 그림 한 줄씩 — `image_sha256`, `file`, `viewable`, `reason`, `occurrences`(위치마다 `doc_id` · `source` · `document_sha256` · `format`, HWP 는 `image_name` · `marker_start` · `repeated_occurrences`, PDF 는 `page` · `image_index` · `xref` · `bbox_points` — CRAFT 기록과 같은 이름). 문서에 들어 있지만 본문에 `[IMAGE]` 표시가 없는 HWP 그림(쪽에 놓이지 않은 그림 등)은 `marker_start` 가 `null` 이고, 01 전처리 · CRAFT 는 이 그림을 보지 않습니다.
+- `images.jsonl`: 서로 다른 그림 한 줄씩 — `image_sha256`, `file`, `viewable`, `reason`, `occurrences`(위치마다 `doc_id` · `source` · `document_sha256` · `format`, HWP 는 `image_name` · `marker_start` · `repeated_occurrences`, PDF 는 `page` · `image_index` · `xref` · `bbox_points` — CRAFT 기록과 같은 이름). 문서에 들어 있지만 본문에 `[IMAGE]` 표시가 없는 HWP 그림(쪽에 놓이지 않은 그림 등)은 `marker_start` 가 `null` 이고, 저장 OCR 결과가 있으면 01은 문서 끝에 설명을 넣습니다. CRAFT 선별 경로는 이 그림을 보지 않습니다.
 - `labels.jsonl`: 라벨을 누를 때마다 `{image_sha256, label, labelled_at, occurrences}` 한 줄을 덧붙입니다. `occurrences` 에는 매긴 위치 하나가 들어갑니다. 다시 매긴 라벨도 새 줄이고, 위치마다 마지막 줄이 지금 라벨입니다. extract 를 다시 실행해도 지우지 않습니다.
 - `merged_labels.jsonl`: 합친 결과. 매긴 위치마다 한 줄 — `labels.jsonl` 과 같은 모양에 `batch`(묶음 번호)가 더해집니다. 내려받는 `ocr_labels_batchN.jsonl` 도 같은 모양입니다.
 
@@ -407,8 +407,23 @@ test 실패는 각각 19 · 188 · 50 · 674항목입니다. 문서 미연결 �
 원래 ID는 `golden_chunk_id`에 남깁니다. YAML 항목은 `evidence_source = "none"`, `doc_ids = []`, `evidence = []`입니다.
 이 라벨은 03이 고정해 저장하며, 05는 연결 규칙을 바꾸지 않고 해당 라벨 수준의 IR 지표를 계산합니다.
 
-## OCR (선택, 기본 꺼짐)
+## OCR (저장 결과와 선택적 Vision 호출)
+
+그림 유형(table · text · diagram)마다 기준 이미지에서 측정한 품질과 이미지당 비용으로 OCR 엔진을 고릅니다.
+허용 엔진은 OpenAI API, OpenAI 호환 엔드포인트를 쓰는 Gemini API,
+로컬 Windows PC의 별도 환경에서 실행하는 PaddleOCR-VL-1.5입니다.
+유료 OCR 호출은 모두 `rag/usage.py`의 `record_usage`로 비용을 기록하고, PaddleOCR는 이미지당 실행 시간을 기록합니다.
+벤치마크 첫 유료 호출과 전체 실행 전에는 모델별 토큰·단가 예상액을 보여 주고 승인을 기다립니다.
+이번 비교의 승자는 표·글의 Gemini와 도식의 GPT이며, 320개 이미지의 결과를 391개 위치로 저장했습니다. 측정값과 비용은 [OCR 비교 보고서](docs/ocr_benchmark.md)에 있습니다.
+
+`OCR = False`이고 `config.yaml`의 `paths.ocr_captions`(기본 `data/ocr_captions.jsonl`)가 있으면
+01은 그 파일을 읽어 그림 위치에 `[그림/도표 설명] …` 레코드를 넣습니다. 이 결과를 읽는 데 API 키나 호출은 필요 없습니다.
+HWP 본문 표시가 없는 그림은 문서 끝에, PDF 그림은 해당 쪽의 이미지 위 본문 다음에 들어갑니다.
+기본 원본 입력(`PREPROCESSED = None`)에서는 설명 청크도 해당 위치에 넣고, 그림 경계에서 나뉜 짧은 본문도 유지합니다.
+결과 파일이 없으면 저장 OCR을 추가하지 않으며 기존 전처리 출력을 유지합니다.
+
 `01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
+`True`에서는 저장 캡션 파일이 있어도 읽지 않고, 기존 Vision OCR·CRAFT 설정과 청크 분할 방식을 사용합니다.
 OCR 모델·추론 강도·출력/추론 토큰 한도의 기본값은 `config.yaml`의 `ocr` 구역에서 읽으며 01의 설정 셀에서 바꿀 수 있습니다.
 여러 쪽에 반복되는 그림(로고 · 장식, `parsing.max_repeat_image_pages` 쪽 이상)은 청크에 넣지 않습니다 — HWP 는 아예 보내지 않고, PDF 는 설명을 받은 뒤 반복된 설명을 뺍니다.
 `False` 면 그림은 API 로 가지 않습니다.

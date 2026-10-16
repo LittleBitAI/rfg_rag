@@ -1,2 +1,4 @@
 # 골든 릴리스 복사본은 바이트 그대로 저장 — manifest.json 의 sha256 이 어느 OS 에서 받아도 맞도록
 eval/golden/** -text
+# Preserve the frozen OCR reference hash across Windows and Linux checkouts.
+data/ocr_benchmark/references.jsonl -text
