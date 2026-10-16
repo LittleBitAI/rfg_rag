@@ -102,6 +102,7 @@ function Settings() {
       <summary className="ghost">설정</summary>
       <nav className="settings-menu">
         <a href="/ocr.html">OCR 이미지 라벨링</a>
+        <a href="/review.html">OCR 결과 검토</a>
       </nav>
     </details>
   )

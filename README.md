@@ -141,7 +141,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 | ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (골든 dev 분할 · 평가 질문 읽기 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
 | ④ 생성 | `04_generation.ipynb` | `rag/generation/generation.py` (검색 → 이전 대화를 참고해 답변 · 토큰 · 지연 시간) | `artifacts/answers.jsonl` |
 | ⑤ 평가 | `05_evaluation.ipynb` | `rag/evaluation/evaluation.py` (네 가지 평가) | `artifacts/retrieval.csv` · `generation.csv` · `grounding.csv` · `end_to_end.csv` |
-| ⑥ 질문 화면 | — | `frontend/server.py` (`answer_question` 을 감싸는 `POST /api/ask`), `frontend/web/` (React + Vite 화면), `frontend/start.cmd` · `frontend/start.command` (실행기); `frontend/ocr_select/` (OCR 이미지 라벨링 화면) | 브라우저 화면의 답변 · 출처, `artifacts/ocr_labels/labels.jsonl` |
+| ⑥ 질문 화면 | — | `frontend/server.py` (`answer_question` 을 감싸는 `POST /api/ask`), `frontend/web/` (React + Vite 화면), `frontend/start.cmd` · `frontend/start.command` (실행기); `frontend/ocr_select/` (OCR 이미지 라벨링 · OCR 결과 검토 화면) | 브라우저 화면의 답변 · 출처, `artifacts/ocr_labels/labels.jsonl` · `reviews.jsonl` |
 
 공통: `rag/config.py` (`config.yaml` · `.env` 읽기, jsonl 읽기/쓰기), `config.yaml` (모든 설정 — 파이프라인별 구역).
 
@@ -223,6 +223,19 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 - `images.jsonl`: 서로 다른 그림 한 줄씩 — `image_sha256`, `file`, `viewable`, `reason`, `occurrences`(위치마다 `doc_id` · `source` · `document_sha256` · `format`, HWP 는 `image_name` · `marker_start` · `repeated_occurrences`, PDF 는 `page` · `image_index` · `xref` · `bbox_points` — CRAFT 기록과 같은 이름). 문서에 들어 있지만 본문에 `[IMAGE]` 표시가 없는 HWP 그림(쪽에 놓이지 않은 그림 등)은 `marker_start` 가 `null` 이고, 저장 OCR 결과가 있으면 01은 문서 끝에 설명을 넣습니다. CRAFT 선별 경로는 이 그림을 보지 않습니다.
 - `labels.jsonl`: 라벨을 누를 때마다 `{image_sha256, label, labelled_at, occurrences}` 한 줄을 덧붙입니다. `occurrences` 에는 매긴 위치 하나가 들어갑니다. 다시 매긴 라벨도 새 줄이고, 위치마다 마지막 줄이 지금 라벨입니다. extract 를 다시 실행해도 지우지 않습니다.
 - `merged_labels.jsonl`: 합친 결과. 매긴 위치마다 한 줄 — `labels.jsonl` 과 같은 모양에 `batch`(묶음 번호)가 더해집니다. 내려받는 `ocr_labels_batchN.jsonl` 도 같은 모양입니다.
+
+## OCR 결과 검토 화면
+
+기존 실행기(`frontend\start.cmd` · `frontend/start.command`)를 열고 질문 화면의 `설정` → `OCR 결과 검토`로 들어갑니다 (`http://localhost:5173/review.html`).
+`data/ocr_captions.jsonl`의 391개 위치를 그림 해시로 묶어 서로 다른 그림 320장을 한 장씩 검토합니다.
+왼쪽에는 `artifacts/ocr_labels/images/`의 원본, 오른쪽에는 저장된 전사를 Markdown 표 · 제목 · 목록으로 표시합니다.
+엔진 · 이미지 유형과 모든 등장 위치(문서 이름, PDF 쪽 또는 HWP 그림 이름 · 표시 위치)를 함께 보여 줍니다.
+문서 · 이미지 유형 · 엔진 · 판정 상태(미검토 포함)로 거르고, 이전/다음 버튼 또는 ← → 키로 이동합니다.
+
+`OK` · `일부 틀림` · `틀림`을 누르면 `artifacts/ocr_labels/reviews.jsonl`에 `{image_sha256, verdict, reviewed_at}` 한 줄을 덧붙입니다.
+`verdict` 값은 `ok` · `partly_wrong` · `wrong`이며, 같은 그림의 마지막 줄이 현재 판정입니다. 새로고침해도 저장한 판정이 표시됩니다.
+전사는 읽기 전용이며 OCR · VLM · LLM을 호출하지 않습니다. 판정은 01 전처리나 청킹에 반영하지 않고 기존 라벨링 화면과 별도로 보관합니다.
+서버는 기존 8766을 그대로 쓰므로 추가 실행 명령은 필요 없습니다.
 
 ## API 사용량 자동 기록
 
@@ -536,7 +549,7 @@ rag/
 golden_pipeline/           ③ 주제별 골든 데이터 스키마 · 상태 · 저장 규약 · v11 근거 어댑터 (테스트는 tests/golden/)
 frontend/                  ⑥ 질문 화면
   server.py                POST /api/ask — answer_question 을 감싸는 FastAPI
-  web/                     React + Vite 화면 (/api 는 server.py, /ocr-api 는 ocr_select/server.py 로 프록시; ocr.html 은 라벨링 화면)
+  web/                     React + Vite 화면 (/api 는 server.py, /ocr-api 는 ocr_select/server.py 로 프록시; ocr.html 은 라벨링, review.html 은 저장 OCR 결과 검토)
   start.cmd · start.command  Windows · macOS 실행기
   ocr_select/              OCR 이미지 라벨링 — extract.py (그림 꺼내기) · server.py (API, 위 실행기가 8766 에 띄움) · merge.py (묶음 결과 합치기)
 tests/test_smoke.py        게이트: rag/ 모든 모듈 import
