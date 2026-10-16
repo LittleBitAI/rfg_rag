@@ -1,7 +1,7 @@
 # RFP RAG — 공공기관 제안요청서 질의응답 (PDF · HWP · 하이브리드 검색 · gpt-5-mini · RAGAS)
 
 RFP 문서(PDF · HWP · HWPX)를 파싱해 청크로 나누고, BM25 + 임베딩(FAISS) 하이브리드 검색으로 찾은 청크를 근거로 `gpt-5-mini` 가 답합니다.
-답은 RAGAS 로 네 가지(Retrieval · Generation · Grounding · End-to-End)로 나눠 채점해, 나쁜 답이 어디서 왔는지 가립니다.
+답은 네 가지(Retrieval · Generation · Grounding · End-to-End)로 나눠 채점합니다. 검색은 결정적 IR 지표, 핵심 사실은 문자열 일치, 근거 충실도와 최종 정답은 RAGAS 심판으로 확인해 나쁜 답이 어디서 왔는지 가립니다.
 
 작업은 다섯 파이프라인으로 나뉘고, 파이프라인마다 담당자 한 명 · 노트북 하나 · `rag/` 아래 폴더 하나가 있습니다.
 노트북은 설정 · 함수 호출 · 결과 표시만 하고, 로직은 모두 `rag/` 모듈에 있습니다.
@@ -156,7 +156,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 
 예를 들어 02 설정 셀의 `DENSE_WEIGHT = cfg["retrieval"]["dense_weight"]`를 `DENSE_WEIGHT = 0.8`로 바꾸면 Dense 80%·BM25 20%로 검색합니다.
 설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
-기존 색인이 있어도 이번 변경 후에는 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 청킹 크기를 바꾸면 01부터, 검색 설정을 바꾸면 02부터 후속 노트북을 다시 실행해야 합니다.
+기존 색인이 있어도 이번 변경 후에는 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 청킹 크기를 바꾸면 01부터 다시 실행합니다. 검색 설정 조절은 저장 rewrite가 있는 dev에서 아래 검색 전용 재실행으로 비교할 수 있습니다. 새 설정의 답변·심판 결과가 필요하면 04도 다시 실행합니다.
 모델을 바꾸면 같은 설정 셀의 `*_PRICES`도 해당 모델의 입력 · 캐시 입력 · 출력 단가(USD / 100만 토큰)로 맞추세요.
 기본 단가는 [OpenAI 공식 gpt-5-mini 문서](https://developers.openai.com/api/docs/models/gpt-5-mini)의 Standard 요금입니다. 비용은 설정한 단가에 따른 추정값이며 실제 청구서와는 다를 수 있습니다.
 
@@ -167,8 +167,8 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 질문마다 재작성 API 호출 비용이 추가되며, 04의 `answers.jsonl`에는 검색용 질문·모델·토큰·비용·지연 시간을 `rewrite` 필드에 별도로 저장합니다.
 답변 생성도 실제 응답 모델·캐시 입력 토큰·비용을 저장합니다. 05는 저장된 비용을 사용하므로 평가 시 설정을 바꿔도 이전 생성 비용이 바뀌지 않습니다.
 `latency_s`는 재작성·검색·답변 생성 전체 시간입니다. `end_to_end.csv`의 `cost_usd`는 rewrite + 답변 생성 비용이며 `rewrite_cost_usd`, `answer_cost_usd`로 구분됩니다. OCR과 평가 비용은 별도로 집계합니다.
-이번 변경 전에 만든 `answers.jsonl`은 새 사용량 필드가 없으므로 02 설정 셀 → 04 → 05를 다시 실행하세요.
-평가 항목에 `answerable` 이 생기기 전에 만든 `eval_set.jsonl` · `answers.jsonl` 은 04 · 05 가 API 호출 전에 빠진 필드를 알리고 멈춥니다. 03 → 02 설정 셀 → 04 → 05 를 다시 실행하세요.
+04는 `ranked_candidates`에 패킹 전 후보의 `chunk_id`, `doc_id`, `fused_rank`, `dense_score`, `dense_rank`, `bm25_score`, `bm25_rank`, `exact_code_match`를 저장합니다. 순위는 1부터 시작하며 해당 성분의 후보가 아니면 점수·순위는 null입니다. `context_chunk_ids`는 실제 LLM에 보낸 청크 ID입니다. `retrieval_settings`는 `dense_weight`, `candidate_k`, `token_budget`, 활성 `chunk_file`, `k_values`(5,10,20), `stored_rewrites_reused`를 기록합니다.
+04는 라벨 필드가 없는 옛 eval_set을, 05의 네 함수는 새 검색 기록·rewrite 등이 없는 옛 answers를 유료 호출 전에 거부합니다. 빠진 필드를 확인하고 03 → 02 설정 셀 → 04 → 05를 실행하세요. `search()`의 반환값은 유지하며, `search_with_candidates()`는 같은 검색 결과와 읽기 전용 후보 스냅샷을 함께 반환합니다.
 
 ## 질문 화면 — 브라우저에서 묻고 답 받기
 채팅 화면입니다. 내 질문은 오른쪽 말풍선, 답변은 왼쪽 `문서 도우미` 아래에 나옵니다.
@@ -234,7 +234,7 @@ Langfuse 키 없이도 OCR·질문 재작성·답변 생성·Judge/RAGAS의 호�
 | `ocr` | 이미지 분석 LLM 호출 | 원본 문서 파일명 |
 | `rewrite` | 02 검색 예제와 04의 질문 재작성 | 원본 질문 |
 | `answer` | 04 답변 생성 | 원본 질문 |
-| `judge` | RAGAS 내부 심판 호출 | 평가 종류: retrieval / generation / grounding / end_to_end |
+| `judge` | RAGAS 내부 심판 호출 | 평가 종류: grounding / end_to_end (이전 실행의 retrieval / generation 행은 역사 기록) |
 
 Judge는 RAGAS가 사용하는 모델이므로 같은 요청을 두 비용으로 더하지 않습니다. RAGAS의 내부 재시도도 응답에 사용량이 있으면 기록합니다.
 Judge 호출은 평가 종류 단위로 집계하며 개별 질문 ID와 연결하지 않습니다. 03의 평가 데이터셋 생성 API와 로컬 KURE 임베딩은 이 CSV의 대상이 아닙니다.
@@ -251,15 +251,84 @@ CSV는 UTF-8 without BOM입니다.
 
 | 평가 | 판단하는 것 | 지표 |
 |---|---|---|
-| Retrieval | 검색한 청크가 정답에 필요한 내용을 담았나 | RAGAS `context_precision` · `context_recall`, 검색 청크 속 핵심 사실 비율 `key_facts_in_context` |
-| Generation | 답이 질문에 맞고 핵심 사실을 담았나 | RAGAS `answer_relevancy` (KURE-v1 임베딩), 답 속 핵심 사실 비율 `key_facts_in_answer` |
+| Retrieval | 검색이 골든 문서·청크를 찾고 컨텍스트에 담았나 | 결정적 Recall@k · MRR@k · Evidence Coverage, `key_facts_in_context` 문자열 일치 |
+| Generation | 답에 핵심 사실 문자열이 있나 | `key_facts_in_answer` 문자열 일치 |
 | Grounding | 답이 검색한 청크 안에서만 나왔나 (환각) | RAGAS `faithfulness` |
 | End-to-End | 최종 답이 정답과 맞나 · 얼마나 걸리고 들었나 | RAGAS `factual_correctness`, 질문당 `latency_s` · 입력/출력/추론 토큰 · 예상 비용 `cost_usd` |
 
-- 답할 수 없음(`unanswerable`) 질문은 찾아 올 정답 근거가 없고 맞는 답이 거절 문장이라, 그 질문의 `context_precision` · `context_recall` · `key_facts_in_context` · `answer_relevancy`(거절을 0 으로 매김)는 잘 해도 0 이 나옵니다. 평가 항목의 `answerable` 이 `false` 인 질문은 이 지표를 빈 칸(NaN)으로 두어 평균에서 뺍니다.
+- Retrieval과 Generation은 API 호출 없이 계산합니다. 두 `key_facts_*`는 공백·수치 표기를 정규화한 문자열 일치이며 의미적 정확성 판정이 아닙니다. 답할 수 없음 질문의 `key_facts_in_context`는 평균에서 빼고, 답변 문자열 일치는 거절 문장도 채점합니다.
 - Retrieval 이 낮으면 검색 문제, Retrieval 은 높은데 Grounding 이 낮으면 환각, 둘 다 높은데 End-to-End 가 낮으면 정답 · 질문을 다시 볼 차례입니다.
-- 심판 LLM 은 `config.yaml` 의 `evaluation.judge_model`(`gpt-5-mini`)입니다. 평가할 때마다 OpenAI 비용이 듭니다.
+- 유료 심판은 Grounding의 `faithfulness`와 End-to-End의 `factual_correctness`만 남습니다. 모델·프롬프트·채점 방식은 유지하며 `config.yaml`의 `evaluation` 설정을 사용합니다. 두 심판 셀을 실행할 때 OpenAI 비용이 듭니다.
 - 프로젝트 책임자는 Langfuse Cloud 에서 질문마다 추적 하나(`answer-question` 안에 검색 `retrieve-context` · 생성 `generate-answer` — 모델 · 토큰 · 비용 포함)를 보고, 05 의 질문별 점수도 그 추적에 붙어 있습니다. 키가 없는 팀원은 노트북 표와 CSV 로 봅니다.
+
+### IR 공식과 제외율
+
+A. 순위 평가는 중복 제거·토큰 예산 패킹 전의 후보 목록을 사용합니다. k는 5, 10, 20입니다.
+
+| 수준 | Recall@k | MRR@k |
+| --- | --- | --- |
+| 문서 | top-k 청크가 속한 골든 문서 집합 크기 / 전체 골든 문서 집합 크기 | 골든 문서의 청크가 처음 나온 청크 위치의 역수 |
+| 청크 | top-k에 든 골든 청크 집합 크기 / 전체 골든 청크 집합 크기 | 골든 청크가 처음 나온 위치의 역수 |
+
+MRR은 k 안에 적중이 없으면 0입니다. 문서 순위를 만들려고 청크를 먼저 문서별로 중복 제거하지 않습니다.
+각 수준에서 fused, dense-only, BM25-only Recall@k와 exact-code membership Recall을 한 표로 봅니다.
+성분별 순위는 원점수 순서이며 여러 기관이면 실제 검색처럼 기관별 목록을 번갈아 섞습니다. 가중치가 0인 성분은 후보를 내지 않습니다.
+exact-code는 코드 일치 후보 집합 속 골든 문서/청크 비율이며 k나 MRR을 붙이지 않습니다.
+
+B. 컨텍스트 평가는 `context_chunk_ids`를 사용합니다. Evidence Coverage는 실제 보낸 골든 청크 수 / 전체 골든 청크 수,
+`full_evidence_coverage`는 모든 골든 청크를 보냈으면 1, 아니면 0입니다. 단일 근거와 다중 근거(`multi_hop`, `comparison` 또는 복수 근거 항목)를 별도로 보고합니다. MRR은 첫 근거의 위치를 볼 뿐 다중 근거의 완전성을 나타내지 않습니다.
+
+청크 평가는 모든 근거 항목에 청크 라벨이 있는 질문만 계산합니다. 일부 라벨만 있는 질문의 분모를 줄여 채점하지 않습니다.
+문서도 모든 근거가 문서에 연결된 질문만 계산합니다. 각 주제의 전체/일부/미라벨 질문 수와
+mapping exclusion rate = (일부 + 미라벨) / 답할 수 있는 골든 질문 수를 `retrieval_exclusions.csv`에 저장합니다.
+성분 표에도 채점 질문 수와 제외율을 표시합니다. `unanswerable`과 골든 근거 없는 YAML은 IR에서 제외하고 각각 셉니다.
+`retrieval.csv`는 질문별 IR 지표·Evidence Coverage·`key_facts_in_context`·검색 설정을,
+`generation.csv`는 `key_facts_in_answer`를 담습니다. `grounding.csv`와 `end_to_end.csv`의 열은 유지합니다.
+
+### dev 검색 전용 재실행
+
+저장된 rewrite가 있는 dev 답변 파일에서 검색 설정만 바꿀 때 사용합니다. 재작성·답변 생성·심판 API를 호출하지 않습니다.
+새 폴더의 answers는 05 Retrieval이 원본과 동일하게 읽으며 실제 사용한 청크 파일·검색 설정·k·rewrite 재사용 여부(True)를 기록합니다.
+기존 답변은 재생성하지 않으므로 이 파일의 Generation·Grounding·End-to-End를 새 설정의 생성 성능으로 해석하지 마세요.
+원래 Langfuse 추적에 실험 점수가 덮이지 않도록 새 행의 trace_id는 비웁니다.
+
+```python
+from rag.config import ARTIFACTS, load_config
+from rag.retrieval.retrieval import HybridIndex
+from rag.evaluation.evaluation import rerun_retrieval, evaluate_retrieval
+from rag.evaluation.ir import component_table, coverage_table
+
+cfg = load_config()
+cfg["retrieval"].update(dense_weight=0.5, candidate_k=50, token_budget=2500)
+path = ARTIFACTS / "dev_rerun" / "answers.jsonl"
+rerun_retrieval(ARTIFACTS / "answers.jsonl", path, HybridIndex(ARTIFACTS, cfg))
+scores = evaluate_retrieval(path, cfg)
+display(component_table(scores, "doc"))
+display(component_table(scores, "chunk"))
+display(coverage_table(scores))
+```
+
+유료 확인은 모든 주제를 포함한 dev 30문항으로 제한합니다. 실행 전에 config 단가로 04 rewrite+answer와 05 두 심판의 견적을 표시하고 승인을 받은 뒤 실행합니다. 실제 비용은 해당 실행의 `api_usage.csv`로 계산합니다. 이전 per-evaluation 행의 질문당 심판 비용은 historical로 표시하며, 새 30문항과 질문·시점이 다르므로 동일 질문의 품질 비교로 해석하지 않습니다.
+
+[30문항 표본 보고서](docs/eval_ir_sample.md)에 표본 구성·라벨 제외율·비용 견적·historical 기준과 실제 실행 결과를 기록합니다.
+보고서의 유료 표본은 dev `ab49a65`의 대화 기반 재작성·재작성 query 라우팅 통합 전 기록입니다. 통합 후 검색 보존 검사는 별도 절에 기록했으며, 추가 유료 평가를 실행한 결과가 아닙니다.
+
+### 최종 test 평가 — 설정을 고정한 뒤 한 번
+
+dev는 검색·생성 설정 조절용입니다. test 검색·생성 결과를 보고 설정을 조절하지 않습니다. 이 변경 작업에서는 test를 실행하지 않습니다.
+최종 설정과 활성 chunks/index를 고정하고, 03의 첫 import·입력 경로 셀을 실행한 뒤 다음 코드로 test 전용 평가셋을 만듭니다.
+근거 연결 규칙은 dev와 동일하며 원본 골든 파일을 바꾸지 않습니다.
+
+```python
+test_items = load_eval_items(["eval/golden/test.jsonl"])
+test_labelled = label_evidence(test_items, chunks, raw_dir, package_dir, input_path)
+test_eval_set, test_report = check_eval_items(test_labelled)
+write_jsonl(test_eval_set, ARTIFACTS / "test_eval_set.jsonl")
+```
+
+04의 `eval_set` 입력을 `test_eval_set.jsonl`, 답변 출력을 `artifacts/test/answers.jsonl`로 바꿉니다.
+고정한 02 설정으로 04를 한 번 실행하고, 05의 `ANSWERS`를 그 test 파일로 지정해 네 평가를 한 번 실행합니다.
+네 CSV와 제외율·사용량을 최종 결과로 보관합니다. test를 dev 검색 전용 재실행 셀에 넣지 않습니다.
 
 ### 평가 데이터셋 (03 검증)
 - `eval/golden/dev.jsonl`: `golden_pipeline` 분할 `final6` 의 dev 분할(30개 문서 408문항). `final2` 의 다섯 주제 396문항을 그대로 두고, 질문이 묻는 문서가 dev 에 있는 새 두 유형 12문항을 더했습니다 — 답할 수 없음(`unanswerable` 8문항: 다른 사업 문서의 속성을 묻고 정답은 `제공된 문서에서 확인할 수 없습니다.`. 검증기가 묻는 문서 전체를 표는 머리글과 함께 읽고도 답하지 못한 질문만 남김)과 틀린 전제(`false_premise` 4문항: 질문의 금액 · 기간 · 개수 · 날짜가 문서와 다르고 정답이 문서의 값으로 바로잡음). 정답은 `answer`, 핵심 사실은 주제별로 뽑습니다 — 수치형은 값+단위(`180일`), 비교형은 고른 쪽(`MAR-006`), 조건형은 조건 문장, 답할 수 없음은 `확인할 수 없`, 틀린 전제는 문서의 값+단위(`12개월`), 표형은 정답 칸(` | ` 로 나뉜 칸은 각각), 다중 근거형은 정답이 언급한 근거 표 칸 값과 칸 속 글머리 항목(◦ · - · o 로 나뉜 줄)(근거 단위마다 따로 찾힘. 문서 3개 이상에서 행 첫 칸으로 되풀이되는 `요구사항 분류` 같은 항목 이름은 빼고, 맨 수는 정답의 단위도 받음 — `47|47개`). 표 칸 값이 없거나, 정답을 바꿔 말해 사실이 정답의 60% 를 못 덮거나, 묻는 항목의 값이 질문에도 다른 뜻으로 나와 질문이 준 값인지 가를 수 없는(분류 '기능' 과 질문의 '지도기반 기능') 다중 근거 24문항은 핵심 사실 없음으로 빠져 384문항이 남습니다.
@@ -336,7 +405,7 @@ test 실패는 각각 19 · 188 · 50 · 674항목입니다. 문서 미연결 �
 `eval_set.jsonl`에는 기존 점검을 통과한 dev 384문항과 YAML 1문항이 저장됩니다.
 골든 항목은 현재 `doc_ids`와 각 `evidence`의 `text`, `doc_id`, 유일한 `chunk_id` 또는 `reason`을 가지며,
 원래 ID는 `golden_chunk_id`에 남깁니다. YAML 항목은 `evidence_source = "none"`, `doc_ids = []`, `evidence = []`입니다.
-이 라벨은 03이 고정해 저장하며, 05의 지표나 검색·생성 동작은 이 작업에서 바꾸지 않습니다.
+이 라벨은 03이 고정해 저장하며, 05는 연결 규칙을 바꾸지 않고 해당 라벨 수준의 IR 지표를 계산합니다.
 
 ## OCR (선택, 기본 꺼짐)
 `01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.

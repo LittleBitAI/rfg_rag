@@ -9,6 +9,7 @@ import unicodedata
 from collections import defaultdict
 from itertools import chain, zip_longest
 from pathlib import Path
+from types import MappingProxyType
 
 import faiss
 import numpy as np
@@ -20,6 +21,15 @@ from .indexing import Embedder, KiwiTokenizer, find_codes
 
 
 _DUP_RATIO = 0.8
+
+
+def retrieval_fields(index, question: str, query: str, *, reused: bool) -> tuple:
+    """04와 검색 전용 재실행이 동일한 검색 기록 형식을 쓴다."""
+    hits, candidates = index.search_with_candidates(question, query=query)
+    return hits, {"ranked_candidates": [dict(c) for c in candidates],
+                  "context_chunk_ids": [h["chunk_id"] for h in hits],
+                  "retrieval_settings": {**index.rcfg, "chunk_file": index.chunk_file,
+                                         "k_values": [5, 10, 20], "stored_rewrites_reused": reused}}
 
 
 def _is_dup(a: set[str], b: set[str]) -> bool:
@@ -54,31 +64,54 @@ class HybridIndex:
         self.tokenizer = KiwiTokenizer()
         self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"), read_csv_orgs(ROOT / cfg["paths"]["org_csv"]))
         self.rcfg = cfg["retrieval"]
+        self.chunk_file = str((artifacts / "chunks.jsonl").resolve())
 
     @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str, *, query: str | None = None) -> list[dict]:
         """재작성 질문 query(없으면 원본)로 기관을 고르고 검색한다. 비교 질문은 기관별 결과를 번갈아 섞는다.
         후속 질문의 '그 사업'은 재작성 때 사업명으로 풀리므로 기관도 재작성 질문에서 찾는다.
         요구사항 코드는 양쪽에서 모아 재작성 때 코드가 빠져도 정확 일치를 유지한다."""
+        return self.search_with_candidates(question, query=query)[0]
+
+    def search_with_candidates(self, question: str, *, query: str | None = None) -> tuple:
+        """기존 검색 결과와 패킹 전 후보의 읽기 전용 스냅샷을 함께 반환한다."""
         query = query or question
         route = self.router.route(query)
         codes = find_codes(question) | find_codes(query)
-        if len(route) < 2:
-            return self._pack(self._rank(query, codes, next(iter(route.values()), None)))
-        lists = [self._rank(query, codes, doc_ids) for doc_ids in route.values()]
-        return self._pack([hit for hit in chain.from_iterable(zip_longest(*lists)) if hit is not None])
+        groups = [self._rank(query, codes, doc_ids) for doc_ids in (list(route.values()) or [None])]
+        ranked = [hit for hit in chain.from_iterable(zip_longest(*groups)) if hit is not None]
+        candidates = self._candidate_snapshot(groups, ranked)
+        return self._pack([(c["index"], c["score"]) for c in ranked]), candidates
 
-    def _rank(self, question: str, codes: set[str], doc_ids: set | None) -> list[tuple[int, float]]:
+    def _candidate_snapshot(self, groups: list, ranked: list) -> tuple:
+        for component in ("dense", "bm25"):
+            lists = [sorted((c for c in group if c[f"{component}_score"] is not None),
+                            key=lambda c: c[f"{component}_rank"]) for group in groups]
+            merged = [c for c in chain.from_iterable(zip_longest(*lists)) if c is not None]
+            for rank, c in enumerate(merged, 1):
+                c[f"{component}_rank"] = rank
+        return tuple(MappingProxyType({"chunk_id": self.chunks[c["index"]]["chunk_id"],
+                     "doc_id": self.chunks[c["index"]]["doc_id"], "fused_rank": rank,
+                     "dense_score": c["dense_score"], "dense_rank": c["dense_rank"],
+                     "bm25_score": c["bm25_score"], "bm25_rank": c["bm25_rank"],
+                     "exact_code_match": c["exact_code_match"]}) for rank, c in enumerate(ranked, 1))
+
+    def _rank(self, question: str, codes: set[str], doc_ids: set | None) -> list[dict]:
         allowed = np.isin(self.doc_ids, list(doc_ids)) if doc_ids else np.ones(len(self.chunks), dtype=bool)
         w = float(self.rcfg["dense_weight"])
         # 가중치 0 인 쪽은 후보도 내지 않는다 — 내면 점수 0 짜리 무관한 청크가 결과에 섞인다
-        dense = _minmax(self._dense(question, allowed)) if w > 0 else {}
-        sparse = _minmax(self._sparse(question, allowed)) if w < 1 else {}
+        dense_raw = self._dense(question, allowed) if w > 0 else {}
+        sparse_raw = self._sparse(question, allowed) if w < 1 else {}
+        dense, sparse = _minmax(dense_raw), _minmax(sparse_raw)
         fused = {i: w * dense.get(i, 0.0) + (1 - w) * sparse.get(i, 0.0) for i in dense.keys() | sparse.keys()}
         exact = self._exact(codes, allowed)
         fused |= {i: 0.0 for i in exact - fused.keys()}
         order = sorted(fused, key=lambda i: (i in exact, fused[i]), reverse=True)
-        return [(i, fused[i]) for i in order]
+        dense_ranks = {i: rank for rank, i in enumerate(dense_raw, 1)}
+        sparse_ranks = {i: rank for rank, i in enumerate(sparse_raw, 1)}
+        return [{"index": i, "score": fused[i], "dense_score": dense_raw.get(i), "dense_rank": dense_ranks.get(i),
+                 "bm25_score": sparse_raw.get(i), "bm25_rank": sparse_ranks.get(i),
+                 "exact_code_match": i in exact} for i in order]
 
     def _exact(self, codes: set[str], allowed: np.ndarray) -> set[int]:
         """요구사항 코드가 그대로 든 허용 청크"""

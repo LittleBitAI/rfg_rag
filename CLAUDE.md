@@ -105,8 +105,8 @@ so a bad answer can be traced to where it went wrong.
 
 | Evaluation | Judges | Metrics | CSV |
 |---|---|---|---|
-| Retrieval | Did search bring back what the answer needs | RAGAS context_precision, context_recall; key facts in retrieved chunks | `artifacts/retrieval.csv` |
-| Generation | Does the answer address the question and hold the key facts | RAGAS answer_relevancy; key facts in the answer | `artifacts/generation.csv` |
+| Retrieval | Did search rank and send the gold evidence | Deterministic document/chunk Recall@k, MRR@k, Evidence Coverage; key fact string matches in context | `artifacts/retrieval.csv` |
+| Generation | Does the answer contain the key fact strings | Key fact string matches in the answer | `artifacts/generation.csv` |
 | Grounding | Does the answer stay within the retrieved chunks | RAGAS faithfulness | `artifacts/grounding.csv` |
 | End-to-End | Is the final answer right, and what did it cost | RAGAS factual_correctness; latency, tokens, estimated cost | `artifacts/end_to_end.csv` |
 
@@ -116,6 +116,46 @@ so a bad answer can be traced to where it went wrong.
 | Team members | Tables in `05_evaluation.ipynb`, CSV files under `artifacts/` |
 
 Team members have no Langfuse keys, so every code path must run without them.
+
+Only faithfulness and factual_correctness use LLM judges. Key fact matches are string matches,
+not semantic correctness. Grounding and End-to-End keep their existing CSV columns and judge behavior.
+Actual API calls, including judge retries, still append usage to `api_usage.csv`.
+
+Ranking (A) uses the candidates before deduplication and token-budget packing, at k = 5, 10, 20.
+Document Recall@k is the share of gold documents represented by the top-k chunks; document MRR@k
+is the reciprocal chunk position of the first gold-document hit, or zero if none within k.
+Do not deduplicate documents before taking k. Chunk Recall@k and MRR@k use gold chunk IDs.
+Each level requires every evidence entry to have that level's label. Exclude partly/unlabelled
+questions, report their counts by topic, and show the mapping exclusion rate beside scores.
+Its denominator is answerable questions with golden evidence. Exclude and count unanswerable
+questions and YAML items without golden evidence separately. Do not score a labelled subset.
+
+Compare fused, dense-only and BM25-only Recall@k in one table per level, plus exact-code
+membership recall without k. Component ranks preserve per-agency interleaving; a disabled
+component contributes no candidates. Exact-code membership is a set, not another ranking.
+Context (B) uses the chunk IDs actually sent to the LLM. Evidence Coverage is the share of
+gold chunks sent; full coverage is one only when all were sent. Report single evidence and
+multi evidence (multi_hop, comparison, or multiple evidence entries) separately. MRR never
+measures multi-evidence completeness. Coverage also requires fully chunk-labelled questions.
+
+`search()` must keep its return values and order. `search_with_candidates()` adds a read-only
+pre-packing snapshot: chunk_id, doc_id, fused rank, raw dense/BM25 scores and ranks, exact-code
+membership. 04 saves this as `ranked_candidates`, plus `rewrite`, `context_chunk_ids` and
+`retrieval_settings` (dense_weight, candidate_k, token_budget, active chunk_file, k_values,
+stored_rewrites_reused). 05 rejects incomplete answers before any paid call.
+`rerun_retrieval` searches dev again using each stored rewritten query, without rewrite,
+generation or judge API calls, and writes the same row format in a separate experiment folder.
+It retains the old answers and clears trace IDs; score that file only for Retrieval.
+Preserve the integrated dev behavior: 04 passes recent conversation history to rewriting
+and generation; both search entry points route using the rewritten query (original on empty
+rewrite). Retrieval-only reruns reuse that stored query for routing and ranking without API calls.
+
+Use dev to tune. Build a separate labelled test evaluation set with 03's existing functions,
+then run 04 and all four 05 evaluations once with fixed settings for the final result.
+Do not run test during retrieval-metrics development. Before the paid 30-question dev sample,
+show the config-price estimate for rewrite, answer and both judges and wait for approval.
+Report actual usage and compare judge cost per question with earlier per-evaluation usage
+rows labelled historical. Different questions and dates do not establish a paired quality comparison.
 
 ## 6. Before every commit
 

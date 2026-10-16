@@ -1,12 +1,13 @@
 """⑤ 평가 — 04 생성의 answers.jsonl 하나를 네 가지로 나눠 채점한다. 나쁜 답이 어디서 왔는지 가르기 위해서다.
-  Retrieval    검색이 정답 근거를 가져왔나       context_precision · context_recall · 근거 속 핵심 사실 비율
-  Generation   답이 질문에 맞고 핵심을 담았나    answer_relevancy · 답변 속 핵심 사실 비율
+  Retrieval    검색이 정답 근거를 가져왔나       Recall@k · MRR@k · Evidence Coverage · 문자열 일치
+  Generation   답이 핵심을 담았나              답변 속 핵심 사실 문자열 일치
   Grounding    답이 검색 근거 안에서만 나왔나    faithfulness
   End-to-End   최종 답이 정답과 맞나, 얼마 들었나  factual_correctness · 지연 시간 · 토큰 · 예상 비용
 .env 에 Langfuse 키가 있으면 질문별 점수를 04 생성의 추적(answer-question)에 붙인다.
 담당: 평가."""
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
@@ -17,19 +18,18 @@ import pandas as pd
 from langchain_openai import ChatOpenAI
 from langfuse import get_client
 from ragas import EvaluationDataset, evaluate
-from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import (FactualCorrectness, Faithfulness, LLMContextPrecisionWithReference, LLMContextRecall,
-                           ResponseRelevancy)
+from ragas.metrics import FactualCorrectness, Faithfulness
 
-from ..config import read_jsonl
-from ..retrieval.indexing import Embedder
+from ..config import read_jsonl, write_jsonl
+from ..retrieval.retrieval import retrieval_fields
 from ..usage import UsageCallback
+from .ir import coverage_group, exclusion_report, ir_scores, label_state
 
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")  # ragas 사용 통계 전송 끔
 
 
-def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddings=None) -> list[dict]:
+def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str) -> list[dict]:
     """RAGAS 채점 → 질문마다 {지표 이름: 점수}"""
     ecfg = cfg["evaluation"]
     judge = ChatOpenAI(model=ecfg["judge_model"], max_tokens=int(ecfg["judge_max_tokens"]),
@@ -39,8 +39,7 @@ def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddin
     llm = LangchainLLMWrapper(judge, bypass_temperature=True, bypass_n=True)
     data = EvaluationDataset.from_list([{"user_input": r["question"], "retrieved_contexts": r["contexts"] or [""],
                                          "response": r["answer"], "reference": r["reference"]} for r in rows])
-    emb = LangchainEmbeddingsWrapper(embeddings) if embeddings else None
-    return evaluate(data, metrics=metrics, llm=llm, embeddings=emb).scores
+    return evaluate(data, metrics=metrics, llm=llm).scores
 
 
 _DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
@@ -175,12 +174,14 @@ def _key_fact_ratio(facts: list[str], text: str) -> float:
 
 def _send_scores(rows: list[dict], scores: list[dict]):
     """질문별 점수를 그 질문의 Langfuse 추적에 붙인다. trace_id 가 없으면(키 없이 생성한 답) 보내지 않는다"""
+    if not any(r["trace_id"] for r in rows):
+        return
     langfuse = get_client()
     for r, s in zip(rows, scores):
         if not r["trace_id"]:
             continue
         for name, value in s.items():
-            if not math.isnan(value):
+            if isinstance(value, (int, float)) and not math.isnan(value):
                 langfuse.create_score(trace_id=r["trace_id"], name=name, value=value, data_type="NUMERIC")
     langfuse.flush()
 
@@ -190,51 +191,101 @@ def _table(rows: list[dict], scores: list[dict], path: Path) -> pd.DataFrame:
     df = pd.DataFrame([{"id": r["id"], "question": r["question"], **s} for r, s in zip(rows, scores)])
     mean = df.mean(numeric_only=True).to_frame().T.assign(id="평균", question="")
     table = pd.concat([df, mean], ignore_index=True).round(
-        {name: 8 if name.endswith("cost_usd") else 4 for name in scores[0]})
+        {name: 8 if name.endswith("cost_usd") else 4 for name, value in scores[0].items()
+         if isinstance(value, (int, float))})
     table.to_csv(path, index=False, encoding="utf-8")
     return table
 
 
-# 05 의 네 평가가 답변 파일 한 행에서 읽는 필드
-ANSWER_FIELDS = ("id", "question", "reference", "key_facts", "answerable", "answer", "contexts", "trace_id", "latency_s",
-                 "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "cost_usd", "rewrite")
+# JSON으로 저장된 04 출력 중 05가 소비하는 필드만 검사한다. 생산자의 추가 메타데이터는 보존한다.
+_NUMERIC_TYPES = (int, float)
+_NULLABLE_TEXT = (str, type(None))
+_USAGE_FIELDS = {"input_tokens": int, "output_tokens": int, "cached_input_tokens": int,
+                 "reasoning_tokens": int, "cost_usd": _NUMERIC_TYPES}
+ANSWER_FIELDS = {
+    "id": str, "question": str, "reference": str, "key_facts": [str], "answerable": bool,
+    "answer": str, "contexts": [str], "trace_id": _NULLABLE_TEXT, "latency_s": _NUMERIC_TYPES,
+    **_USAGE_FIELDS, "primary_topic": _NULLABLE_TEXT, "context_chunk_ids": [str],
+    "rewrite": {"question": str, **_USAGE_FIELDS},
+    "retrieval_settings": {"dense_weight": _NUMERIC_TYPES, "candidate_k": int, "token_budget": int,
+                           "chunk_file": str, "k_values": [int], "stored_rewrites_reused": bool},
+    "ranked_candidates": [{"chunk_id": str, "doc_id": str, "fused_rank": int,
+                           "dense_score": (*_NUMERIC_TYPES, type(None)), "dense_rank": (int, type(None)),
+                           "bm25_score": (*_NUMERIC_TYPES, type(None)), "bm25_rank": (int, type(None)),
+                           "exact_code_match": bool}],
+    "evidence": [{"doc_id": _NULLABLE_TEXT, "chunk_id": _NULLABLE_TEXT}],
+}
+
+
+def _invalid_record_fields(record, fields: dict, prefix: str) -> list[str]:
+    if not isinstance(record, dict):
+        return [prefix]
+    invalid = []
+    for field, expected in fields.items():
+        path = f"{prefix}.{field}"
+        invalid.extend([path] if field not in record else _invalid_field_value(record[field], expected, path))
+    return invalid
+
+
+def _invalid_list_items(value, expected: list, prefix: str) -> list[str]:
+    if not isinstance(value, list):
+        return [prefix]
+    return [field for i, item in enumerate(value) for field in _invalid_field_value(item, expected[0], f"{prefix}[{i}]")]
+
+
+def _invalid_field_value(value, expected, prefix: str) -> list[str]:
+    if isinstance(expected, dict):
+        return _invalid_record_fields(value, expected, prefix)
+    if isinstance(expected, list):
+        return _invalid_list_items(value, expected, prefix)
+    types = expected if isinstance(expected, tuple) else (expected,)
+    # bool은 int의 하위 클래스지만 토큰·비용·순위의 숫자로 허용하지 않는다.
+    if type(value) not in types:
+        return [prefix]
+    return [prefix] if type(value) is float and not math.isfinite(value) else []
 
 
 def _read_answers(answers_path: Path) -> list[dict]:
-    """답변 파일을 읽고, 평가가 읽을 필드가 빠진 행이 있으면 RAGAS 호출(유료) 전에 멈춘다"""
+    """모든 행의 필수 값·자료형을 검사한 뒤 반환한다. 잘못된 값은 유료 호출 전에 멈춘다."""
     answers = read_jsonl(answers_path)
-    missing = sorted({field for r in answers for field in ANSWER_FIELDS if field not in r})
-    if missing:
-        raise ValueError(f"{answers_path} 에 {missing} 필드가 없습니다. 03 → 02 설정 셀 → 04 를 다시 실행해 답변 파일을 만드세요")
+    invalid = [field for i, row in enumerate(answers, 1) for field in _invalid_record_fields(row, ANSWER_FIELDS, f"row[{i}]")]
+    if invalid:
+        raise ValueError(f"{answers_path} 에 {invalid} 필드가 없거나 형식이 잘못되었습니다. "
+                         "03 → 02 설정 셀 → 04 를 다시 실행해 답변 파일을 만드세요")
     return answers
 
 
-def _unanswerable_as_nan(rows: list[dict], scores: list[dict], names: tuple[str, ...]) -> list[dict]:
-    """답이 문서에 없는 질문(answerable False)에서 names 지표를 NaN 으로 — 평균 · Langfuse 에서 빠진다.
-    그 질문은 찾아 올 정답 근거가 없고 맞는 답이 거절 문장('확인할 수 없습니다')이라, 이 지표들은 잘 해도 0 이 나온다"""
-    return [s if r["answerable"] else {**s, **dict.fromkeys(names, math.nan)} for r, s in zip(rows, scores)]
-
-
 def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
-    """Retrieval: 검색한 청크가 정답에 필요한 내용을 담았나"""
+    """Retrieval: API 없이 패킹 전 순위와 LLM에 보낸 청크를 평가한다."""
     rows = _read_answers(answers_path)
-    ragas = _ragas(rows, [LLMContextPrecisionWithReference(), LLMContextRecall()], cfg, "retrieval")
-    scores = [{"context_precision": s["llm_context_precision_with_reference"], "context_recall": s["context_recall"],
-               "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))}
-              for r, s in zip(rows, ragas)]
-    scores = _unanswerable_as_nan(rows, scores, ("context_precision", "context_recall", "key_facts_in_context"))
+    scores = [{**ir_scores(r), "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))
+               if r["answerable"] and r["key_facts"] else math.nan,
+               "primary_topic": r["primary_topic"], "coverage_group": coverage_group(r),
+               "doc_label_state": label_state(r, "doc"), "chunk_label_state": label_state(r, "chunk"),
+               "retrieval_settings": json.dumps(r["retrieval_settings"], ensure_ascii=False)} for r in rows]
     _send_scores(rows, scores)
+    exclusion_report(rows).to_csv(answers_path.with_name("retrieval_exclusions.csv"), index=False, encoding="utf-8")
     return _table(rows, scores, answers_path.with_name("retrieval.csv"))
 
 
-def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
-    """Generation: 답이 질문에 맞게 핵심 사실을 담았나 (answer_relevancy 는 KURE 임베딩으로 계산)"""
+def rerun_retrieval(answers_path: Path, output_path: Path, index) -> list[dict]:
+    """저장된 재작성 질문으로 검색만 다시 한다. 재작성·생성·심판 API 호출은 없다."""
     rows = _read_answers(answers_path)
-    ragas = _ragas(rows, [ResponseRelevancy()], cfg, "generation", embeddings=Embedder(cfg["embedding"]))
-    scores = [{"answer_relevancy": s["answer_relevancy"], "key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])}
-              for r, s in zip(rows, ragas)]
-    # answer_relevancy 는 얼버무린 답(거절 포함)을 0 으로 매긴다. 거절이 정답인 질문에서는 뺀다
-    scores = _unanswerable_as_nan(rows, scores, ("answer_relevancy",))
+    rescored = []
+    for row in rows:
+        hits, fields = retrieval_fields(index, row["question"], row["rewrite"]["question"], reused=True)
+        rescored.append({**row, **fields, "contexts": [h["body"] for h in hits],
+                         "sources": [f"{h['source']} p.{h['page']}" if h["page"] else h["source"] for h in hits],
+                         "trace_id": None})
+    write_jsonl(rescored, output_path)
+    return rescored
+
+
+def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
+    """Generation: 정답의 핵심 사실 문자열이 답변에 포함되는 비율."""
+    rows = _read_answers(answers_path)
+    scores = [{"key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])
+               if r["key_facts"] else math.nan} for r in rows]
     _send_scores(rows, scores)
     return _table(rows, scores, answers_path.with_name("generation.csv"))
 

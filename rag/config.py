@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import yaml
@@ -14,6 +15,9 @@ ARTIFACTS = ROOT / "artifacts"
 def load_config() -> dict:
     """.env 의 키(OPENAI_API_KEY, LANGFUSE_*)를 환경 변수로 올리고 config.yaml 을 돌려준다."""
     load_dotenv(ROOT / ".env")
+    # Langfuse 4는 빈 문자열도 키로 받아 내보내기를 시도하므로 키가 없으면 추적을 끈다.
+    if not (os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")):
+        os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
     return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
 
