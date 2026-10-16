@@ -28,7 +28,8 @@ sentence-transformers>=3.3   # KURE-v1 임베딩
 # ── 문서 로더
 pypdf>=4.0              # PDF 본문
 pymupdf>=1.24           # LangChain PyMuPDFLoader (PDF 표 Markdown · 이미지)
-langchain-hwp-hwpx-loader>=0.1.1   # HwpHwpxLoader (HWP 5.x / HWPX 본문·표·이미지)
+langchain-hwp-hwpx-loader>=0.1.1,<0.2   # HwpHwpxLoader (HWP 5.x / HWPX 본문·표·이미지)
+#   0.2 부터 그림을 '하위폴더/image_0000.png' 번호 이름으로 저장해, 본문 [IMAGE: BIN0003.bmp] 표시로 그림 파일을 찾지 못함
 hwp-hwpx-parser>=1.0,<2            # (위 로더의 내부 파서 — 무한 루프 버그 패치 때문에 직접 import)
 pillow>=10              # (OCR) 그림 크기 확인
 
