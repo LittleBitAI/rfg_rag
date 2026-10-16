@@ -23,15 +23,34 @@ def normalize_evidence(text: str) -> str:
     return " ".join(unicodedata.normalize("NFC", text).replace("|", " ").split())
 
 
-def link_documents(chunks: list[dict], raw_dir: Path) -> dict[str, dict]:
+def _input_files(input_path: Path, raw_dir: Path) -> list[Path]:
+    if input_path.is_dir():
+        files = list(input_path.rglob("*"))
+        archives = [p for p in files if p.suffix.lower() == ".zip"]
+        files.extend(p for archive in archives for p in (raw_dir / archive.stem).rglob("*"))
+    elif input_path.suffix.lower() == ".zip":
+        files = list(raw_dir.rglob("*"))
+    else:
+        files = [input_path]
+    return sorted(p for p in files if p.is_file() and p.suffix.lower() in (".pdf", ".hwp", ".hwpx"))
+
+
+def link_documents(chunks: list[dict], raw_dir: Path, input_path: Path, elements: dict) -> dict[str, dict]:
     sources = {unicodedata.normalize("NFC", c["source"]): c["doc_id"] for c in chunks}
     documents = {}
-    for path in sorted(raw_dir.rglob("*")):
-        if path.is_file():
+    for element in elements.values():
+        metadata = element["location"]["supplier_metadata"]
+        source = unicodedata.normalize("NFC", Path(metadata["source_paths"][0]).name)
+        # v11 로더의 doc_id는 패키지가 기록한 원본 SHA다. 같은 이름만으로 다른 출력에 적용하지 않는다.
+        if sources.get(source) == metadata["doc_id"] == metadata["sha256"]:
+            documents[metadata["sha256"]] = {"source": source, "doc_id": metadata["doc_id"]}
+    if all(doc_id in documents for doc_id in sources.values()):
+        return documents
+    for path in _input_files(input_path, raw_dir):
+        source = unicodedata.normalize("NFC", path.name)
+        if source in sources and sources[source] not in documents:
             sha = hashlib.sha256(path.read_bytes()).hexdigest()
-            source = unicodedata.normalize("NFC", path.name)
-            if source in sources:
-                documents[sha] = {"source": source, "doc_id": sources[source]}
+            documents[sha] = {"source": source, "doc_id": sources[source]}
     return documents
 
 
@@ -65,10 +84,11 @@ def _chunk_label(text: str, doc_id: str | None, by_doc: dict) -> dict:
     return {"chunk_id": None, "reason": "ambiguous" if matches else "not_found"}
 
 
-def label_evidence(items: list[dict], chunks: list[dict], raw_dir: Path, package_dir: Path) -> list[dict]:
+def label_evidence(items: list[dict], chunks: list[dict], raw_dir: Path, package_dir: Path,
+                   input_path: Path) -> list[dict]:
     """원본 SHA → source/doc_id, 근거 본문 → 같은 문서 안의 유일한 청크. 검색·API 호출 없음."""
-    documents = link_documents(chunks, raw_dir)
     elements = {e["element_id"]: e for e in read_jsonl(package_dir / "final_elements.jsonl")}
+    documents = link_documents(chunks, raw_dir, input_path, elements)
     by_doc = defaultdict(list)
     for chunk in chunks:
         by_doc[chunk["doc_id"]].append((chunk["chunk_id"], normalize_evidence(chunk["body"])))
@@ -140,4 +160,5 @@ def labelled_sample(items: list[dict], chunks: list[dict]) -> pd.DataFrame:
               "golden_evidence_text": e["text"], "matched_chunk_text": bodies[e["chunk_id"]]}
              for it in items for e in it["evidence"] if e["chunk_id"]]
     pairs.sort(key=lambda p: (p["question_id"], p["chunk_id"], p["golden_evidence_text"]))
-    return pd.DataFrame(random.Random(42).sample(pairs, 30))
+    return pd.DataFrame(random.Random(42).sample(pairs, min(30, len(pairs))),
+                        columns=["question_id", "doc_id", "chunk_id", "golden_evidence_text", "matched_chunk_text"])

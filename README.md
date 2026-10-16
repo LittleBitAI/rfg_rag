@@ -270,10 +270,14 @@ CSV는 UTF-8 without BOM입니다.
 
 ### 골든 문서·청크 라벨 연결 (03)
 
-03에는 현재 `artifacts/chunks.jsonl`, 원본 파일이 있는 `artifacts/raw/`,
+03에는 현재 `artifacts/chunks.jsonl`과
 `data/RFP_Preprocessing_Final_v11_Team/final_elements.jsonl`이 필요합니다.
+파서 출력은 `config.yaml`의 `paths.input`이 폴더·단일 파일이면 원본을 그 자리에서 읽고,
+ZIP이면 01이 `artifacts/raw/`에 푼 파일을 읽습니다. 폴더 안의 ZIP은 01의 해당 압축 해제 하위 폴더를 읽습니다.
 골든 `doc_sha`를 원본 파일의 SHA-256과 맞추고 NFC 파일명으로 현재 청크의 `source/doc_id`를 찾습니다.
-문서 제목이나 골든 청크 ID로 추측하지 않습니다.
+v11 출력은 요소 메타데이터의 원본 `sha256`·`doc_id`가 현재 청크의 `doc_id`와 같고 NFC `source`도 같을 때 연결합니다.
+따라서 v11에는 원본 파일이나 `artifacts/raw/`가 필요하지 않습니다. 같은 파일명만으로 파서 출력에 v11의 SHA를 적용하지 않으며,
+문서 제목이나 골든 청크 ID로 추측하지 않습니다. 입력을 바꾸면 01과 03에서 같은 원본 경로를 사용하세요.
 
 `evidence`는 선택한 근거만, `context`는 선택하지 않은 블록까지 담습니다.
 현재 dev는 근거 716항목과 `[E]` 1,400블록입니다. 앞서 가정한 573블록은 현재 파일과 맞지 않습니다.
@@ -318,7 +322,11 @@ test 실패는 각각 19 · 188 · 50 · 674항목입니다. 문서 미연결 �
 라벨 품질 집계는 핵심 사실 점검에서 빠지는 질문까지 포함한 전체 골든 분할을 기준으로 합니다.
 전체 주제별 결과는 03과 `artifacts/golden_mapping.csv`, 문서별 결과는 `golden_documents.csv`,
 블록 대응·ID 감사는 `golden_correspondence.csv`에서 확인합니다.
-03에는 seed 42로 고른 dev 근거 30쌍의 골든 본문과 연결한 청크 전체 본문이 나란히 표시됩니다.
+03에는 seed 42로 고른 dev 근거 최대 30쌍의 골든 본문과 연결한 청크 전체 본문이 나란히 표시됩니다.
+라벨된 근거가 30쌍 미만이면 전부 표시하며 0쌍이면 열 이름이 있는 빈 표를 표시합니다. 미연결 사유와 집계는 그대로 저장합니다.
+
+입력 경로 회귀 검사는 이전 산출물이 없는 임시 폴더에서 실제 v11 로더 또는 PDF 파서·청킹·저장을 거쳐
+03의 보고·평가셋 저장·표본 셀을 실행합니다. v11, 원본 폴더, 단일 파일, ZIP, 중첩 ZIP, ZIP을 포함한 폴더의 여섯 경로를 확인합니다.
 
 `eval_set.jsonl`에는 기존 점검을 통과한 dev 384문항과 YAML 1문항이 저장됩니다.
 골든 항목은 현재 `doc_ids`와 각 `evidence`의 `text`, `doc_id`, 유일한 `chunk_id` 또는 `reason`을 가지며,
