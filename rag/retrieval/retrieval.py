@@ -1,8 +1,9 @@
-"""② 검색 — BM25(Kiwi) × Dense(FAISS) 하이브리드 + 요구사항 코드 정확 일치 + 발주기관 라우팅.
+"""② 검색 — BM25(Kiwi) × Dense(FAISS) 하이브리드 + 로컬 리랭커 + 요구사항 코드 정확 일치 + 발주기관 라우팅.
 담당: 검색. 색인과 01 전처리의 chunks.jsonl · docs.jsonl, paths.org_csv의 기관 목록을 읽는다."""
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import unicodedata
@@ -16,7 +17,7 @@ from langfuse import observe
 from rank_bm25 import BM25Okapi
 
 from ..config import ROOT, read_jsonl
-from .indexing import Embedder, KiwiTokenizer, find_codes
+from .indexing import Embedder, KiwiTokenizer, Reranker, find_codes, search_texts, texts_digest
 
 
 _DUP_RATIO = 0.8
@@ -48,17 +49,85 @@ def _minmax(d: dict[int, float]) -> dict[int, float]:
     return {k: (v - lo) / (hi - lo) for k, v in d.items()}
 
 
+def _fingerprint(artifacts: Path, cfg: dict) -> str:
+    """검색 결과를 바꾸는 입력(청크 · 문서 목록 · 기관 CSV · 검색 설정)의 해시.
+    04 답변 체크포인트가 이 값으로 갈려, 01 · 02 를 다시 돌리거나 검색 설정을 바꾸면 예전 답을 쓰지 않는다."""
+    settings = {name: cfg[name] for name in ("embedding", "bm25", "retrieval", "rerank")}
+    digest = hashlib.sha1(json.dumps(settings, sort_keys=True).encode())
+    for path in (artifacts / "chunks.jsonl", artifacts / "docs.jsonl", ROOT / cfg["paths"]["org_csv"]):
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+_TABLE_LINK_MAX = 6  # 한 표가 이 개수 이하 청크로 나뉘었을 때만 같은 표 청크를 함께 담는다 (요구사항 목록표처럼 긴 표는 제외)
+_LINK_TOKENS = 600  # 찾은 청크 하나에 함께 담는 연결 청크의 토큰 상한 — 연결 청크가 토큰 예산을 다 차지하지 않게
+
+
+def _link_index(chunks: list[dict]) -> tuple[dict[str, set[int]], list[list[int]]]:
+    """(요구사항 코드 → 청크들, 청크마다 함께 담을 연결 청크들 — 문서 순서).
+    전처리 패키지의 연결 정보를 쓴다.
+    - 요구사항 소속(requirement_key · requirement_ids): 요구사항 ID 와 상세 내용이 다른 청크로 나뉘어 상세 청크 본문에
+      ID 가 없어도 그 ID 로 정확 일치하고, 같은 요구사항의 다른 청크(ID · 명칭 / 상세 내용)를 연결 청크로 둔다.
+    - 표 연결(table_refs): 한 표가 여러 청크로 나뉘었으면 같은 표의 다른 청크를 연결 청크로 둔다.
+    01 에서 직접 청크를 나눈 경우엔 연결 정보가 없어 본문 속 코드만 쓴다."""
+    code_chunks: dict[str, set[int]] = defaultdict(set)
+    groups: dict[tuple, list[int]] = defaultdict(list)
+    for i, chunk in enumerate(chunks):
+        member_of = find_codes(" ".join([*chunk.get("requirement_ids", []), chunk.get("requirement_key") or ""]))
+        for code in find_codes(chunk["text"]) | member_of:
+            code_chunks[code].add(i)
+        if chunk.get("requirement_key"):
+            groups[("requirement", chunk["doc_id"], chunk["requirement_key"])].append(i)
+        for table in chunk.get("table_refs", []):
+            groups[("table", table)].append(i)
+    links: list[set[int]] = [set() for _ in chunks]
+    for group, members in groups.items():
+        if group[0] == "requirement" or len(members) <= _TABLE_LINK_MAX:
+            for i in members:
+                links[i].update(members)
+    return code_chunks, [sorted(linked - {i}) for i, linked in enumerate(links)]
+
+
+def _check_index(index_dir: Path, texts: list[str]):
+    """색인이 지금 청크의 검색 글로 만들어졌는지 확인한다. 01 을 다시 돌렸거나 검색 글 만드는 방식(요구사항 머리말)이
+    바뀌었는데 색인을 그대로 두면, 벡터 · BM25 순서가 청크와 어긋나 엉뚱한 청크가 찾힌다."""
+    digest = index_dir / "texts.sha1"
+    if not digest.exists() or digest.read_text(encoding="utf-8").strip() != texts_digest(texts):
+        raise RuntimeError("검색 색인이 지금 청크(artifacts/chunks.jsonl)와 맞지 않습니다 — "
+                           "02 의 '1. 색인 만들기' 셀을 다시 실행하세요")
+
+
+def _org_query(query: str, route: dict[str, set], org: str) -> str:
+    """비교 질문에서 이 기관을 찾을 질문 — 다른 기관 이름을 뺀다 (한 질문에 두 기관이 섞여 검색이 흐려지지 않게)"""
+    for other in route:
+        if other != org:
+            for name in other.split(" · "):
+                query = query.replace(name, " ")
+    return re.sub(r"\s+", " ", query).strip()
+
+
+def _interleave(lists: list[list[dict]]) -> list[dict]:
+    """기관별 결과를 하나씩 번갈아 섞는다. 두 기관이 같은 문서를 가리켜 겹친 청크는 한 번만"""
+    seen, out = set(), []
+    for hit in chain.from_iterable(zip_longest(*lists)):
+        if hit is not None and hit["chunk_id"] not in seen:
+            seen.add(hit["chunk_id"])
+            out.append(hit)
+    return out
+
+
 class HybridIndex:
     """final = w·Dense + (1-w)·BM25 — 두 후보군을 각각 min-max 정규화한 뒤 가중합 (w = dense_weight, 0=BM25만, 1=Dense만).
-    질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter)."""
+    rerank.enabled 이면 상위 rerank.top_n 후보를 로컬 크로스 인코더(Reranker)로 다시 정렬한다.
+    질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter).
+    찾은 청크에 연결 청크(같은 요구사항의 ID · 명칭 / 상세 내용, 같은 표의 나뉜 부분)가 있으면 바로 뒤에 함께 담는다."""
 
     def __init__(self, artifacts: Path, cfg: dict):
         self.chunks = read_jsonl(artifacts / "chunks.jsonl")
+        self.texts = search_texts(self.chunks)
+        _check_index(artifacts / "index", self.texts)
         self.doc_ids = np.array([c["doc_id"] for c in self.chunks])
-        self.code_chunks: dict[str, set[int]] = defaultdict(set)
-        for i, chunk in enumerate(self.chunks):
-            for code in find_codes(chunk["text"]):
-                self.code_chunks[code].add(i)
+        self.code_chunks, self.links = _link_index(self.chunks)
         self.faiss = faiss.read_index(str(artifacts / "index" / "faiss.index"))
         tokens = json.loads((artifacts / "index" / "bm25_tokens.json").read_text(encoding="utf-8"))
         self.bm25 = BM25Okapi(tokens, k1=float(cfg["bm25"]["k1"]), b=float(cfg["bm25"]["b"]))
@@ -66,18 +135,31 @@ class HybridIndex:
         self.tokenizer = KiwiTokenizer()
         self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"), read_csv_orgs(ROOT / cfg["paths"]["org_csv"]))
         self.rcfg = cfg["retrieval"]
+        self.reranker = Reranker(cfg["rerank"]) if cfg["rerank"]["enabled"] else None
+        self.rerank_top_n = int(cfg["rerank"]["top_n"])
+        self.fingerprint = _fingerprint(artifacts, cfg)
 
     @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str, *, query: str | None = None) -> list[dict]:
-        """원본 질문으로 기관을 고르고 query(없으면 원본)로 검색한다. 비교 질문은 기관별 결과를 번갈아 섞는다.
-        요구사항 코드는 양쪽에서 모아 재작성 때 코드가 빠져도 정확 일치를 유지한다."""
-        route = self.router.route(question)
+        """재작성 질문 query(없으면 원본)로 기관을 고르고 검색한다.
+        후속 질문의 '그 사업'은 재작성 때 사업명으로 풀리므로 기관 · 사업명도 재작성 질문에서 찾는다.
+        비교 질문(기관 둘 이상)은 기관마다 다른 기관 이름을 뺀 질문으로 따로 찾고, 토큰 예산도 기관마다 따로 써서
+        번갈아 섞는다 — 한 기관이 예산을 다 차지하지 않게. 요구사항 코드는 원본 · 재작성 양쪽에서 모은다."""
         query = query or question
+        route = self.router.route(query)
         codes = find_codes(question) | find_codes(query)
-        if len(route) < 2:
-            return self._pack(self._rank(query, codes, next(iter(route.values()), None)))
-        lists = [self._rank(query, codes, doc_ids) for doc_ids in route.values()]
-        return self._pack([hit for hit in chain.from_iterable(zip_longest(*lists)) if hit is not None])
+        if not route:
+            return self._pack(self._rank(query, codes, None))
+        lists = [self._pack(self._rank_preferring(
+                     query, self.router.focus(_org_query(query, route, org), org, doc_ids), codes, doc_ids))
+                 for org, doc_ids in route.items()]
+        return _interleave(lists)
+
+    def _rank_preferring(self, question: str, query: str, codes: set[str], doc_ids: set) -> list[tuple[int, float]]:
+        """기관 문서 중 question 에 사업명이 나온 문서의 후보를 먼저, 같은 기관의 다른 사업 문서는 그 뒤에 둔다"""
+        preferred, rest = self.router.prefer(question, doc_ids)
+        ranked = self._rank(query, codes, preferred)
+        return ranked + self._rank(query, codes, rest) if rest else ranked
 
     def _rank(self, question: str, codes: set[str], doc_ids: set | None) -> list[tuple[int, float]]:
         allowed = np.isin(self.doc_ids, list(doc_ids)) if doc_ids else np.ones(len(self.chunks), dtype=bool)
@@ -89,10 +171,18 @@ class HybridIndex:
         exact = self._exact(codes, allowed)
         fused |= {i: 0.0 for i in exact - fused.keys()}
         order = sorted(fused, key=lambda i: (i in exact, fused[i]), reverse=True)
+        if self.reranker and order:
+            return self._rerank(question, order[: self.rerank_top_n], exact)
         return [(i, fused[i]) for i in order]
 
+    def _rerank(self, question: str, candidates: list[int], exact: set[int]) -> list[tuple[int, float]]:
+        """하이브리드 상위 후보만 리랭커 점수로 다시 정렬한다. 요구사항 코드 일치 청크는 계속 맨 앞에 둔다.
+        후보 수십 개면 토큰 예산(수천 토큰)을 넘으므로 나머지 후보는 버린다."""
+        scores = self.reranker.scores(question, [self.texts[i] for i in candidates])
+        return sorted(zip(candidates, scores), key=lambda hit: (hit[0] in exact, hit[1]), reverse=True)
+
     def _exact(self, codes: set[str], allowed: np.ndarray) -> set[int]:
-        """요구사항 코드가 그대로 든 허용 청크"""
+        """요구사항 코드가 그대로 들었거나 그 요구사항에 속한 허용 청크"""
         hits = set().union(*(self.code_chunks.get(code, set()) for code in codes))
         return {i for i in hits if allowed[i]}
 
@@ -108,13 +198,25 @@ class HybridIndex:
         top = np.argsort(-scores)[: int(self.rcfg["candidate_k"])]
         return {int(i): float(scores[i]) for i in top if scores[i] > 0}
 
+    def _with_links(self, ranked: list[tuple[int, float]]):
+        """각 청크 바로 뒤에 연결 청크를 문서 순서대로 붙인다 (점수는 찾은 청크와 같게).
+        찾은 청크 하나에 붙이는 연결 청크는 _LINK_TOKENS 토큰까지 — 넘치는 연결 청크는 건너뛴다"""
+        for i, score in ranked:
+            yield i, score
+            spent = 0
+            for j in self.links[i]:
+                cost = self.embedder.token_counts([self.chunks[j]["body"]])[0]
+                if spent + cost <= _LINK_TOKENS:
+                    spent += cost
+                    yield j, score
+
     def _pack(self, ranked: list[tuple[int, float]]) -> list[dict]:
         """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크(숫자 · 부정어까지 같은)는 제외한다.
-        긴 청크는 건너뛰되 첫 청크는 예산을 넘어도 담아 빈 컨텍스트를 막는다."""
+        연결 청크(같은 요구사항 · 같은 표)는 함께 담는다. 긴 청크는 건너뛰되 첫 청크는 예산을 넘어도 담아 빈 컨텍스트를 막는다."""
         budget = int(self.rcfg["token_budget"])
         picked: list[tuple[int, float, tuple]] = []
         used = 0
-        for i, score in ranked:
+        for i, score in self._with_links(ranked):
             key = _evidence_key(self.chunks[i]["body"])
             if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(key, seen))
                    for j, _, seen in picked):
@@ -234,12 +336,59 @@ def _csv_org_docs(docs: list[dict], csv_orgs: dict[str, str]) -> dict[str, set]:
     return org_docs
 
 
+_TITLE_WORD = re.compile(r"[가-힣A-Za-z0-9]{2,}")
+_TITLE_MAX_DOCS = 2  # 이보다 많은 사업 제목에 나오는 낱말('시스템' · '구축' · '고도화' · '2024년')은 사업을 가르지 못한다
+_PREFER_MIN_CHARS = 4  # 질문에 나온 사업명 고유 낱말이 이 글자 수 이상일 때만 그 문서를 앞세운다
+_FOCUS_MIN_WORDS = 2  # 기관명 · 사업명 낱말을 뺀 질문에 이보다 적은 낱말이 남으면 빼지 않는다
+
+
+def _title_keys(titles: dict[str, str]) -> dict[str, set[str]]:
+    """문서별 사업명 고유 낱말 — 파일명 '발주기관_사업명' 의 사업명 낱말 중 다른 사업 제목에 거의 안 나오는 것"""
+    words = {did: set(_TITLE_WORD.findall(title.split("_", 1)[-1])) for did, title in titles.items()}
+    df = defaultdict(int)
+    for ws in words.values():
+        for w in ws:
+            df[w] += 1
+    return {did: {w for w in ws if df[w] <= _TITLE_MAX_DOCS} for did, ws in words.items()}
+
+
+def _merge_overlaps(route: dict[str, set]) -> dict[str, set]:
+    """같은 문서를 가리키는 기관명은 하나로 합친다 ('전북대학교' 와 '공유대학' 이 같은 JST 문서) —
+    따로 두면 그 문서가 기관별 검색 · 예산을 두 몫 가져간다. 다른 기관 문서에 모두 들어가는 쪽은 그 기관에 합친다."""
+    merged: dict[str, set] = {}
+    for org, doc_ids in sorted(route.items(), key=lambda item: -len(item[1])):
+        owner = next((name for name, docs in merged.items() if doc_ids <= docs), None)
+        if owner:
+            merged[f"{owner} · {org}"] = merged.pop(owner)
+        else:
+            merged[org] = set(doc_ids)
+    return merged
+
+
+def _first_mentions(words: list[str], names: set[str]) -> set[int]:
+    """각 이름이 처음 들어 있는 낱말의 위치"""
+    used: set[str] = set()
+    found = set()
+    for i, word in enumerate(words):
+        names_in = {name for name in names if name in word}
+        if names_in - used:
+            found.add(i)
+            used |= names_in
+    return found
+
+
+def _is_title_word(word: str, title_words: set[str]) -> bool:
+    """사업명 낱말이 들었거나 괄호 · 기호뿐인 낱말"""
+    return not _TITLE_WORD.search(word) or any(t in word for t in title_words)
+
+
 class DocRouter:
     """질문에 나온 발주기관 → 그 기관 문서로 검색 범위를 좁힌다 (RFP 가 많을수록 정확도 ↑).
     기관명은 담당자 CSV와 파일명·표지에서 모으고, 표지가 없으면 본문 앞부분을 쓴다."""
 
     def __init__(self, docs: list[dict], csv_orgs: dict[str, str]):
         self.titles = {d["doc_id"]: d["title"] for d in docs}
+        self.title_keys = _title_keys(self.titles)
         hay = {d["doc_id"]: f"{d['title']}\n" + (d["cover_text"] or d["head_text"][:1500]) for d in docs}
         self.org_docs: dict[str, set] = defaultdict(set)
         for org in _extract_orgs(hay.values()):
@@ -259,6 +408,34 @@ class DocRouter:
         found = [org for org in self.org_docs if _has(question, org)]
         # '한국원자력연구원' 과 자동추출 '원자력연구원' 처럼 겹치면 긴 이름만
         found = [o for o in found if not any(o != p and o in p for p in found)]
-        # 같은 기관의 여러 문서 중 하나를 제목 낱말로 고르지 않는다 — 질문의 '대용량 전송' 이 다른 사업 제목
-        # ('대용량 자료전송시스템')과 겹쳐 정답 문서를 빼던 문제. 기관 문서 안의 순위는 하이브리드 점수가 정한다.
-        return {org: self.org_docs[org] for org in found}
+        return _merge_overlaps({org: self.org_docs[org] for org in found})
+
+    def focus(self, query: str, org: str, doc_ids: set) -> str:
+        """기관 문서 안에서 순위를 매길 질문 — 질문에서 기관 · 사업을 가리킨 부분('스포츠윤리센터의 「… LMS 기능개선」')을 뺀다.
+        검색 범위를 이미 그 기관 문서로 좁혔으니 이 부분은 청크를 가르지 못하고, 사업명을 되풀이하는 표지 · 서식 ·
+        서약서 청크만 앞세워 정작 묻는 내용('하자보증 기간')의 청크를 토큰 예산 밖으로 밀어낸다.
+        기관명 · 사업명 고유 낱말은 처음 나올 때만 빼고(본문에서 다시 묻는 'ERP 행' 은 남김), 그 옆에 붙은 사업명 낱말도 함께 뺀다.
+        남는 낱말이 너무 적으면(사업명 자체를 묻는 질문) 그대로 둔다."""
+        words = query.split()
+        title_words = {w for did in doc_ids for w in _TITLE_WORD.findall(self.titles[did].split("_", 1)[-1])}
+        drop = _first_mentions(words, {*org.split(" · "), *(w for did in doc_ids for w in self.title_keys.get(did, ()))})
+        for i in sorted(drop):
+            for step in (-1, 1):
+                j = i + step
+                while 0 <= j < len(words) and j not in drop and _is_title_word(words[j], title_words):
+                    drop.add(j)
+                    j += step
+        focused = " ".join(w for i, w in enumerate(words) if i not in drop)
+        return focused if len(_TITLE_WORD.findall(focused)) >= _FOCUS_MIN_WORDS else query
+
+    def prefer(self, question: str, doc_ids: set) -> tuple[set, set]:
+        """기관 문서가 여럿이면 질문에 사업명 고유 낱말이 가장 많이(글자 수 기준) 나온 문서를 앞세운다 → (앞세울 문서, 나머지).
+        빼지 않고 뒤로 미루기만 한다 — 질문의 '대용량 전송' 이 다른 사업 제목('대용량 자료전송시스템')과 겹쳐
+        정답 문서를 빼던 문제가 있었다. 고유 낱말이 긴 쪽('기록관리시스템' 7자 > '대용량' 3자)이 이기고, 동점이면 그대로 둔다."""
+        compact = re.sub(r"\s+", "", question)
+        scores = {did: sum(len(w) for w in self.title_keys.get(did, ()) if w in compact) for did in doc_ids}
+        best = max(scores.values(), default=0)
+        preferred = {did for did, score in scores.items() if score == best}
+        if best < _PREFER_MIN_CHARS or preferred == set(doc_ids):
+            return set(doc_ids), set()
+        return preferred, set(doc_ids) - preferred

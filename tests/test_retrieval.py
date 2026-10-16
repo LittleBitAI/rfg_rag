@@ -1,5 +1,4 @@
 """요구사항 코드·토큰 예산·중복 제거·기관 라우팅의 회귀를 확인한다."""
-from collections import defaultdict
 from unittest.mock import MagicMock
 
 import faiss
@@ -7,25 +6,30 @@ import numpy as np
 import pytest
 
 from rag.preprocessing import parsing
-from rag.retrieval.indexing import Embedder, KiwiTokenizer, find_codes
-from rag.retrieval.retrieval import DocRouter, HybridIndex, read_csv_orgs
+from rag.retrieval.indexing import Embedder, KiwiTokenizer, find_codes, search_texts, texts_digest
+from rag.retrieval.retrieval import DocRouter, HybridIndex, _check_index, _link_index, read_csv_orgs
 
 
-def make_index(bodies, costs, budget=2500, doc_ids=None):
+def make_index(bodies, costs, budget=2500, doc_ids=None, requirements=None, tables=None):
     index = HybridIndex.__new__(HybridIndex)
     doc_ids = doc_ids or ["doc-a"] * len(bodies)
-    index.chunks = [{"chunk_id": f"c{i}", "doc_id": doc, "text": body, "body": body}
-                    for i, (body, doc) in enumerate(zip(bodies, doc_ids))]
+    requirements = requirements or [None] * len(bodies)
+    tables = tables or [[] for _ in bodies]
+    index.chunks = [{"chunk_id": f"c{i}", "doc_id": doc, "text": body, "body": body,
+                     "requirement_key": req, "requirement_ids": [req] if req else [], "table_refs": table}
+                    for i, (body, doc, req, table) in enumerate(zip(bodies, doc_ids, requirements, tables))]
+    index.texts = search_texts(index.chunks)
     index.doc_ids = np.array(doc_ids)
-    index.code_chunks = defaultdict(set)
-    for i, body in enumerate(bodies):
-        for code in find_codes(body):
-            index.code_chunks[code].add(i)
+    index.code_chunks, index.links = _link_index(index.chunks)
     index.rcfg = {"token_budget": budget, "dense_weight": 0.6, "candidate_k": 50}
     index.embedder = MagicMock()
     index.embedder.token_counts.side_effect = lambda texts: [costs[bodies.index(text)] for text in texts]
     index.router = MagicMock()
     index.router.route.return_value = {}
+    index.router.prefer.side_effect = lambda question, doc_ids: (doc_ids, set())
+    index.router.focus.side_effect = lambda query, org, doc_ids: query
+    index.reranker = None
+    index.rerank_top_n = 30
     return index
 
 
@@ -84,8 +88,8 @@ def test_exact_code_survives_rewrite_and_candidate_cutoff_with_routing(question,
 
     assert [hit["chunk_id"] for hit in hits] == ["c0", "c1"]
     assert hits[0]["score"] == 0.0
-    index.router.route.assert_called_once_with(question)
     expected_query = question if query is None else query
+    index.router.route.assert_called_once_with(expected_query)
     assert index._dense.call_args.args[0] == expected_query
     assert index._dense.call_args.args[1].tolist() == [True, True, False]
     assert index._sparse.call_args.args[0] == expected_query
@@ -330,3 +334,204 @@ def test_csv_name_also_routes_other_documents_whose_title_mentions_it():
 def test_csv_official_name_and_filename_common_name_both_route(source, csv_org, question, expected):
     docs = [{"doc_id": "a", "source": source, "title": source.rsplit(".", 1)[0], "cover_text": "", "head_text": ""}]
     assert DocRouter(docs, {source: csv_org}).route(question) == {expected: {"a"}}
+def test_reranker_reorders_top_candidates_keeps_exact_code_first_and_drops_the_rest():
+    index = make_index(["SFR-001 코드 근거", "하이브리드 1위", "하이브리드 2위", "하이브리드 3위"], [1, 1, 1, 1])
+    index._dense = MagicMock(return_value={1: 1.0, 2: 0.5, 3: 0.1})
+    index._sparse = MagicMock(return_value={})
+    index.reranker = MagicMock()
+    index.reranker.scores.return_value = [0.1, 0.2, 0.9]
+    index.rerank_top_n = 3
+
+    ranked = index._rank("재작성 질문", {"SFR-001"}, None)
+
+    index.reranker.scores.assert_called_once_with("재작성 질문", ["SFR-001 코드 근거", "하이브리드 1위", "하이브리드 2위"])
+    assert ranked == [(0, 0.1), (2, 0.9), (1, 0.2)]
+
+
+def test_reranker_is_skipped_when_routed_documents_have_no_candidates():
+    index = make_index(["다른 기관 근거"], [1], doc_ids=["doc-b"])
+    index._dense = MagicMock(return_value={})
+    index._sparse = MagicMock(return_value={})
+    index.reranker = MagicMock()
+
+    assert index._rank("질문", set(), {"doc-a"}) == []
+    index.reranker.scores.assert_not_called()
+
+
+def test_reranker_scores_question_chunk_pairs(monkeypatch):
+    from rag.retrieval import indexing
+    cross_encoder = MagicMock()
+    cross_encoder.return_value.predict.return_value = np.array([0.7, 0.2])
+    monkeypatch.setattr(indexing, "CrossEncoder", cross_encoder)
+    monkeypatch.setattr(indexing.torch.cuda, "is_available", lambda: False)
+
+    reranker = indexing.Reranker({"model": "reranker", "batch_size": 4, "max_length": 512})
+
+    assert reranker.scores("질문", ["청크1", "청크2"]) == [0.7, 0.2]
+    cross_encoder.assert_called_once_with("reranker", device="cpu", max_length=512)
+    cross_encoder.return_value.predict.assert_called_once_with([("질문", "청크1"), ("질문", "청크2")], batch_size=4)
+
+
+# 요구사항 ID · 명칭 청크와 상세 내용 청크가 나뉜 전처리 패키지 사례 (서민금융진흥원 SER-001)
+_SPLIT_REQUIREMENT = ["요구사항 고유번호 | SER-001 / 요구사항 명칭 | 보안관리 및 규정 준수",
+                      "요구사항 상세내용 | 누출금지 대상정보는 내·외부 IP주소 현황, 정보통신망 구성도",
+                      "다른 요구사항 상세 내용", "다른 문서의 같은 코드 상세 내용"]
+
+
+def test_detail_chunk_without_id_text_matches_its_requirement_code():
+    index = make_index(_SPLIT_REQUIREMENT, [5, 5, 5, 5], doc_ids=["a", "a", "a", "b"],
+                       requirements=["SER-001", "SER-001", None, "SER-001"])
+    index.router.route.return_value = {"서민금융진흥원": {"a"}}
+    index._dense = MagicMock(return_value={2: 1.0})
+    index._sparse = MagicMock(return_value={2: 1.0})
+
+    hits = index.search("서민금융진흥원 SER-001 누출금지 대상정보")
+
+    assert [hit["chunk_id"] for hit in hits] == ["c0", "c1", "c2"]  # 다른 문서(b)의 SER-001 은 라우팅으로 제외
+
+
+@pytest.mark.parametrize("found", [0, 1])
+def test_pack_adds_other_chunks_of_the_same_requirement_right_after_the_found_one(found):
+    index = make_index(_SPLIT_REQUIREMENT, [5, 5, 5, 5], doc_ids=["a", "a", "a", "b"],
+                       requirements=["SER-001", "SER-001", None, "SER-001"])
+
+    hits = index._pack([(found, 0.9), (2, 0.5)])
+
+    assert [hit["chunk_id"] for hit in hits] == [f"c{found}", f"c{1 - found}", "c2"]
+    assert hits[1]["score"] == 0.9
+
+
+def test_requirement_chunks_still_respect_token_budget():
+    index = make_index(_SPLIT_REQUIREMENT, [5, 30, 5, 5], budget=12, doc_ids=["a", "a", "a", "b"],
+                       requirements=["SER-001", "SER-001", None, "SER-001"])
+
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (2, 0.5)])] == ["c0", "c2"]
+
+
+# ── 비교 질문(기관 둘 이상) ──
+def test_comparison_gives_each_organization_its_own_budget_and_query():
+    index = make_index(["가 기관 근거 하나", "가 기관 근거 둘", "나 기관 근거 하나", "나 기관 근거 둘"], [5, 5, 5, 5],
+                       budget=10, doc_ids=["a", "a", "b", "b"])
+    index.router.route.return_value = {"고려대학교": {"a"}, "광주과학기술원": {"b"}}
+    index._rank = MagicMock(side_effect=[[(0, 0.9), (1, 0.8)], [(2, 0.7), (3, 0.6)]])
+
+    hits = index.search("고려대학교와 광주과학기술원의 추가 교육 비교", query="고려대학교와 광주과학기술원의 추가 교육 비교")
+
+    assert [hit["chunk_id"] for hit in hits] == ["c0", "c2", "c1", "c3"]  # 예산을 나눠 쓰면 2개만 담겼다
+    queries = [c.args[0] for c in index._rank.call_args_list]
+    assert "광주과학기술원" not in queries[0] and "고려대학교" in queries[0]
+    assert "고려대학교" not in queries[1] and "광주과학기술원" in queries[1]
+
+
+def test_organizations_pointing_to_the_same_document_are_merged():
+    docs = [{"doc_id": "jst", "source": "jst.hwp", "title": "전북대학교_JST 공유대학(원) xAPI기반 LRS시스템 구축",
+             "cover_text": "전북대학교", "head_text": ""},
+            {"doc_id": "v", "source": "v.hwp", "title": "(사)벤처기업협회_벤처확인종합관리시스템 기능 고도화",
+             "cover_text": "벤처기업협회", "head_text": ""}]
+    router = DocRouter(docs, {})
+    router.org_docs = {"전북대학교": {"jst"}, "공유대학": {"jst"}, "벤처기업협회": {"v"}}
+
+    route = router.route("벤처기업협회와 전북대학교 JST 공유대학의 연계 데이터 비교")
+
+    assert sorted(route.values(), key=sorted) == [{"jst"}, {"v"}]
+    assert any("전북대학교" in org and "공유대학" in org for org in route)
+
+
+_KOREA_DEFENSE = [{"doc_id": "records", "title": "국방과학연구소_기록관리시스템 통합 활용 및 보안 환경 구축"},
+                  {"doc_id": "transfer", "title": "국방과학연구소_대용량 자료전송시스템 고도화"},
+                  {"doc_id": "x", "title": "다른기관_통합 시스템 구축"}, {"doc_id": "y", "title": "또다른기관_보안 고도화 구축"}]
+
+
+@pytest.mark.parametrize("question,expected", [
+    # 띄어 써도 '기록관리시스템'(7자)이 '대용량'(3자)보다 길게 맞아 기록관리 사업을 앞세운다
+    ("국방과학연구소 기록관리 시스템의 응답시간과 대용량 전송 예외는?", ({"records"}, {"transfer"})),
+    ("국방과학연구소 대용량 자료전송시스템의 전송 속도는?", ({"transfer"}, {"records"})),
+    ("국방과학연구소 사업의 보안 요구사항은?", ({"records", "transfer"}, set())),  # 사업명이 없으면 그대로
+])
+def test_project_name_in_question_moves_other_projects_of_the_same_organization_back(question, expected):
+    router = DocRouter([{**d, "source": f"{d['doc_id']}.hwp", "cover_text": "", "head_text": ""} for d in _KOREA_DEFENSE], {})
+    assert router.prefer(question, {"records", "transfer"}) == expected
+
+
+def test_preferred_project_candidates_come_first_and_others_only_fill_the_rest():
+    index = make_index(["기록관리 근거", "대용량 근거"], [5, 5], budget=10, doc_ids=["records", "transfer"])
+    index.router.route.return_value = {"국방과학연구소": {"records", "transfer"}}
+    index.router.prefer.side_effect = None
+    index.router.prefer.return_value = ({"records"}, {"transfer"})
+    index._rank = MagicMock(side_effect=[[(0, 0.2)], [(1, 0.9)]])
+
+    hits = index.search("국방과학연구소 기록관리 시스템 응답시간")
+
+    assert [hit["chunk_id"] for hit in hits] == ["c0", "c1"]
+    assert [c.args[2] for c in index._rank.call_args_list] == [{"records"}, {"transfer"}]
+
+
+# ── 요구사항 소속 정보를 검색 글에 쓰기 ──
+_REQUIREMENT_CHUNKS = [
+    {"doc_id": "a", "text": "요구사항 고유번호 | SER-001\n요구사항 명칭 | 보안관리 및 규정 준수", "requirement_key": "SER-001"},
+    {"doc_id": "a", "text": "요구사항 상세내용 | 누출금지 대상정보는 IP주소 현황", "requirement_key": "SER-001"},
+    {"doc_id": "a", "text": "일반 본문", "requirement_key": None}]
+
+
+def test_search_texts_label_detail_chunks_with_their_requirement_id_and_name():
+    assert search_texts(_REQUIREMENT_CHUNKS) == [
+        _REQUIREMENT_CHUNKS[0]["text"],  # ID · 명칭이 이미 있으면 그대로
+        "[요구사항 SER-001 보안관리 및 규정 준수]\n요구사항 상세내용 | 누출금지 대상정보는 IP주소 현황",
+        "일반 본문"]
+
+
+def test_index_is_built_from_search_texts_and_stale_index_is_rejected(monkeypatch, tmp_path):
+    from rag.retrieval import indexing
+    calls = []
+    _fake_embedder(monkeypatch, calls)
+    indexing.build_index(_REQUIREMENT_CHUNKS, _index_cfg(), tmp_path)
+
+    assert [text for part in calls for text in part] == search_texts(_REQUIREMENT_CHUNKS)
+    _check_index(tmp_path, search_texts(_REQUIREMENT_CHUNKS))
+    with pytest.raises(RuntimeError, match="02"):
+        _check_index(tmp_path, [c["text"] for c in _REQUIREMENT_CHUNKS])
+
+
+def test_split_table_chunks_are_linked_but_long_tables_are_not():
+    tables = [["t1"], ["t1"], *[["long"]] * 7]
+    index = make_index([f"표 {i}" for i in range(9)], [1] * 9, tables=tables)
+
+    assert index.links[0] == [1] and index.links[1] == [0]
+    assert all(index.links[i] == [] for i in range(2, 9))
+    assert [hit["chunk_id"] for hit in index._pack([(1, 0.9)])] == ["c1", "c0"]
+
+
+def test_linked_chunks_stop_at_link_token_cap():
+    index = make_index(["ID 청크", "상세 하나", "상세 둘"], [5, 400, 400], requirements=["SER-001"] * 3)
+
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9)])] == ["c0", "c1"]  # 400 + 400 > 600
+
+
+_FOCUS_DOCS = [{"doc_id": "lms", "title": "재단법인스포츠윤리센터_스포츠윤리센터 LMS(학습지원시스템) 기능개선"},
+               {"doc_id": "erp", "title": "한국어촌어항공단_한국어촌어항공단 경영관리시스템(ERP·GW) 기능 고도"},
+               {"doc_id": "x", "title": "다른기관_통합 시스템 구축"}]
+
+
+@pytest.mark.parametrize("question,org,doc,expected", [
+    ("스포츠윤리센터의 「스포츠윤리센터 LMS(학습지원시스템) 기능개선」 사업에서 하자보증 기간은 얼마인가?",
+     "스포츠윤리센터", "lms", "사업에서 하자보증 기간은 얼마인가?"),
+    # 사업명 낱말이 본문에서 다시 나오면('ERP 행') 남긴다
+    ("한국어촌어항공단의 「한국어촌어항공단 경영관리시스템(ERP·GW) 기능 고도」 사업에서 ERP 행의 내용 열은 무엇인가?",
+     "한국어촌어항공단", "erp", "사업에서 ERP 행의 내용 열은 무엇인가?"),
+    # 빼면 낱말이 거의 안 남는 질문은 그대로
+    ("스포츠윤리센터 LMS 기능개선 사업", "스포츠윤리센터", "lms", "스포츠윤리센터 LMS 기능개선 사업"),
+])
+def test_focus_drops_the_organization_and_project_mention(question, org, doc, expected):
+    router = DocRouter([{**d, "source": f"{d['doc_id']}.hwp", "cover_text": "", "head_text": ""} for d in _FOCUS_DOCS], {})
+    assert router.focus(question, org, {doc}) == expected
+
+
+def test_routed_search_ranks_with_the_focused_query():
+    index = make_index(["근거"], [1])
+    index.router.route.return_value = {"스포츠윤리센터": {"doc-a"}}
+    index.router.focus.side_effect = lambda query, org, doc_ids: "하자보증 기간은 얼마인가?"
+    index._rank = MagicMock(return_value=[(0, 1.0)])
+
+    index.search("스포츠윤리센터의 「LMS 기능개선」 사업에서 하자보증 기간은 얼마인가?")
+
+    assert index._rank.call_args.args[0] == "하자보증 기간은 얼마인가?"

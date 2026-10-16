@@ -12,11 +12,19 @@ from rag.preprocessing import chunking, parsing
 from rag.usage import UsageCallback
 
 
+def test_notebooks_have_no_saved_execution_results():
+    for path in sorted(ROOT.glob("*.ipynb")):
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        for cell in notebook["cells"]:
+            assert cell.get("execution_count") is None, path.name
+            assert not cell.get("outputs"), path.name
+
+
 def test_ocr_parser_uses_selected_model_and_effort(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     cfg = {"model": "gpt-5-mini", "max_tokens": 1234, "reasoning_effort": "high"}
 
-    parser = parsing._ocr_parser(cfg, UsageCallback("ocr", [0.25, 0.025, 2.0]))
+    parser = parsing._ocr_parser(cfg, UsageCallback("ocr", [0.25, 0.025, 2.0], "high"))
 
     assert parser.model.model_name == cfg["model"]
     assert parser.model.max_tokens == 1234
@@ -67,7 +75,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
     namespace = {"cfg": deepcopy(defaults), "ARTIFACTS": tmp_path, "write_jsonl": write_jsonl}
     _run_cell("02_retrieval.ipynb", "REWRITE_MODEL =", namespace,
               REWRITE_MODEL="selected-rewrite-model", REWRITE_REASONING_EFFORT="high",
-              REWRITE_MAX_TOKENS=1234, REWRITE_PRICES=[1.0, 0.1, 4.0], DENSE_WEIGHT=0.25)
+              REWRITE_MAX_TOKENS=1234, REWRITE_PRICES=[1.0, 0.1, 4.0], DENSE_WEIGHT=0.25, RERANK=False)
     namespace.update(load_config=lambda: deepcopy(defaults), read_jsonl=read_jsonl)
     _run_cell("04_generation.ipynb", "import pandas", namespace)
     _run_cell("04_generation.ipynb", "LLM_MODEL =", namespace,
@@ -82,6 +90,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
 
     used_cfg = namespace["HybridIndex"].call_args.args[1]
     assert used_cfg["retrieval"]["dense_weight"] == 0.25
+    assert used_cfg["rerank"] == {**defaults["rerank"], "enabled": False}
     assert used_cfg["rewrite"] == {**defaults["rewrite"], "model": "selected-rewrite-model",
                                    "reasoning_effort": "high", "max_tokens": 1234,
                                    "usd_per_1m_tokens": [1.0, 0.1, 4.0]}
@@ -89,10 +98,10 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
         [{"id": "q1", "question": "질문"}], index,
         {**defaults["llm"], "model": "selected-answer-model", "reasoning_effort": "medium", "max_tokens": 2345,
          "usd_per_1m_tokens": [2.0, 0.2, 8.0]},
-        used_cfg["rewrite"])
+        used_cfg["rewrite"], checkpoint_dir=tmp_path / "checkpoints" / "answers")
 
 
-@pytest.mark.parametrize("package", [None, "data/RFP_Preprocessing_Final_v11_Team"])
+@pytest.mark.parametrize("package", [None, "data/Golden_Dev396_v12_Team_Package/corpus"])
 def test_preprocessing_notebook_selects_input(tmp_path, package):
     docs, chunks = [{"doc_id": "d1"}], [{"chunk_id": "c1"}]
     defaults = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
@@ -100,7 +109,7 @@ def test_preprocessing_notebook_selects_input(tmp_path, package):
                  "collect_inputs": MagicMock(return_value=["test.pdf"]),
                  "parse_documents": MagicMock(return_value=docs),
                  "chunk_documents": MagicMock(return_value=chunks),
-                 "load_v11_package": MagicMock(return_value=(docs, chunks)),
+                 "load_package": MagicMock(return_value=(docs, chunks)),
                  "save_chunks": MagicMock(), "parsing_summary": MagicMock(),
                  "chunk_summary": MagicMock(), "display": MagicMock()}
     _run_cell("01_preprocessing.ipynb", "PREPROCESSED =", namespace, PREPROCESSED=package)
@@ -118,9 +127,9 @@ def test_preprocessing_notebook_selects_input(tmp_path, package):
             cache_dir=tmp_path / "artifacts" / "parsed")
         namespace["chunk_documents"].assert_called_once_with(docs, defaults["chunking"],
                                                              cache_dir=tmp_path / "artifacts" / "chunked")
-        namespace["load_v11_package"].assert_not_called()
+        namespace["load_package"].assert_not_called()
     else:
-        namespace["load_v11_package"].assert_called_once_with(tmp_path / package)
+        namespace["load_package"].assert_called_once_with(tmp_path / package)
         for name in ["collect_inputs", "parse_documents", "chunk_documents", "parsing_summary"]:
             namespace[name].assert_not_called()
 
@@ -244,3 +253,12 @@ def test_save_chunks_keeps_previous_files_when_interrupted_while_writing(monkeyp
 
     assert read_jsonl(tmp_path / "chunks.jsonl") == [{"chunk_id": "c0"}]
     assert read_jsonl(tmp_path / "docs.jsonl") == [{"doc_id": "d0"}]
+
+
+def test_evaluation_notebook_judge_setting_reaches_config():
+    defaults = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    namespace = {"cfg": deepcopy(defaults)}
+
+    _run_cell("05_evaluation.ipynb", "JUDGE =", namespace, JUDGE="ragas")
+
+    assert namespace["cfg"]["evaluation"] == {**defaults["evaluation"], "judge": "ragas"}

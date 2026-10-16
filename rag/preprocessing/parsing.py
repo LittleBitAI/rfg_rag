@@ -17,6 +17,8 @@ from collections import Counter
 from itertools import groupby
 from pathlib import Path
 
+from rag.preprocessing.ocr_selection import SelectionParser
+
 import hanja
 import numpy as np
 import pandas as pd
@@ -367,10 +369,17 @@ def _ocr_hwp_images(text: str, image_dir: str, image_parser, max_repeat: int) ->
     def sub(m: re.Match) -> str:
         name = (m.group(1) or "").strip()
         path = os.path.join(image_dir, name)
-        if counts[name] >= max_repeat or not os.path.isfile(path):
+        if isinstance(image_parser, SelectionParser):
+            image_parser.set_location(format="hwp", image_name=name, marker_start=m.start(), repeated_occurrences=counts[name])
+            if not os.path.isfile(path):
+                image_parser.record_error("Extracted HWP image file missing")
+                return ""
+        if (counts[name] >= max_repeat and not isinstance(image_parser, SelectionParser)) or not os.path.isfile(path):
             return ""
         if name not in done:
             done[name] = _ocr_image_file(path, image_parser)
+        elif isinstance(image_parser, SelectionParser):
+            image_parser.record_repeated_image(name)
         if not done[name]:
             return ""
         captions.append(done[name])
@@ -518,13 +527,29 @@ def _ocr_image_file(path: str, image_parser) -> str:
     from PIL import Image
 
     if path.lower().endswith((".wmf", ".emf")):
+        if isinstance(image_parser, SelectionParser):
+            image_parser.record_error("Unsupported vector image encoding")
         return ""
     try:
         with Image.open(path) as img:
             rgb = img.convert("RGB")
     except OSError:
+        if isinstance(image_parser, SelectionParser):
+            image_parser.record_error("HWP image decode failed")
         return ""
     return image_parser._analyze_image(rgb)
+
+
+def _image_selection_location(parser, page, image_index, xref):
+    if isinstance(parser, SelectionParser):
+        parser.set_location(format="pdf", page=page.number + 1, image_index=image_index,
+                            xref=xref, bbox_points=[])
+        parser.location["bbox_points"] = [list(rect) for rect in page.get_image_rects(xref)]
+
+
+def _image_selection_error(parser, reason):
+    if isinstance(parser, SelectionParser):
+        parser.record_error(reason)
 
 
 def _patch_pymupdf_image_extraction():
@@ -541,13 +566,15 @@ def _patch_pymupdf_image_extraction():
         import pymupdf
 
         images = []
-        for img in page.get_images():
+        for image_index, img in enumerate(page.get_images()):
             try:
+                _image_selection_location(self.images_parser, page, image_index, img[0])
                 pix = pymupdf.Pixmap(doc, img[0])
                 if pix.n - pix.alpha >= 4:  # CMYK → RGB
                     pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
                 arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, -1)
             except Exception:  # noqa: BLE001  손상·특수 인코딩 이미지는 건너뜀
+                _image_selection_error(self.images_parser, "PDF image location/decode failed")
                 continue
             buf = io.BytesIO()
             np.save(buf, arr)
@@ -591,8 +618,10 @@ def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, cach
     ocr=False 면 그림을 API 로 보내지 않는다. True 면 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다.
     문서 하나를 끝낼 때마다 cache_dir 에 저장하므로, 중간에 끊겨도 다시 실행하면 끝낸 문서는 건너뛰고(OCR 비용도 다시 들지 않음)
     이어서 한다. 오류가 난 문서는 저장하지 않아 다음 실행에서 다시 시도한다."""
-    callback = UsageCallback("ocr", ocr_cfg["usd_per_1m_tokens"]) if ocr else None
+    callback = UsageCallback("ocr", ocr_cfg["usd_per_1m_tokens"], ocr_cfg["reasoning_effort"]) if ocr else None
     image_parser = _ocr_parser(ocr_cfg, callback) if ocr else None
+    if image_parser is not None and pcfg.get("craft", {}).get("enabled", False):
+        image_parser = SelectionParser(image_parser, pcfg["craft"])
     docs = []
     for i, path in enumerate(files, 1):
         if callback is not None:
@@ -609,6 +638,8 @@ def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, cach
 
 
 def _parse_file(path: str, pcfg: dict, image_parser) -> dict:
+    if isinstance(image_parser, SelectionParser):
+        image_parser.set_source(path)
     ext = os.path.splitext(path)[1].lower()
     parse = _parse_pdf if ext == ".pdf" else _parse_hwp
     records, cover = parse(path, pcfg, image_parser)

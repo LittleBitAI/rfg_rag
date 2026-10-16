@@ -3,7 +3,7 @@
 #  노트북 사이에 주고받는 파일은 모두 artifacts/ 아래에 저장됩니다.
 # ============================================================
 paths:
-  org_csv: data/data_list.csv   # 담당자가 제공한 파일명 · 발주기관 목록 (필수, 열: 파일명 · 발주기관)
+  org_csv: data/Golden_Dev396_v12_Team_Package/data/data_list.csv   # 파일명 · 발주기관 목록 (필수, 열: 파일명 · 발주기관) — 증강 Golden dev 396 패키지의 원본 CSV
   input: data/rfp.zip           # ZIP 파일 또는 폴더 (PDF / HWP / HWPX)
 
 # ── ① 전처리 (01_preprocessing) ──
@@ -14,6 +14,12 @@ parsing:
   join_min_line_len: 20         # PDF 줄바꿈으로 끊긴 문장 잇기 — 이보다 짧은 줄(제목 등)은 잇지 않음
   hanja_mode: append            # none | append(必(필)) | replace(필)
   max_repeat_image_pages: 3     # (OCR) 이 횟수 이상 반복 등장하는 그림 = 로고/장식 → OCR 하지 않음
+
+  craft:
+    enabled: false             # 기존 Vision 경로 유지; 켜면 후보만 Vision으로 전달
+    model_dir: models/easyocr   # 로컬 craft_mlt_25k.pth; 다운로드 금지
+    cache_dir: artifacts/ocr_detector
+    review_queue: artifacts/ocr_review.jsonl
 
 ocr:
   model: gpt-5-mini
@@ -42,6 +48,13 @@ retrieval:
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
 
+rerank:                         # 로컬 크로스 인코더로 후보 순서를 다시 매김 (GPU, API 비용 없음)
+  enabled: true                 # false 면 하이브리드 점수 순서 그대로
+  model: dragonkue/bge-reranker-v2-m3-ko   # bge-reranker-v2-m3 를 한국어로 추가 학습 (약 0.6B, 처음 실행 때 약 2.3GB 다운로드)
+  top_n: 30                     # 하이브리드 상위 후보 중 다시 매길 개수
+  batch_size: 16
+  max_length: 1024              # 질문 + 청크 토큰 상한 (넘는 부분은 잘라서 점수 매김)
+
 rewrite:
   model: gpt-5-mini
   max_tokens: 2048              # 질문 재작성의 출력·추론 토큰 한도
@@ -50,17 +63,10 @@ rewrite:
 
 # ── ③ 검증 (03_validation) ──
 validation:
-  golden_sets: [eval/golden_set.jsonl, eval/eval_questions.yaml]   # 직접 만든 질문·정답·핵심 사실
-  qa_per_doc: 15                # 문서당 QA 를 만들 청크 수 (gpt 호출 수 = 문서 수 × 이 값)
-  qa_min_chunk_chars: 250       # 이보다 짧은 청크로는 QA 를 만들지 않음
-  qa_workers: 4                 # 동시에 보내는 QA 생성 요청 수
-  qa_max_tokens: 3000
-  qa_reasoning_effort: low
-  min_keywords: 2               # 근거 청크에 실제로 있는 근거 키워드가 이 개수 미만인 QA 는 제외
-  max_keywords: 8               # QA 당 근거 키워드 최대 개수
-  split_ratio: [0.7, 0.15, 0.15]  # train / valid / test — 평가에는 test 만 사용
-  seed: 42
-  max_qa: 30                    # 평가 데이터셋에 넣는 test QA 최대 개수
+  # 증강 Golden dev 396 · v12 공유 평가 패키지(ZIP 을 data/ 에 그대로 풂). 문항 · 정답 · 핵심 사실을 바꾸지 않고 그대로 쓴다
+  package: data/Golden_Dev396_v12_Team_Package
+  # 평가셋 = 패키지 396문항 + 기존 골든 88문항(gold_dev 55 · gold_needle 33 — 두 문서 비교 7문항 포함). 모두 파일 그대로
+  golden_sets: [data/Golden_Dev396_v12_Team_Package/data/golden_dev.jsonl, eval/gold_dev.jsonl, eval/gold_needle.jsonl]
 
 # ── ④ 생성 (04_generation) ──
 llm:
@@ -71,7 +77,8 @@ llm:
 
 # ── ⑤ 평가 (05_evaluation) ──
 evaluation:
-  judge_model: gpt-5-mini       # RAGAS 심판 LLM
-  judge_reasoning_effort: low
+  judge: local                  # local = 로컬 KURE · 리랭커로 채점 (API 0원) | ragas = RAGAS + gpt 심판 (유료)
+  judge_model: gpt-6-luna       # RAGAS 심판 LLM (judge: ragas 일 때만)
+  judge_reasoning_effort: none
   judge_max_tokens: 4096
-  judge_usd_per_1m_tokens: [0.25, 0.025, 2.00]
+  judge_usd_per_1m_tokens: [0.10, 0.01, 0.50]   # gpt-6-luna 단가 — judge_model 을 바꾸면 이 단가도 그 모델 것으로

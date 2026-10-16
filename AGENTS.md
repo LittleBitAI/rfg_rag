@@ -73,7 +73,7 @@ Each has exactly one owner.
 | 3 | Validation | Building and checking the evaluation dataset | Evaluation dataset |
 | 4 | Generation | Answering questions from retrieved chunks | Answers |
 | 5 | Evaluation | Four evaluations of one answers file: Retrieval, Generation, Grounding, End-to-End | Four score tables and CSV files |
-| 6 | Frontend | `frontend/`: the question screen and its launchers; wraps `answer_question` and holds no RAG logic | Answers on screen |
+| 6 | Frontend | `frontend/`: the question screen and the OCR image labelling screen (`frontend/ocr_select/`), with their launchers; wraps `answer_question` and reuses preprocessing functions, holds no RAG logic | Answers on screen, OCR image labels in `artifacts/ocr_labels/` |
 
 | # | Notebook | Modules |
 |---|---|---|
@@ -105,10 +105,14 @@ so a bad answer can be traced to where it went wrong.
 
 | Evaluation | Judges | Metrics | CSV |
 |---|---|---|---|
-| Retrieval | Did search bring back what the answer needs | RAGAS context_precision, context_recall; key facts in retrieved chunks | `artifacts/retrieval.csv` |
-| Generation | Does the answer address the question and hold the key facts | RAGAS answer_relevancy; key facts in the answer | `artifacts/generation.csv` |
-| Grounding | Does the answer stay within the retrieved chunks | RAGAS faithfulness | `artifacts/grounding.csv` |
-| End-to-End | Is the final answer right, and what did it cost | RAGAS factual_correctness; latency, tokens, estimated cost | `artifacts/end_to_end.csv` |
+| Retrieval | Did search bring back what the answer needs | context_precision, context_recall; key facts in retrieved chunks | `artifacts/retrieval.csv` |
+| Generation | Does the answer address the question and hold the key facts | answer_relevancy; key facts in the answer | `artifacts/generation.csv` |
+| Grounding | Does the answer stay within the retrieved chunks | faithfulness | `artifacts/grounding.csv` |
+| End-to-End | Is the final answer right, and what did it cost | factual_correctness; latency, tokens, estimated cost | `artifacts/end_to_end.csv` |
+
+`evaluation.judge` picks who scores the judged metrics (context_precision, context_recall, answer_relevancy, faithfulness, factual_correctness).
+`local`, the default, computes them with the local KURE-v1 embedder and the local reranker and calls no API.
+`ragas` uses RAGAS with a paid OpenAI judge. The two give the same column names on different scales; never compare scores across them.
 
 | Who | Reads results in |
 |---|---|

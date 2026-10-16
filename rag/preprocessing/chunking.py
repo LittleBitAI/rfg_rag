@@ -165,7 +165,8 @@ def chunk_documents(docs: list[dict], ccfg: dict, cache_dir: Path) -> list[dict]
 
 
 def load_v11_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
-    """v11의 저장된 청크·요소·레코드를 02 검색이 읽는 문서·청크 형식으로 옮긴다."""
+    """v11의 저장된 청크·요소·레코드를 02 검색이 읽는 문서·청크 형식으로 옮긴다.
+    요구사항 소속 정보(requirement_key · requirement_ids)도 옮겨 02 검색이 나뉜 요구사항 청크를 함께 찾게 한다."""
     package_dir = Path(package_dir)
     elements = {e["element_id"]: e for e in read_jsonl(package_dir / "final_elements.jsonl")}
     records_by_doc = {}
@@ -185,13 +186,26 @@ def load_v11_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
         linked = [elements[span["element_id"]]["location"] for span in chunk["spans"]]
         doc = docs_by_id[linked[0]["supplier_metadata"]["doc_id"]]
         pages = {element["page"] for element in linked}
+        requirement_ids = [rid for location in linked for rid in location["supplier_metadata"].get("requirement_ids", [])]
         chunks.append({"chunk_id": chunk["chunk_id"], "doc_id": doc["doc_id"],
                        "source": doc["source"], "title": doc["title"],
                        "page": next(iter(pages)) if len(pages) == 1 else None,
                        "kind": "text" if chunk["chunk_type"] == "prose" else chunk["chunk_type"],
                        "section": " > ".join(chunk["section_path"]),
-                       "text": chunk["payload"], "body": chunk["body"]})
+                       "text": chunk["payload"], "body": chunk["body"],
+                       # 요구사항 소속: 청크가 속한 요구사항(ID 와 상세 내용이 다른 청크여도 같은 값)과 요소들이 속한 요구사항 ID
+                       "requirement_key": chunk.get("requirement_key"),
+                       "requirement_ids": list(dict.fromkeys(requirement_ids))})
     return docs, chunks
+
+
+def load_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
+    """전처리 패키지 → (문서, 청크). 이미 02 검색이 읽는 형식인 패키지(chunks.jsonl · docs.jsonl —
+    증강 Golden dev 396 패키지의 corpus/)는 그대로 읽고, v11 · v12 전처리 패키지(final_chunks.jsonl …)는 옮긴다"""
+    package_dir = Path(package_dir)
+    if (package_dir / "chunks.jsonl").exists():
+        return read_jsonl(package_dir / "docs.jsonl"), read_jsonl(package_dir / "chunks.jsonl")
+    return load_v11_package(package_dir)
 
 
 def save_chunks(docs: list[dict], chunks: list[dict], out_dir: Path):
@@ -202,7 +216,7 @@ def save_chunks(docs: list[dict], chunks: list[dict], out_dir: Path):
 
 def chunk_summary(chunks: list[dict]) -> pd.DataFrame:
     """청크 품질 지표: 종류별 개수 · 길이 · 문장 중간 절단 비율 · 섹션 부착률"""
-    body = [c for c in chunks if c["kind"] == "text"]
+    body = [c for c in chunks if c["kind"] in ("text", "prose")]  # prose = 패키지의 본문 청크
     cut = sum(1 for c in body if not re.search(r"(?:[.?!:;)\]」』%]|[다요음함임됨])\s*$", c["body"]))
     lens = [len(c["body"]) for c in chunks]
     return pd.DataFrame([{"청크 수": len(chunks), **Counter(c["kind"] for c in chunks),

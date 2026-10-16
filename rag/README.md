@@ -41,8 +41,11 @@ CSV 기관명은 담당자가 확인한 목록이라 자동 추출용 일반명 
 CSV가 정식 명칭(`한국국제협력단`, `수산업협동조합중앙회`)이어도 질문에는 흔한 이름이 나오므로, `발주기관_사업명` 파일명의 앞부분(`KOICA 전자조달` → `KOICA`, `수협중앙회`)도 같은 문서의 기관명으로 씁니다.
 검색은 요구사항 코드 일치 청크를 먼저 담고, 같은 문서에서 숫자 · 부정어까지 같은 거의 같은 본문만 제외하며 (`2초/5초`, `포함한다/포함하지 않는다` 는 둘 다 남김),
 `retrieval.token_budget`(기본 2500)으로 본문 토큰 합을 제한합니다. 첫 청크는 예산을 넘어도 유지합니다.
+토큰 예산으로 자르기 전에 하이브리드 상위 30개 후보(`rerank.top_n`)를 로컬 리랭커가 다시 정렬합니다.
+리랭커(`rerank.model`, 기본 `dragonkue/bge-reranker-v2-m3-ko`)는 질문과 청크를 함께 읽는 크로스 인코더로, 임베딩처럼 GPU에서 돌아 API 비용이 없습니다.
+요구사항 코드 일치 청크는 리랭커를 켜도 맨 앞에 둡니다. 02 설정 셀의 `RERANK = False`로 끄면 하이브리드 점수 순서 그대로 담습니다.
 노트북은 VS Code · PyCharm · Jupyter 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.
-처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)을 내려받습니다.
+처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)과 리랭커 모델(약 2.3GB)을 내려받습니다.
 
 ### 중간에 끊겼을 때 — 이어서 실행
 오래 걸리는 두 단계는 중간 결과를 저장하므로, 끊긴 셀부터 다시 실행하면 끝낸 부분은 건너뜁니다.
@@ -168,7 +171,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 | 노트북 | 설정 셀에서 조절하는 값 |
 |---|---|
 | 01 전처리 | `OCR`, `OCR_MODEL`, `OCR_REASONING_EFFORT`, `OCR_MAX_TOKENS`, `OCR_PRICES`, `CHUNK_SIZE` |
-| 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `REWRITE_PRICES`, `DENSE_WEIGHT` (BM25는 `1 - DENSE_WEIGHT`) |
+| 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `REWRITE_PRICES`, `DENSE_WEIGHT` (BM25는 `1 - DENSE_WEIGHT`), `RERANK` (로컬 리랭커 사용) |
 | 04 생성 | `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_TOKENS`, `LLM_PRICES` |
 | 05 평가 | `JUDGE_MODEL`, `JUDGE_REASONING_EFFORT`, `JUDGE_MAX_TOKENS`, `JUDGE_PRICES` |
 

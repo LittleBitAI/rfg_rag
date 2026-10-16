@@ -17,8 +17,14 @@ REWRITE_PROMPT = (
 )
 
 
-def rewrite_question(question: str, rewrite_cfg: dict) -> dict:
-    """검색용 질문·모델·토큰·지연 시간을 반환한다. 출력이 비면 원본 질문으로 검색한다."""
+def rewrite_question(question: str, rewrite_cfg: dict, history: list[dict] | None = None) -> dict:
+    """검색용 질문·모델·토큰·지연 시간을 반환한다. 출력이 비면 원본 질문으로 검색한다.
+    최근 10개 대화를 함께 보내 '그 사업' 같은 지시어를 앞서 나온 사업명으로 풀게 한다."""
+    messages = [{"role": "system", "content": REWRITE_PROMPT}]
+    for turn in (history or [])[-10:]:
+        messages.append({"role": "user", "content": turn["question"]})
+        messages.append({"role": "assistant", "content": turn["answer"]})
+    messages.append({"role": "user", "content": question})
     prices = rewrite_cfg["usd_per_1m_tokens"]
     t0 = time.perf_counter()
     with openai.OpenAI(max_retries=3) as client:
@@ -26,7 +32,8 @@ def rewrite_question(question: str, rewrite_cfg: dict) -> dict:
             name="rewrite-question", model=rewrite_cfg["model"],
             max_completion_tokens=int(rewrite_cfg["max_tokens"]),
             reasoning_effort=rewrite_cfg["reasoning_effort"],
-            messages=[{"role": "system", "content": REWRITE_PROMPT}, {"role": "user", "content": question}])
-    usage = record_usage("rewrite", resp.model, resp.usage.model_dump(), prices, subject=question)
+            messages=messages)
+    usage = record_usage("rewrite", resp.model, resp.usage.model_dump(), prices, rewrite_cfg["reasoning_effort"],
+                         subject=question)
     return {"question": (resp.choices[0].message.content or "").strip() or question, **usage,
             "latency_s": round(time.perf_counter() - t0, 2)}
