@@ -20,7 +20,7 @@ class Embedder(Embeddings):
     벡터는 정규화하므로 FAISS 내적 = 코사인 유사도."""
 
     def __init__(self, ecfg: dict):
-        self.model = ecfg["model"]  # RAGAS 가 사용량 기록에 모델 이름(문자열)을 쓴다
+        self.model = ecfg["model"]
         self.batch_size = int(ecfg["batch_size"])
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self._st = SentenceTransformer(self.model, device=device)
