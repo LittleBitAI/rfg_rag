@@ -197,52 +197,60 @@ def _table(rows: list[dict], scores: list[dict], path: Path) -> pd.DataFrame:
     return table
 
 
-# 05 의 네 평가가 답변 파일 한 행에서 읽는 필드
-ANSWER_FIELDS = ("id", "question", "reference", "key_facts", "answerable", "answer", "contexts", "trace_id", "latency_s",
-                 "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "cost_usd", "rewrite",
-                 "ranked_candidates", "context_chunk_ids", "retrieval_settings", "evidence", "primary_topic")
-ANSWER_RECORD_FIELDS = {
-    "rewrite": ("question", "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "cost_usd"),
-    "retrieval_settings": ("dense_weight", "candidate_k", "token_budget", "chunk_file", "k_values", "stored_rewrites_reused"),
-}
-ANSWER_LIST_RECORD_FIELDS = {
-    "ranked_candidates": ("chunk_id", "doc_id", "fused_rank", "dense_score", "dense_rank", "bm25_score", "bm25_rank",
-                          "exact_code_match"),
-    "evidence": ("doc_id", "chunk_id"),
+# JSON으로 저장된 04 출력 중 05가 소비하는 필드만 검사한다. 생산자의 추가 메타데이터는 보존한다.
+_NUMERIC_TYPES = (int, float)
+_NULLABLE_TEXT = (str, type(None))
+_USAGE_FIELDS = {"input_tokens": int, "output_tokens": int, "cached_input_tokens": int,
+                 "reasoning_tokens": int, "cost_usd": _NUMERIC_TYPES}
+ANSWER_FIELDS = {
+    "id": str, "question": str, "reference": str, "key_facts": [str], "answerable": bool,
+    "answer": str, "contexts": [str], "trace_id": _NULLABLE_TEXT, "latency_s": _NUMERIC_TYPES,
+    **_USAGE_FIELDS, "primary_topic": _NULLABLE_TEXT, "context_chunk_ids": [str],
+    "rewrite": {"question": str, **_USAGE_FIELDS},
+    "retrieval_settings": {"dense_weight": _NUMERIC_TYPES, "candidate_k": int, "token_budget": int,
+                           "chunk_file": str, "k_values": [int], "stored_rewrites_reused": bool},
+    "ranked_candidates": [{"chunk_id": str, "doc_id": str, "fused_rank": int,
+                           "dense_score": (*_NUMERIC_TYPES, type(None)), "dense_rank": (int, type(None)),
+                           "bm25_score": (*_NUMERIC_TYPES, type(None)), "bm25_rank": (int, type(None)),
+                           "exact_code_match": bool}],
+    "evidence": [{"doc_id": _NULLABLE_TEXT, "chunk_id": _NULLABLE_TEXT}],
 }
 
 
-def _missing_record_fields(record, fields: tuple, prefix: str) -> list[str]:
+def _invalid_record_fields(record, fields: dict, prefix: str) -> list[str]:
     if not isinstance(record, dict):
         return [prefix]
-    return [f"{prefix}.{field}" for field in fields if field not in record]
+    invalid = []
+    for field, expected in fields.items():
+        path = f"{prefix}.{field}"
+        invalid.extend([path] if field not in record else _invalid_field_value(record[field], expected, path))
+    return invalid
 
 
-def _missing_answer_fields(row: dict, prefix: str) -> list[str]:
-    if not isinstance(row, dict):
+def _invalid_list_items(value, expected: list, prefix: str) -> list[str]:
+    if not isinstance(value, list):
         return [prefix]
-    missing = _missing_record_fields(row, ANSWER_FIELDS, prefix)
-    for field, fields in ANSWER_RECORD_FIELDS.items():
-        if field in row:
-            missing.extend(_missing_record_fields(row[field], fields, f"{prefix}.{field}"))
-    for field, fields in ANSWER_LIST_RECORD_FIELDS.items():
-        if field not in row:
-            continue
-        records = row[field]
-        if not isinstance(records, list):
-            missing.append(f"{prefix}.{field}")
-            continue
-        for i, record in enumerate(records):
-            missing.extend(_missing_record_fields(record, fields, f"{prefix}.{field}[{i}]"))
-    return missing
+    return [field for i, item in enumerate(value) for field in _invalid_field_value(item, expected[0], f"{prefix}[{i}]")]
+
+
+def _invalid_field_value(value, expected, prefix: str) -> list[str]:
+    if isinstance(expected, dict):
+        return _invalid_record_fields(value, expected, prefix)
+    if isinstance(expected, list):
+        return _invalid_list_items(value, expected, prefix)
+    types = expected if isinstance(expected, tuple) else (expected,)
+    # bool은 int의 하위 클래스지만 토큰·비용·순위의 숫자로 허용하지 않는다.
+    if type(value) not in types:
+        return [prefix]
+    return [prefix] if type(value) is float and not math.isfinite(value) else []
 
 
 def _read_answers(answers_path: Path) -> list[dict]:
-    """답변 파일을 읽고, 평가가 읽을 필드가 빠진 행이 있으면 RAGAS 호출(유료) 전에 멈춘다"""
+    """모든 행의 필수 값·자료형을 검사한 뒤 반환한다. 잘못된 값은 유료 호출 전에 멈춘다."""
     answers = read_jsonl(answers_path)
-    missing = [field for i, row in enumerate(answers, 1) for field in _missing_answer_fields(row, f"row[{i}]")]
-    if missing:
-        raise ValueError(f"{answers_path} 에 {missing} 필드가 없거나 형식이 잘못되었습니다. "
+    invalid = [field for i, row in enumerate(answers, 1) for field in _invalid_record_fields(row, ANSWER_FIELDS, f"row[{i}]")]
+    if invalid:
+        raise ValueError(f"{answers_path} 에 {invalid} 필드가 없거나 형식이 잘못되었습니다. "
                          "03 → 02 설정 셀 → 04 를 다시 실행해 답변 파일을 만드세요")
     return answers
 

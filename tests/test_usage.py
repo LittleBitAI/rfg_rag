@@ -309,22 +309,6 @@ def test_incomplete_answers_stop_before_ragas_is_paid(monkeypatch, tmp_path, nam
     assert not (tmp_path / "rerun.jsonl").exists()
 
 
-@pytest.mark.parametrize("name", ["grounding", "end_to_end"])
-@pytest.mark.parametrize("field,value", [
-    ("rewrite", None), ("retrieval_settings", None), ("ranked_candidates", None), ("evidence", None),
-    ("ranked_candidates", [None]), ("evidence", [None]),
-])
-def test_malformed_nested_records_stop_before_ragas_is_paid(monkeypatch, tmp_path, name, field, value):
-    calculate = MagicMock()
-    monkeypatch.setattr(evaluation, "_ragas", calculate)
-    answers = tmp_path / "answers.jsonl"
-    write_jsonl([{**_answer_row(), field: value}], answers)
-
-    with pytest.raises(ValueError, match=field + r".*03 → 02 설정 셀 → 04"):
-        getattr(evaluation, f"evaluate_{name}")(answers, {})
-    calculate.assert_not_called()
-
-
 def test_correct_refusal_keeps_answer_string_match_and_excludes_retrieval(tmp_path):
     answers = tmp_path / "answers.jsonl"
     refusal = {**_answer_row(), "id": "q2", "answerable": False, "key_facts": ["확인할 수 없"],

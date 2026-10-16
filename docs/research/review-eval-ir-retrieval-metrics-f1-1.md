@@ -182,8 +182,8 @@ Use offline tests only. First reproduce the current failure using the existing _
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+오프라인 관측 — 교정 전에는 정상 첫 행과 `rewrite.cost_usd=null`인 둘째 행을 `_read_answers`가 모두 받아들였고, 모의 `_ragas`와 `_send_scores`가 각각 1회 호출된 뒤 비용 합산에서 `TypeError`가 발생했습니다. 교정 후 `tests/test_answer_records.py::test_invalid_saved_values_stop_all_consumers_before_side_effects`는 네 평가와 검색 재실행 모두에서 `row[2].rewrite.cost_usd`를 명시한 `ValueError`, 심판·점수 게시·검색 호출 0회, 결과 파일 없음과 함께 자료형 오류를 거부합니다. `tests/test_answer_records.py::test_valid_saved_values_preserve_nullability_metadata_and_end_to_end_cost`는 0인 정수·실수 비용, 허용된 null, 빈 목록, 추가 생산자 메타데이터와 기존 열·합계 비용 `0.000101`을 보존했습니다. 기본 표본과 검색 재실행의 실제 생산자 출력도 각각 30행씩 그대로 읽었습니다. 보고된 rewrite 비용 외의 적용 지점은 최상위 16개, rewrite의 나머지 5개, 검색 설정 6개, 후보 8개, 근거 2개로 총 37개 필드 계약입니다. `tests/test_usage.py`의 누락 키 회귀는 유지하고 기존 컨테이너 오류 검사는 더 강한 전체 파일·전체 소비자 검사로 접었습니다. 대상 테스트 461개와 전체 `.venv\Scripts\python -m pytest -q tests`의 `1053 passed, 12 warnings in 107.43s`를 확인했고 `ruff check .`와 debt 검사도 통과했습니다. 이 결과와 교정은 이 페이지를 함께 담는 커밋 `evaluation: enforce saved answer value types`에 기록합니다. 이는 초안의 실험 기록이며 검증된 공용 규칙으로 승격하지 않습니다.
 
 ## Unresolved limits
 
-This is a draft based on source inspection and web documentation, not an executed reproduction. The exact round chronology and commit associations come from the supplied review reports; repository inspection corroborates the PR base/current validation difference but did not independently retrieve historical commit snapshots. Proposed value rules must preserve the producers' actual representations, especially nullable fields. The research establishes an input-validation failure path, not evidence of actual charges or a guarantee against unrelated configuration, judge-output, network, tracing, or filesystem failures.
+이 문서는 초안입니다. Result의 실험은 이 브랜치에서 수행한 오프라인 관측이며 실제 과금이나 배포 동작을 관측한 것이 아닙니다. 정확한 라운드 이력은 제공된 리뷰 보고서에 근거하며 과거 모든 커밋을 독립적으로 재검증하지 않았습니다. 허용된 null과 현재 생산자 표현은 표본·회귀 테스트에서 보존되었지만, 이 결과가 설정·심판 출력·네트워크·추적·파일 시스템의 별개 실패까지 방지한다는 뜻은 아닙니다.
