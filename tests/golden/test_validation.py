@@ -593,28 +593,36 @@ ROWS = [
 ]
 
 
+# 근거 어댑터는 논리 표에 이어진 원본 그리드 셀에 그 표의 element_id 를 준다 (evidence.grid_units).
+LINKED = [{**unit, "element_id": "e-t"} if unit["unit_id"].startswith("grid:") else unit for unit in TABLES]
+
+
 def read_together(batches, texts):
     return any(all(text in "\n".join(unit["text"] for unit in batch) for text in texts) for batch in batches)
 
 
+@pytest.mark.parametrize("document", [TABLES, LINKED], ids=["grid", "linked-grid"])
 @pytest.mark.parametrize("overlap", [0, 20])
 @pytest.mark.parametrize("limit", [40, 70, 1])
-def test_every_table_row_is_read_in_one_batch_with_the_rest_of_its_row_and_its_header(monkeypatch, limit, overlap):
+def test_every_table_row_is_read_in_one_batch_with_the_rest_of_its_row_and_its_header(
+        monkeypatch, limit, overlap, document):
     # 글자 수로만 자르면 머리글이 앞 묶음에, 행이 뒤 묶음에 가서 어느 묶음으로도 '하자담보책임기간 12개월' 을 읽을 수 없었다.
     # 원본 그리드는 셀이 단위라, 행 이름 칸 'C시스템' 과 그 아래 행의 값 칸 '유지보수 1년' 사이에도 경계가 떨어졌다.
+    # 논리 표에 이어진 그리드(linked-grid)는 논리 표와 같은 element_id 라 한 표로 묶여 행 띠를 건너뛰었다.
     # 40 은 표가 다음 묶음에 통째로 들어가고, 70 은 맨 자르기가 표 안에 떨어지며, 1 은 표가 어느 묶음보다 크다.
     monkeypatch.setattr(validation, "DOCUMENT_BATCH_CHARS", limit)
     monkeypatch.setattr(validation, "DOCUMENT_OVERLAP_CHARS", overlap)
 
-    batches = validation.document_batches(TABLES)
+    batches = validation.document_batches(document)
 
-    assert all(read_together(batches, {unit["text"]}) for unit in TABLES)
+    assert all(read_together(batches, {unit["text"]}) for unit in document)
     assert [texts for texts in ROWS if not read_together(batches, texts)] == []
 
 
 @pytest.mark.parametrize("limit, overlap, document, needed, question", [
     (70, 20, TABLES, {"하자담보책임기간", "A시스템 | 12개월"}, "A시스템의 하자보수 기간은?"),
     (1, 0, TABLES, {"C시스템", "유지보수 1년"}, "C시스템의 유지보수 기간은?"),
+    (1, 0, LINKED, {"C시스템", "유지보수 1년"}, "C시스템의 유지보수 기간은?"),
     # 표 밖의 소제목과 그 아래 글도 경계로 갈리면 따로는 답이 나오지 않는다. 새 묶음은 앞 묶음 끝을 다시 받는다.
     (70, 20, [doc_unit("p1", "사업 개요 " * 9), doc_unit("h", "A시스템 하자담보책임"), doc_unit("v", "기간: 준공 후 12개월")],
      {"A시스템 하자담보책임", "기간: 준공 후 12개월"}, "A시스템의 하자보수 기간은?"),

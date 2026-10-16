@@ -720,13 +720,18 @@ def document_batches(document):
 
 
 def _table_groups(units):
-    """단위를 문서 차례대로 두되, 한 표의 행은 처음 나온 자리에 모은다. 논리 표는 요소, 원본 그리드는 stream · control 이 한 표다."""
+    """단위를 문서 차례대로 두되, 한 표의 행은 처음 나온 자리에 모은다. 논리 표는 요소, 원본 그리드는 stream · control 이 한 표다.
+
+    논리 표에 이어진 원본 그리드 셀은 그 표의 element_id 를 갖지만 (evidence.grid_units), 행 번호가 다른 따로의 표다.
+    """
     groups = {}
     for unit in units:
-        if unit["location"]["kind"] != "table":
-            key = unit["unit_id"]
+        if unit["unit_id"].startswith("grid:"):
+            key = unit["unit_id"].rsplit(":", 2)[0]
+        elif unit["location"]["kind"] == "table":
+            key = unit["element_id"]
         else:
-            key = unit["element_id"] or unit["unit_id"].rsplit(":", 2)[0]
+            key = unit["unit_id"]
         groups.setdefault(key, []).append(unit)
     return list(groups.values())
 
