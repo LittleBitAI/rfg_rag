@@ -149,7 +149,13 @@ Once more the fix enforced a weaker property than the invariant. This time it is
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Draft, not verified beyond what is listed here. Observed in commit 8723a5e (validation-7):
+
+- Reproduced before the fix: with the old `document_batches`, limit 1 and overlap 0, the cells `:7:1:0` and `:7:1:1` of the `TABLES` grid were sent in separate batches.
+- Fix: `_grid_bands` replaces each original-grid group with one unit per rowspan band before labelling. Cells in a row are joined with ' | ' and rows with newlines, and the band keeps its first cell's `unit_id` and `location`, so the row-0 band is the header. `plan.document_units` now passes `rowspan` for grid cells.
+- Experiment 1: `tests/golden/test_validation.py::test_every_table_row_is_read_in_one_batch_with_the_rest_of_its_row_and_its_header`, limits 1, 40 and 70 × overlap 0 and 20. The fixture has a rowspan-2 label `C시스템`, a long cell before the boundary, and a value-only row 2. It fails on the old code at limit 1 (both overlaps) and passes on the new code. Limits 40 and 70 also passed on the old code with this fixture.
+- Experiment 2: the `(1, 0, TABLES, {"C시스템", "유지보수 1년"}, …)` case of `test_absence_is_not_certified_when_the_answer_needs_units_on_both_sides_of_a_batch_boundary`. On the old code it returned `auto_validated`; on the new code it is `rejected` with `대상 문서에 있음: 검증기`. The existing tests pass: `.venv\Scripts\python -m pytest -q tests` → 569 passed.
+- Experiment 3 (offline, old code, final6's 16 released unanswerable items): 0 grid bands split across batches, 0 blank-led logical rows cut from the row above, 0 nested grids, and 0 items affected, across 245 rowspan bands seen. No released item was read with a split band, so eval/golden stays as is and no paid revalidation was run.
 
 ## Unresolved limits
 
