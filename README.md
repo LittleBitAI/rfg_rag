@@ -10,12 +10,15 @@ RFP 문서(PDF · HWP · HWPX)를 파싱해 청크로 나누고, BM25 + 임베�
 ## 설치 — Python 3.10 (Windows, NVIDIA GPU)
 PyTorch 를 **먼저** CUDA 빌드로 설치한 뒤 `requirements.txt` 를 설치합니다.
 RTX 50 계열(Blackwell sm_120)은 CUDA 12.8 이상 빌드가 필요합니다 (cu124 이하는 `no kernel image` 오류).
+torchvision 도 같이 설치합니다. `easyocr` 가 torchvision 을 요구해, 먼저 설치해 두지 않으면 pip 가 PyPI 의
+CPU 빌드 torchvision 을 받으면서 torch 도 CPU 빌드로 바꿉니다. 그러면 임베딩이 GPU 대신 CPU 로 돌아 몇 시간이 걸립니다.
 
 ```bash
 python3.10 -m venv .venv
 .venv\Scripts\activate                       # Linux/WSL: source .venv/bin/activate
-python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 python -m pip install -r requirements.txt
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   # 2.x.x+cu128 True
 ```
 
 저장소 최상위에 `.env` 를 만듭니다.
@@ -115,7 +118,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
    ```bash
    git clone https://github.com/LittleBitAI/rfg_rag ~/rfg_rag && cd ~/rfg_rag
    python3.10 -m venv .venv
-   .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+   .venv/bin/python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
    .venv/bin/python -m pip install -r requirements.txt
    .venv/bin/python -c "import torch; print(torch.cuda.is_available())"   # True
    ```

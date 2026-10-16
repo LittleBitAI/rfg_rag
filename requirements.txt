@@ -2,7 +2,8 @@
 # rag/ 와 노트북이 직접 import 하는 패키지 + torch · ruff · pytest · ipykernel 만 적습니다 (CLAUDE.md 2절).
 # ── PyTorch 는 먼저 CUDA 12.8+ 빌드로 설치하세요 (sentence-transformers 가 씀)
 #    RTX 50(5070 Ti, Blackwell sm_120) 은 cu128 이상 필수 — cu124 이하는 'no kernel image' 오류
-#    pip install torch --index-url https://download.pytorch.org/whl/cu128
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#    torchvision 도 함께: easyocr 가 요구해, 없으면 PyPI 의 CPU 빌드가 깔리며 torch 까지 CPU 빌드로 바뀝니다
 torch>=2.7
 
 # ── LangChain (Python 3.10+)
