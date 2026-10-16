@@ -94,9 +94,14 @@ kept apart from `rag/validation/validation.py` on purpose.
 It imports nothing from `rag/` and writes only under `golden_pipeline/outputs/`.
 Its tests live in `tests/golden/`, so the gate runs them.
 
-Images in documents become text only through the OpenAI API (LangChain's `LLMImageBlobParser`),
-and only when `OCR = True` in `01_preprocessing.ipynb`; it is `False` by default.
-Do not add a local OCR model or a local VLM such as Qwen2.5-VL; the team decided against running one.
+Choose the OCR engine separately for each image type using measured quality and measured
+cost per image on a reference set. Allowed engines are the OpenAI API, the Gemini API
+through its OpenAI-compatible endpoint, and PaddleOCR-VL-1.5 in its own environment
+on the team VM `codeit`. Log every paid OCR call and its cost through `rag/usage.py`;
+record seconds per image for PaddleOCR. Before the benchmark's first paid call and
+before the full run, show a per-model token-price estimate and wait for approval.
+01 reads saved captions without API calls. The existing `OCR = True` path still uses
+LangChain's `LLMImageBlobParser` and optional CRAFT selection; its default is `False`.
 
 ## 5. Evaluation results
 

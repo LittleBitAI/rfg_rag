@@ -43,7 +43,7 @@ def test_parse_documents_initializes_ocr_only_when_enabled(monkeypatch, ocr):
 
     docs = parsing.parse_documents(["test.pdf"], {}, ocr=ocr, ocr_cfg=cfg)
 
-    parse_file.assert_called_once_with("test.pdf", {}, parser if ocr else None)
+    parse_file.assert_called_once_with("test.pdf", {}, parser if ocr else None, None)
     assert docs == [parse_file.return_value]
     if ocr:
         assert make_parser.call_count == 1
@@ -119,7 +119,8 @@ def test_preprocessing_notebook_selects_input(tmp_path, package):
     if package is None:
         namespace["collect_inputs"].assert_called_once()
         namespace["parse_documents"].assert_called_once_with(
-            ["test.pdf"], defaults["parsing"], ocr=False, ocr_cfg=defaults["ocr"])
+            ["test.pdf"], defaults["parsing"], ocr=False, ocr_cfg=defaults["ocr"],
+            captions_path=tmp_path / defaults["paths"]["ocr_captions"])
         namespace["chunk_documents"].assert_called_once_with(docs, defaults["chunking"])
         namespace["load_v11_package"].assert_not_called()
     else:

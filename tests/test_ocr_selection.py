@@ -33,7 +33,8 @@ def test_off_preserves_original_parser_and_document(monkeypatch):
     delegate = object()
     expected = {'source': 'fixture', 'records': []}
     monkeypatch.setattr(parsing, '_ocr_parser', lambda cfg, callback: delegate)
-    def parse(path, settings, parser):
+    def parse(path, settings, parser, saved_rows):
+        assert saved_rows is None
         assert parser is delegate
         return expected
     monkeypatch.setattr(parsing, '_parse_file', parse)
@@ -103,7 +104,8 @@ def test_on_wraps_existing_vision_parser(monkeypatch, tmp_path):
     make_parser = Mock(return_value=delegate)
     monkeypatch.setattr(parsing, '_ocr_parser', make_parser)
     seen = []
-    def parse(path, settings, parser):
+    def parse(path, settings, parser, saved_rows):
+        assert saved_rows is None
         assert isinstance(parser, SelectionParser)
         assert parser.delegate is delegate
         seen.append(path)

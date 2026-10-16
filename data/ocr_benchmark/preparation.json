@@ -1,0 +1,56 @@
+{
+  "base_commit": "58b8b15",
+  "prepared_at": "2026-10-16T10:08:58.355456+00:00",
+  "label_sources_sha256": {
+    "data/ocr_labels/ocr_labels_batch1.jsonl": "068b6ffc342b031e3bad8db44461de4177079b5fb4f314a532dbe0a5a23bab29",
+    "data/ocr_labels/ocr_labels_batch2.jsonl": "4bee6d6a6dac9424ce260732c515cfe6bd67187dd80d4ba316796c93f7d988e3",
+    "data/ocr_labels/ocr_labels_batch3.jsonl": "b26856fa4df86430346071b6bbf34294ac4c31f1f5dd7e4f4b53ba3925620b65",
+    "data/ocr_labels/ocr_labels_batch4.jsonl": "70f1782dc4ee45f7ac0a777f1d8e9c0a427c3869acf7f80c87396f5d5342aa46",
+    "data/ocr_labels/ocr_labels_batch5.jsonl": "8e539abe4fb25f4d8946ca8775e5100c10a763559aca273aebf2aee34f0d6ff0"
+  },
+  "label_resolution": "frontend.ocr_select.merge.merge; latest labelled_at per occurrence",
+  "places": 391,
+  "distinct_images": 320,
+  "hwp_null_markers": 80,
+  "image_types": {
+    "table": 150,
+    "text": 20,
+    "diagram": 150
+  },
+  "visual_review": "All 320 images inspected in numbered contact sheets; each reference inspected individually at original resolution.",
+  "reference_selection": "Three examples per image_type x label, selected before candidate calls for differing structures. Small, purposive sample; no population confidence claim.",
+  "reference_numbers": [
+    1,
+    10,
+    14,
+    16,
+    25,
+    28,
+    36,
+    39,
+    58,
+    67,
+    135,
+    145,
+    152,
+    168,
+    183,
+    195,
+    203,
+    239
+  ],
+  "reference_groups": {
+    "table:1": 3,
+    "text:1": 3,
+    "diagram:2": 3,
+    "diagram:1": 3,
+    "table:2": 3,
+    "text:2": 3
+  },
+  "base_comparison": "98 documents, 17614 chunks; parsed/chunked on base and with saved captions absent; every row identical.",
+  "placement_check": "391 synthetic captions in 79 actual source documents, including all 80 null HWP markers; per-caption multiplicities match the selected places.",
+  "document_hash_check": "All 391 selected places match the current source document SHA-256.",
+  "api_access_check": "Both exact model IDs found via authenticated model-list requests; no OCR generation.",
+  "gate": "1062 passed, 12 warnings in 106.46s",
+  "benchmark_paid_calls": 0
+}

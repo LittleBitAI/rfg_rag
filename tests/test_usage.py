@@ -82,7 +82,8 @@ def test_ocr_invocation_records_every_image_with_source_without_langfuse(monkeyp
     def fake_generate(self, messages, **kwargs):
         return self._create_chat_result(_completion("예산 100만원"))
 
-    def parse_file(path, pcfg, parser):
+    def parse_file(path, pcfg, parser, saved_rows):
+        assert saved_rows is None
         if parser is not None:
             for _ in range(2):
                 assert parser._analyze_image(Image.new("RGB", (1, 1))) == "예산 100만원"

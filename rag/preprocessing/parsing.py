@@ -419,11 +419,17 @@ def _hwp_records(body: str, captions: list[str]) -> list[dict]:
     return records
 
 
-def _parse_hwp(path: str, pcfg: dict, image_parser) -> tuple[list[dict], str]:
+def _parse_hwp(path: str, pcfg: dict, image_parser, saved_rows=None) -> tuple[list[dict], str]:
     """HWP/HWPX → (레코드들, 표지 텍스트). 쪽 정보가 없어 '앞 N쪽' 대신 표지·목차를 자동 감지해 뺀다"""
-    text, captions = _hwp_text(path, pcfg, image_parser)
+    from .ocr_captions import front_captions, hwp_caption_text
+
+    text, captions = (_hwp_text(path, pcfg, image_parser) if saved_rows is None
+                      else hwp_caption_text(path, saved_rows))
     front, body = split_front_matter(text) if int(pcfg["skip_first_pages"]) > 0 else ("", text)
-    return _hwp_records(body, captions), normalize_text(re.sub(r"\[\[IMG:\d+\]\]", "", front))
+    records = _hwp_records(body, captions)
+    if saved_rows is not None:
+        records = front_captions(front, captions) + records
+    return records, normalize_text(re.sub(r"\[\[IMG:\d+\]\]", "", front))
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -590,9 +596,12 @@ def _patch_pymupdf_image_extraction():
 # ====================================================================================================
 # 문서 → 레코드
 # ====================================================================================================
-def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict) -> list[dict]:
+def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, captions_path=None) -> list[dict]:
     """문서마다 {doc_id, source, title, doc_type, cover_text, head_text, records}.
     ocr=False 면 그림을 API 로 보내지 않는다. True 면 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다."""
+    from .ocr_captions import load_captions
+
+    saved = load_captions(captions_path)
     callback = UsageCallback("ocr", ocr_cfg["usd_per_1m_tokens"]) if ocr else None
     image_parser = _ocr_parser(ocr_cfg, callback) if ocr else None
     if image_parser is not None and pcfg.get("craft", {}).get("enabled", False):
@@ -602,20 +611,31 @@ def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict) -> l
         if callback is not None:
             callback.subject = os.path.basename(path)
         try:
-            docs.append(_parse_file(path, pcfg, image_parser))
+            saved_rows = saved.get(make_doc_id(path))
+            docs.append(_parse_file(path, pcfg, image_parser, saved_rows))
         except Exception as e:  # noqa: BLE001  손상된 문서 하나 때문에 나머지 문서 파싱을 버리지 않는다
+            if saved_rows is not None:
+                raise
             print(f"({i}/{len(files)}) ❌ {os.path.basename(path)}: {type(e).__name__}: {e}")
             continue
         print(f"({i}/{len(files)}) {docs[-1]['source']}: 블록 {len(docs[-1]['records'])}개")
     return docs
 
 
-def _parse_file(path: str, pcfg: dict, image_parser) -> dict:
+def _parse_file(path: str, pcfg: dict, image_parser, saved_rows=None) -> dict:
+    if saved_rows is not None:
+        from .ocr_captions import check_document
+        check_document(path, saved_rows)
     if isinstance(image_parser, SelectionParser):
         image_parser.set_source(path)
     ext = os.path.splitext(path)[1].lower()
-    parse = _parse_pdf if ext == ".pdf" else _parse_hwp
-    records, cover = parse(path, pcfg, image_parser)
+    if ext == ".pdf":
+        records, cover = _parse_pdf(path, pcfg, image_parser if saved_rows is None else None)
+        if saved_rows is not None:
+            from .ocr_captions import add_pdf_captions
+            records = add_pdf_captions(records, saved_rows, path)
+    else:
+        records, cover = _parse_hwp(path, pcfg, image_parser, saved_rows)
     for r in records:
         r["text"] = apply_hanja(normalize_text(r["text"]), pcfg["hanja_mode"])
     records = [r for r in records if r["text"].strip()]

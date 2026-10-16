@@ -5,6 +5,7 @@
 paths:
   org_csv: data/data_list.csv   # 담당자가 제공한 파일명 · 발주 기관 목록 (필수)
   input: data/rfp.zip           # ZIP 파일 또는 폴더 (PDF / HWP / HWPX)
+  ocr_captions: data/ocr_captions.jsonl  # 유형별 벤치마크 승자의 저장된 OCR 결과
 
 # ── ① 전처리 (01_preprocessing) ──
 parsing:
@@ -26,6 +27,14 @@ ocr:
   max_tokens: 2048
   reasoning_effort: low
   usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
+
+ocr_benchmark:
+  # https://developers.openai.com/api/docs/pricing — 2026-10-16, Standard, short context
+  gpt-6-luna:
+    usd_per_1m_tokens: [0.10, 0.01, 0.50]
+  # https://ai.google.dev/gemini-api/docs/pricing#gemini-3.5-flash-lite — 2026-10-16, Standard
+  gemini-3.5-flash-lite:
+    usd_per_1m_tokens: [0.30, 0.03, 2.50]
 
 chunking:
   chunk_size: 700               # 글자 단위
