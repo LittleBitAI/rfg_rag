@@ -699,6 +699,7 @@ def document_batches(document):
     검증기는 묶음마다 따로 읽으므로, 묶음 하나가 홀로 읽혀야 한다.
     한 표의 행은 한 묶음에 넣고, 한 묶음보다 큰 표는 행 경계에서 나누어 이어지는 묶음마다 그 표의 머리글(0행)을 다시 준다.
     새 묶음은 앞 묶음 끝 DOCUMENT_OVERLAP_CHARS 자를 다시 받는다. 다시 주는 단위는 처음의 라벨을 그대로 쓴다.
+    그렇게 다시 받은 표 행은 머리글 없이 올 수 있지만, 그 행은 앞 묶음에서 머리글과 함께 이미 읽혔다.
     """
     labelled = [{**unit, "label": f"E{n}"} for n, unit in enumerate(document, 1)]
     batches, size, fresh = [[]], 0, 0

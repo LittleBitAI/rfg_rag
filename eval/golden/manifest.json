@@ -1,7 +1,7 @@
 {
-  "version": "final5",
-  "created_at": "2026-10-15T23:44:22+00:00",
-  "code_commit": "60075791394b89824e38c163510e9d674175c4ab",
+  "version": "final6",
+  "created_at": "2026-10-16T00:17:41+00:00",
+  "code_commit": "24fe7195b588cf59901bf2e743def610e0317941",
   "dev_share": 0.3,
   "seed": 20261015,
   "base": {
@@ -14,13 +14,13 @@
     "condition": "0f4b50fc86cc6804f14a79b9eb4114352894cd27ac3a5c181362837de65bc544",
     "comparison": "7b4a8ef2bc05a775b489b88f4ce6cbd16e79e20f833b403fd8627f9e86ddce98",
     "multi_hop": "fea451f0e6d1c36cb318c095656150086a8efd9f627176d4eb73b73b9b61bef3",
-    "unanswerable": "8afa8b57684e1ea11e5597792910435cfbf46896029a4f3ee63be402b0f4fbba",
+    "unanswerable": "d4d1a8e5a04b1f77f1baafcaa975b5c74be36dd541381939306b9828a48e1b53",
     "false_premise": "d0989cd6da343dd8dd20f62685e3d184be7f8a169ec5d0f0fe014941d55ea2b5"
   },
   "dev": {
-    "count": 405,
+    "count": 408,
     "documents": 30,
-    "sha256": "015bb4133efd500d3c303253840a568d959943a9575074c1e8904c969d5ed641",
+    "sha256": "d8d3603742192f2533f1ca11c0bf4d4c24e7f0ff9dabcdccb82900e674cad01d",
     "cells": {
       "comparison-easy": 20,
       "comparison-medium": 36,
@@ -33,13 +33,13 @@
       "numeric-medium": 41,
       "table-easy": 6,
       "table-medium": 90,
-      "unanswerable-medium": 5
+      "unanswerable-medium": 8
     }
   },
   "test": {
-    "count": 941,
+    "count": 943,
     "documents": 68,
-    "sha256": "4066a4c4028908d60de0e0e14e88422f8fc546bcae85c4fccd2d68abfa1c2a12",
+    "sha256": "b99d5d87f00c272258b3d5d07defa01322697daeabcbf182ce8a059b275e74ac",
     "cells": {
       "comparison-easy": 45,
       "comparison-medium": 83,
@@ -52,8 +52,7 @@
       "numeric-medium": 90,
       "table-easy": 14,
       "table-medium": 211,
-      "unanswerable-easy": 1,
-      "unanswerable-medium": 5
+      "unanswerable-medium": 8
     }
   }
 }

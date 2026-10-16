@@ -137,7 +137,12 @@ The cause is no longer which units are sent. It is that batching splits the docu
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed with the fix in 24fe719 (validation-6), data regenerated in the commit that adds this result. Still a draft, not a verified rule.
+
+1) Unit test `tests/golden/test_validation.py::test_every_batch_holding_a_table_row_also_holds_that_tables_header` (limits 40, 70 and 1, overlap 0) passes. With the HEAD-before-fix `document_batches` at limit 70, the batches were `[p1, t0] [t1, t2, grid…]`: header `t0` and row `t1` were cut apart. With the fix they are `[p1] [t0, t1, t2] [t2, grid…]`. The test failed on the old code for all three limits.
+2) `test_absence_is_not_certified_when_the_answer_needs_units_on_both_sides_of_a_batch_boundary` passes for a table header/row pair and for a section heading/paragraph pair. Both cases fail on the old code (auto_validated). The heading case needs the new 2,000-character overlap: without it the batches are `[E1, E2] [E3]`, with it `[E1, E2] [E2, E3]`. `test_absence_is_certified_only_after…` still passes, with overlap set to 0.
+3) Against evidence run v11-20261014 with the old batching, 9 of the 11 released unanswerable items in feabfe5 (split final5) had at least one table cut by a 60k boundary (1 to 12 tables each). They were replaced: new loops ap7-dev ($0.57, 8 accepted) and ap7-test ($0.58, 8 accepted) under validation-6, release final6 (16 of 16, $0.038), split final6 --base final2, copied to eval/golden (dev 408, test 943).
+Counterevidence seen: with the new batching, 7 of the 16 new items still have a table row in some batch without its header (27 rows). All 27 are overlap-tail copies of rows whose whole table, header included, was read in the previous batch. The precise invariant, that every table row is read at least once together with its header, holds for 16 of 16 (and for the 11 final5 items when rebatched). The other counterevidence listed above (original grid cells read without coordinates, headings further than 2,000 characters from the boundary) was not tested.
 
 ## Unresolved limits
 
