@@ -48,6 +48,7 @@
   "docs/research/review-feature-eval-golden-input-f4-1.md",
   "docs/research/review-feature-eval-golden-input-f4-2.md",
   "docs/research/review-feature-golden-absent-premise-f2-1.md",
+  "docs/research/review-feature-golden-absent-premise-f2-2.md",
   "docs/research/review-feature-golden-data-generation-f1-1.md",
   "docs/research/review-feature-golden-data-generation-f1-2.md",
   "docs/research/review-feature-golden-data-self-improvement-f2-1.md",
@@ -55,10 +56,10 @@
   "docs/research/review-feature-golden-data-validation-f1-2.md"
  ],
  "counts": {
-  "docs": 12,
+  "docs": 13,
   "linked": 4,
   "read": 0,
-  "orphans": 8,
+  "orphans": 9,
   "pages": 1,
   "decisions": 38,
   "injectable_decisions": 7
