@@ -189,7 +189,7 @@ def _problem(item: dict, questions: set, convs: set) -> str:
 
 
 # 평가 데이터셋(artifacts/eval_set.jsonl) 한 항목의 필드. 04 생성은 이 필드가 모두 있는지 보고 나서 답하기 시작한다.
-EVAL_ITEM_FIELDS = ("id", "question", "reference", "key_facts", "reset_context", "answerable")
+EVAL_ITEM_FIELDS = ("id", "question", "reference", "key_facts", "reset_context", "answerable", "primary_topic", "evidence")
 
 
 def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:

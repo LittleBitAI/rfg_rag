@@ -10,6 +10,12 @@ from rag.retrieval.indexing import Embedder, KiwiTokenizer, find_codes
 from rag.retrieval.retrieval import DocRouter, HybridIndex, read_csv_orgs
 
 
+def ranked(pairs):
+    return [{"index": i, "score": score, "dense_score": score, "dense_rank": rank,
+             "bm25_score": None, "bm25_rank": None, "exact_code_match": False}
+            for rank, (i, score) in enumerate(pairs, 1)]
+
+
 def make_index(bodies, costs, budget=2500, doc_ids=None):
     index = HybridIndex.__new__(HybridIndex)
     doc_ids = doc_ids or ["doc-a"] * len(bodies)
@@ -21,6 +27,7 @@ def make_index(bodies, costs, budget=2500, doc_ids=None):
         for code in find_codes(body):
             index.code_chunks[code].add(i)
     index.rcfg = {"token_budget": budget, "dense_weight": 0.6, "candidate_k": 50}
+    index.chunk_file = "fixture/chunks.jsonl"
     index.embedder = MagicMock()
     index.embedder.token_counts.side_effect = lambda texts: [costs[bodies.index(text)] for text in texts]
     index.router = MagicMock()
@@ -102,6 +109,53 @@ def test_pack_removes_near_duplicates_and_repeated_candidates():
     assert hits[0]["score"] == 0.9123
 
 
+def test_candidate_snapshot_is_read_only_and_preserves_existing_search_output():
+    index = make_index(["SFR-001 첫 근거", "가 나 다 라 마", "가 나 다 라 바", "별도 근거"],
+                       [2, 4, 4, 2], budget=8)
+    index._dense = MagicMock(return_value={1: 0.9, 2: 0.5, 3: 0.1})
+    index._sparse = MagicMock(return_value={3: 10.0, 2: 1.0})
+
+    hits = index.search("SFR-001")
+    observed_hits, candidates = index.search_with_candidates("SFR-001")
+
+    # 변경 전 이 검색 fixture의 코드 승격·가중합·중복 제거·예산 결과를 고정한다.
+    assert [(h["chunk_id"], h["score"]) for h in hits] == [("c0", 0.0), ("c1", 0.6), ("c3", 0.4)]
+    assert hits == observed_hits
+    assert [c["chunk_id"] for c in candidates] == ["c0", "c1", "c3", "c2"]
+    assert [c["fused_rank"] for c in candidates] == [1, 2, 3, 4]
+    assert dict(candidates[0]) == {"chunk_id": "c0", "doc_id": "doc-a", "fused_rank": 1,
+                                    "dense_score": None, "dense_rank": None, "bm25_score": None,
+                                    "bm25_rank": None, "exact_code_match": True}
+    assert (candidates[1]["dense_score"], candidates[1]["dense_rank"]) == (0.9, 1)
+    assert (candidates[2]["bm25_score"], candidates[2]["bm25_rank"]) == (10.0, 1)
+    with pytest.raises(TypeError):
+        candidates[0]["fused_rank"] = 99
+
+
+def test_component_ranks_interleave_agencies_independently_of_fused_order():
+    index = make_index(["가 첫 근거", "가 두번째 근거", "나 첫 근거", "나 두번째 근거"], [1] * 4,
+                       doc_ids=["a", "a", "b", "b"])
+    index.router.route.return_value = {"가": {"a"}, "나": {"b"}}
+    index._dense = MagicMock(side_effect=[{0: 0.9, 1: 0.8}, {2: 0.9, 3: 0.8}])
+    index._sparse = MagicMock(side_effect=[{1: 10.0}, {3: 10.0}])
+    _, candidates = index.search_with_candidates("가 나 비교")
+    assert [c["chunk_id"] for c in candidates] == ["c0", "c2", "c1", "c3"]
+    assert [c["dense_rank"] for c in candidates] == [1, 2, 3, 4]
+    assert [c["bm25_rank"] for c in candidates] == [None, None, 1, 2]
+
+
+@pytest.mark.parametrize("weight,disabled", [(0, "dense"), (1, "bm25")])
+def test_disabled_component_has_no_candidates_or_scores(weight, disabled):
+    index = make_index(["근거"], [1])
+    index.rcfg["dense_weight"] = weight
+    index._dense = MagicMock(return_value={0: 0.9})
+    index._sparse = MagicMock(return_value={0: 2.0})
+    _, candidates = index.search_with_candidates("질문")
+    assert candidates[0][f"{disabled}_rank"] is None
+    assert candidates[0][f"{disabled}_score"] is None
+    (index._dense if disabled == "dense" else index._sparse).assert_not_called()
+
+
 @pytest.mark.parametrize("order", [[0, 1], [1, 0]])
 def test_pack_keeps_richer_evidence_when_another_chunk_only_contains_its_code(order):
     index = make_index(["SFR-001", "SFR-001 응답시간은 2초 이내여야 한다"], [1, 5], budget=6)
@@ -114,7 +168,7 @@ def test_comparison_interleaves_and_skips_long_chunk_without_stopping():
     index = make_index(["SFR-001", "기관 가 두번째 내용", "SFR-001 응답시간은 2초 이내여야 한다", "기관 나 나중 항목"],
                        [3, 8, 3, 2], budget=8, doc_ids=["a", "a", "b", "b"])
     index.router.route.return_value = {"기관 가": {"a"}, "기관 나": {"b"}}
-    index._rank = MagicMock(side_effect=[[(0, 1.0), (1, 0.9)], [(2, 0.8), (3, 0.7)]])
+    index._rank = MagicMock(side_effect=[ranked([(0, 1.0), (1, 0.9)]), ranked([(2, 0.8), (3, 0.7)])])
     assert [hit["chunk_id"] for hit in index.search("기관 가와 기관 나 비교")] == ["c0", "c2", "c3"]
 
 
@@ -125,9 +179,9 @@ def test_search_preserves_overlapping_evidence_from_distinct_documents(second_bo
     for chunk in index.chunks:
         chunk.update(source=f"{chunk['doc_id']}.pdf", page=1)
     index.router.route.return_value = route
-    index._rank = MagicMock(return_value=[(0, 0.9), (1, 0.8)])
+    index._rank = MagicMock(return_value=ranked([(0, 0.9), (1, 0.8)]))
     if len(route) == 2:
-        index._rank.side_effect = [[(0, 0.9)], [(1, 0.8)]]
+        index._rank.side_effect = [ranked([(0, 0.9)]), ranked([(1, 0.8)])]
 
     hits = index.search("기관 가와 기관 나의 SFR-001 비교")
 

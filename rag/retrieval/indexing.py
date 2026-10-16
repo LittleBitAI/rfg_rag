@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer
 
 
 class Embedder(Embeddings):
-    """SentenceTransformer 를 LangChain Embeddings 로 감싼다 (05 평가의 RAGAS answer_relevancy 에도 그대로 넘긴다).
+    """SentenceTransformer 를 LangChain Embeddings 로 감싼다.
     벡터는 정규화하므로 FAISS 내적 = 코사인 유사도."""
 
     def __init__(self, ecfg: dict):

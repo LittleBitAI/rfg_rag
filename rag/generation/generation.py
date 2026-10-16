@@ -10,6 +10,7 @@ from langfuse import get_client, observe
 from langfuse.openai import openai
 
 from ..retrieval.rewrite import rewrite_question
+from ..retrieval.retrieval import retrieval_fields
 from ..usage import record_usage
 from ..validation.validation import EVAL_ITEM_FIELDS
 
@@ -80,12 +81,15 @@ def answer_question(item: dict, index, llm_cfg: dict, rewrite_cfg: dict, history
     """질문 하나: 재작성 → 검색 → 이전 대화를 참고해 원본 질문으로 생성."""
     t0 = time.perf_counter()
     rewrite = rewrite_question(item["question"], rewrite_cfg)
-    hits = index.search(item["question"], query=rewrite["question"])
-    out = generate(item["question"], hits, llm_cfg, history=history)
     langfuse = get_client()
+    with langfuse.start_as_current_observation(name="retrieve-context", as_type="retriever",
+                                              input={"question": item["question"], "query": rewrite["question"]}) as span:
+        hits, retrieval = retrieval_fields(index, item["question"], rewrite["question"], reused=False)
+        span.update(output=hits)
+    out = generate(item["question"], hits, llm_cfg, history=history)
     langfuse.update_current_span(input=item["question"], output=out["answer"],
                                  metadata={"eval_id": item["id"], "history_turns": len(history or [])})
-    return {**item, **out, "rewrite": rewrite, "contexts": [h["body"] for h in hits],
+    return {**item, **out, **retrieval, "rewrite": rewrite, "contexts": [h["body"] for h in hits],
             "sources": [f"{h['source']} p.{h['page']}" if h["page"] else h["source"] for h in hits],
             "latency_s": round(time.perf_counter() - t0, 2), "trace_id": langfuse.get_current_trace_id()}
 

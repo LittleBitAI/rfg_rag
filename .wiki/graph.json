@@ -39,6 +39,11 @@
    "kind": "link"
   },
   {
+   "a": "README.md",
+   "b": "docs/eval_ir_sample.md",
+   "kind": "link"
+  },
+  {
    "a": "docs/craft_ocr_selection.md",
    "b": "README.md",
    "kind": "link"
@@ -56,8 +61,8 @@
   "docs/research/review-feature-golden-data-validation-f1-2.md"
  ],
  "counts": {
-  "docs": 13,
-  "linked": 4,
+  "docs": 14,
+  "linked": 5,
   "read": 0,
   "orphans": 9,
   "pages": 1,
