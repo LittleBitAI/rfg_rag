@@ -1,6 +1,6 @@
 {
  "ns": "repo",
- "repo": "feature-ocr-image-zoom",
+ "repo": "rfg_rag",
  "nodes_from": ".wiki/corpus.json",
  "edges": [
   {
