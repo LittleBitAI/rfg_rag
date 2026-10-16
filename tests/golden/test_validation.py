@@ -547,7 +547,7 @@ def test_an_attribute_absent_from_every_unit_of_the_asked_document_is_kept_unles
     # 검증기는 근거 묶음(문서 1)이 아니라 질문이 묻는 문서 2 의 근거만 받는다.
     [request] = validator.requests
     sent = {unit["text"] for unit in json.loads(request[1]["content"])["evidence"]}
-    assert sent == {body for _, doc, body, _ in UNITS if doc == DOC_2} | {GRID_CELL}
+    assert sent == {body for _, doc, body, _ in UNITS if doc == DOC_2} | {GRID_CELL.strip()}
 
 
 def test_absence_is_certified_only_after_the_validator_has_read_every_unit_of_the_asked_document(borrowed, monkeypatch):
@@ -566,10 +566,11 @@ def test_absence_is_certified_only_after_the_validator_has_read_every_unit_of_th
     assert [Validator.labels(request) for request in validator.requests][-1] == (last,)
 
 
-def doc_unit(unit_id, text, element_id=None, row=None):
-    """document_units 와 같은 꼴의 단위. row 가 있으면 표 행이다."""
+def doc_unit(unit_id, text, element_id=None, row=None, rowspan=1):
+    """document_units 와 같은 꼴의 단위. row 가 있으면 표 행이고, 원본 그리드 셀은 rowspan 도 갖는다."""
     location = {"kind": "char"} if row is None else {"kind": "table", "row": row}
-    return {"unit_id": unit_id, "element_id": element_id, "location": location, "text": text}
+    unit = {"unit_id": unit_id, "element_id": element_id, "location": location, "text": text}
+    return {**unit, "rowspan": rowspan} if unit_id.startswith("grid:") else unit
 
 
 GRID = f"grid:{DOC_2}:BodyText/Section0:7"
@@ -579,46 +580,55 @@ TABLES = [
     doc_unit("t1", "A시스템 | 12개월 | 36개월", "e-t", 1),
     doc_unit("t2", "B시스템 | 24개월 | 12개월", "e-t", 2),
     doc_unit(f"{GRID}:0:0", "구분", row=0), doc_unit(f"{GRID}:0:1", "유지보수", row=0),
-    doc_unit(f"{GRID}:1:0", "A시스템", row=1), doc_unit(f"{GRID}:1:1", "1년", row=1),
+    # 'C시스템' 칸은 두 행에 걸치고, 그 아래 행에는 값 칸만 있다. 앞 행의 긴 칸 뒤에서 묶음 경계가 떨어지기 쉽다.
+    doc_unit(f"{GRID}:1:0", "C시스템", row=1, rowspan=2), doc_unit(f"{GRID}:1:1", "하자보수는 준공 후 별도 협의로 정한다", row=1),
+    doc_unit(f"{GRID}:2:1", "유지보수 1년", row=2),
+    doc_unit(f"{GRID}:3:0", "D시스템", row=3), doc_unit(f"{GRID}:3:1", "2년", row=3),
+]
+# 표의 행(원본 그리드는 세로로 합친 칸이 걸친 행 전체)과 그 표의 머리글. 검증기는 어느 한 묶음에서 이 글을 함께 읽어야 한다.
+ROWS = [
+    {"시스템 | 하자담보책임기간", "A시스템 | 12개월"}, {"시스템 | 하자담보책임기간", "B시스템 | 24개월"},
+    {"구분", "유지보수", "C시스템", "하자보수는 준공 후 별도 협의로 정한다", "유지보수 1년"},
+    {"구분", "유지보수", "D시스템", "2년"},
 ]
 
 
+def read_together(batches, texts):
+    return any(all(text in "\n".join(unit["text"] for unit in batch) for text in texts) for batch in batches)
+
+
+@pytest.mark.parametrize("overlap", [0, 20])
 @pytest.mark.parametrize("limit", [40, 70, 1])
-def test_every_batch_holding_a_table_row_also_holds_that_tables_header(monkeypatch, limit):
+def test_every_table_row_is_read_in_one_batch_with_the_rest_of_its_row_and_its_header(monkeypatch, limit, overlap):
     # 글자 수로만 자르면 머리글이 앞 묶음에, 행이 뒤 묶음에 가서 어느 묶음으로도 '하자담보책임기간 12개월' 을 읽을 수 없었다.
-    # 40 은 표가 다음 묶음에 통째로 들어가고, 70 은 맨 자르기가 머리글과 행 사이에 떨어지며, 1 은 표가 어느 묶음보다 크다.
+    # 원본 그리드는 셀이 단위라, 행 이름 칸 'C시스템' 과 그 아래 행의 값 칸 '유지보수 1년' 사이에도 경계가 떨어졌다.
+    # 40 은 표가 다음 묶음에 통째로 들어가고, 70 은 맨 자르기가 표 안에 떨어지며, 1 은 표가 어느 묶음보다 크다.
     monkeypatch.setattr(validation, "DOCUMENT_BATCH_CHARS", limit)
-    monkeypatch.setattr(validation, "DOCUMENT_OVERLAP_CHARS", 0)
+    monkeypatch.setattr(validation, "DOCUMENT_OVERLAP_CHARS", overlap)
 
     batches = validation.document_batches(TABLES)
 
-    assert {unit["unit_id"] for batch in batches for unit in batch} == {unit["unit_id"] for unit in TABLES}
-    headers = {"e-t": {"t0"}, GRID: {f"{GRID}:0:0", f"{GRID}:0:1"}}
-    for batch in batches:
-        sent = {unit["unit_id"] for unit in batch}
-        for table, header in headers.items():
-            if any(unit["location"].get("row") and table in (unit["element_id"], unit["unit_id"][:len(GRID)])
-                   for unit in batch):
-                assert header <= sent, (limit, sent)
+    assert all(read_together(batches, {unit["text"]}) for unit in TABLES)
+    assert [texts for texts in ROWS if not read_together(batches, texts)] == []
 
 
-@pytest.mark.parametrize("document, needed", [
-    (TABLES, {"E2", "E3"}),
+@pytest.mark.parametrize("limit, overlap, document, needed, question", [
+    (70, 20, TABLES, {"하자담보책임기간", "A시스템 | 12개월"}, "A시스템의 하자보수 기간은?"),
+    (1, 0, TABLES, {"C시스템", "유지보수 1년"}, "C시스템의 유지보수 기간은?"),
     # 표 밖의 소제목과 그 아래 글도 경계로 갈리면 따로는 답이 나오지 않는다. 새 묶음은 앞 묶음 끝을 다시 받는다.
-    ([doc_unit("p1", "사업 개요 " * 9), doc_unit("h", "A시스템 하자담보책임"), doc_unit("v", "기간: 준공 후 12개월")],
-     {"E2", "E3"}),
+    (70, 20, [doc_unit("p1", "사업 개요 " * 9), doc_unit("h", "A시스템 하자담보책임"), doc_unit("v", "기간: 준공 후 12개월")],
+     {"A시스템 하자담보책임", "기간: 준공 후 12개월"}, "A시스템의 하자보수 기간은?"),
 ])
 def test_absence_is_not_certified_when_the_answer_needs_units_on_both_sides_of_a_batch_boundary(
-        monkeypatch, document, needed):
-    monkeypatch.setattr(validation, "DOCUMENT_BATCH_CHARS", 70)
-    monkeypatch.setattr(validation, "DOCUMENT_OVERLAP_CHARS", 20)
-    item = {"question": "A시스템의 하자보수 기간은?"}
+        monkeypatch, limit, overlap, document, needed, question):
+    monkeypatch.setattr(validation, "DOCUMENT_BATCH_CHARS", limit)
+    monkeypatch.setattr(validation, "DOCUMENT_OVERLAP_CHARS", overlap)
 
     def ask(question, batch):
-        found = needed <= {unit["label"] for unit in batch}
-        return verdict("12개월" if found else "", answerable=found), None
+        found = read_together([batch], needed)
+        return verdict("1년" if found else "", answerable=found), None
 
-    state, reason = validation._absent_verdict(item, document, ask)
+    state, reason = validation._absent_verdict({"question": question}, document, ask)
 
     assert (state, reason[:len("대상 문서에 있음: 검증기")]) == ("rejected", "대상 문서에 있음: 검증기")
 

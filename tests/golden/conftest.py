@@ -172,7 +172,7 @@ def evidence_run(outputs, tmp_path, monkeypatch):
     # 원본 그리드 참고 파일의 셀은 늘 held 다. 문서에 없음을 보는 주제는 이 셀의 글까지 읽는다.
     (package / "validation").mkdir()
     _write_jsonl(package / evidence.GRIDS, [{"source_document_sha256": DOC_2, "stream": "BodyText/Section0", "control": 7,
-                                             "cells": [{"row": 0, "col": 0, "text": GRID_CELL}]}])
+                                             "cells": [{"row": 0, "col": 0, "rowspan": 1, "text": GRID_CELL}]}])
     grid = {**_unit("g", DOC_2, "", None), "unit_id": GRID_UNIT, "chunk_id": None, "element_id": None,
             "location": {"kind": "table", "grid": "original_reference", "row": 0, "cell": 0}}
 
