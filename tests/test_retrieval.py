@@ -83,8 +83,8 @@ def test_exact_code_survives_rewrite_and_candidate_cutoff_with_routing(question,
 
     assert [hit["chunk_id"] for hit in hits] == ["c0", "c1"]
     assert hits[0]["score"] == 0.0
-    index.router.route.assert_called_once_with(question)
     expected_query = question if query is None else query
+    index.router.route.assert_called_once_with(expected_query)
     assert index._dense.call_args.args[0] == expected_query
     assert index._dense.call_args.args[1].tolist() == [True, True, False]
     assert index._sparse.call_args.args[0] == expected_query

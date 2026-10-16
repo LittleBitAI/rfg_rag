@@ -123,7 +123,7 @@ def test_an_eval_set_from_before_answerable_stops_before_any_paid_call(monkeypat
 
 
 def test_rewrite_and_recent_answer_history_are_preserved_together(monkeypatch):
-    rewrite = MagicMock(side_effect=lambda question, cfg: {"question": "검색 " + question})
+    rewrite = MagicMock(side_effect=lambda question, cfg, history: {"question": "검색 " + question})
     generate = MagicMock(side_effect=lambda question, hits, cfg, history:
                          {"answer": "답변 " + question, "input_tokens": 1, "output_tokens": 1})
     monkeypatch.setattr(generation, "rewrite_question", rewrite)
@@ -139,13 +139,14 @@ def test_rewrite_and_recent_answer_history_are_preserved_together(monkeypatch):
     for i, call in enumerate(generate.call_args_list):
         assert call.kwargs["history"] == [{"question": r["question"], "answer": r["answer"]}
                                            for r in rows[max(0, i - 10):i]]
+        assert rewrite.call_args_list[i].kwargs["history"] == call.kwargs["history"]
         assert index.search.call_args_list[i].kwargs["query"] == "검색 " + items[i]["question"]
 
 
 def test_reset_context_from_eval_yaml_clears_history_before_that_question(monkeypatch, tmp_path):
     generate = MagicMock(side_effect=lambda question, hits, cfg, history:
                          {"answer": "답변 " + question, "input_tokens": 1, "output_tokens": 1})
-    monkeypatch.setattr(generation, "rewrite_question", lambda question, cfg: {"question": question})
+    monkeypatch.setattr(generation, "rewrite_question", lambda question, cfg, history: {"question": question})
     monkeypatch.setattr(generation, "generate", generate)
     monkeypatch.setattr(generation, "get_client", MagicMock())
     index = MagicMock()

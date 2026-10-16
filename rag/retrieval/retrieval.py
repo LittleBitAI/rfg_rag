@@ -57,10 +57,11 @@ class HybridIndex:
 
     @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str, *, query: str | None = None) -> list[dict]:
-        """원본 질문으로 기관을 고르고 query(없으면 원본)로 검색한다. 비교 질문은 기관별 결과를 번갈아 섞는다.
+        """재작성 질문 query(없으면 원본)로 기관을 고르고 검색한다. 비교 질문은 기관별 결과를 번갈아 섞는다.
+        후속 질문의 '그 사업'은 재작성 때 사업명으로 풀리므로 기관도 재작성 질문에서 찾는다.
         요구사항 코드는 양쪽에서 모아 재작성 때 코드가 빠져도 정확 일치를 유지한다."""
-        route = self.router.route(question)
         query = query or question
+        route = self.router.route(query)
         codes = find_codes(question) | find_codes(query)
         if len(route) < 2:
             return self._pack(self._rank(query, codes, next(iter(route.values()), None)))
