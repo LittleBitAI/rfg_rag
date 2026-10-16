@@ -411,7 +411,7 @@ test 실패는 각각 19 · 188 · 50 · 674항목입니다. 문서 미연결 �
 
 그림 유형(table · text · diagram)마다 기준 이미지에서 측정한 품질과 이미지당 비용으로 OCR 엔진을 고릅니다.
 허용 엔진은 OpenAI API, OpenAI 호환 엔드포인트를 쓰는 Gemini API,
-팀 VM `codeit`의 별도 환경에서 실행하는 PaddleOCR-VL-1.5입니다.
+로컬 Windows PC의 별도 환경에서 실행하는 PaddleOCR-VL-1.5입니다.
 유료 OCR 호출은 모두 `rag/usage.py`의 `record_usage`로 비용을 기록하고, PaddleOCR는 이미지당 실행 시간을 기록합니다.
 벤치마크 첫 유료 호출과 전체 실행 전에는 모델별 토큰·단가 예상액을 보여 주고 승인을 기다립니다.
 

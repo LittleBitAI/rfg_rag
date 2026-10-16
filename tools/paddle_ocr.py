@@ -1,4 +1,4 @@
-"""codeit의 별도 PaddleOCR 환경에서만 실행하는 이미지별 시간 측정기."""
+"""Measure per-image latency in the isolated PaddleOCR environment."""
 import json
 import sys
 import time

@@ -18,39 +18,184 @@
     "diagram": 150
   },
   "visual_review": "All 320 images inspected in numbered contact sheets; each reference inspected individually at original resolution.",
-  "reference_selection": "Three examples per image_type x label, selected before candidate calls for differing structures. Small, purposive sample; no population confidence claim.",
+  "reference_selection": "User selected up to 58 images (ten per type x label, eight available text/label-1). The agent drafted forty additions to the initial eighteen, then excluded three additions whose handwritten sections could not be transcribed reliably. The remaining fifty-five are frozen before any candidate OCR calls.",
   "reference_numbers": [
     1,
+    2,
+    3,
+    4,
     10,
     14,
     16,
     25,
     28,
+    35,
     36,
     39,
     58,
     67,
+    71,
+    74,
+    88,
+    93,
+    99,
+    100,
+    116,
+    133,
+    134,
     135,
+    136,
     145,
     152,
+    153,
+    156,
+    158,
+    159,
+    162,
     168,
+    176,
     183,
+    186,
+    188,
     195,
+    196,
+    199,
+    200,
+    201,
+    202,
     203,
-    239
+    213,
+    232,
+    239,
+    244,
+    249,
+    280,
+    292,
+    296,
+    302,
+    310,
+    319
   ],
   "reference_groups": {
-    "table:1": 3,
-    "text:1": 3,
-    "diagram:2": 3,
-    "diagram:1": 3,
-    "table:2": 3,
-    "text:2": 3
+    "table:1": 10,
+    "text:1": 5,
+    "diagram:2": 10,
+    "diagram:1": 10,
+    "table:2": 10,
+    "text:2": 10
   },
   "base_comparison": "98 documents, 17614 chunks; parsed/chunked on base and with saved captions absent; every row identical.",
   "placement_check": "391 synthetic captions in 79 actual source documents, including all 80 null HWP markers; per-caption multiplicities match the selected places.",
   "document_hash_check": "All 391 selected places match the current source document SHA-256.",
-  "api_access_check": "Both exact model IDs found via authenticated model-list requests; no OCR generation.",
-  "gate": "1062 passed, 12 warnings in 106.46s",
-  "benchmark_paid_calls": 0
+  "api_access_check": "Both exact model IDs completed 55 paid OCR calls after explicit benchmark approval.",
+  "gate": "1062 passed, 12 warnings in 179.71s (0:02:59)",
+  "benchmark_approval": {
+    "date": "2026-10-16",
+    "user_response": "1",
+    "approved_scope": "Delete the four listed cache/server directories, install PaddleOCR in its isolated environment, and benchmark all three engines on the 55 frozen references.",
+    "estimated_input_tokens_per_image": 2000,
+    "estimated_output_tokens_per_image": 2000,
+    "estimated_usd": {"gpt-6-luna": 0.066, "gemini-3.5-flash-lite": 0.308},
+    "maximum_output_tokens_per_call": 8192,
+    "estimate_with_8192_output_and_2000_input_usd": 1.39568,
+    "full_run_approved": false
+  },
+  "api_measurements": {
+    "calls": {"gpt-6-luna": 55, "gemini-3.5-flash-lite": 55},
+    "usage_rows_verified": 110,
+    "actual_usd": {"gpt-6-luna": 0.0450572, "gemini-3.5-flash-lite": 0.0602778},
+    "empty_outputs": 0,
+    "truncated_outputs": 0,
+    "paddle_results_available": false,
+    "winners_selected": false
+  },
+  "vm_cleanup": {
+    "deleted": [
+      "/home/spai1303/.cache/pip",
+      "/home/spai1303/.vscode-server/cli/servers/Stable-16507d91be0dc1ce4f94c04d4d0430210b8685d9",
+      "/home/spai1303/.vscode-server/cli/servers/Stable-6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1",
+      "/home/spai1303/.vscode-server/cli/servers/Stable-7baac39ec3ca969dab74ac12c097f6a486e46593"
+    ],
+    "free_gib_after": 5.83
+  },
+  "runtime_revision": {
+    "date": "2026-10-16",
+    "user_choice": "Native Windows (Recommended)",
+    "previous_runtime": "PaddleOCR-VL-1.5 on codeit over SSH",
+    "current_runtime": "PaddleOCR-VL-1.5 in C:/Users/dasdk/.venvs/rfg-ocr-vl15 on the local Windows PC",
+    "reason": "The official Linux GPU environment needs more disk space than codeit has after approved cleanup, and the shared VM has under 1 GiB available system RAM. The user proposed local execution and selected native Windows.",
+    "gpu": "NVIDIA GeForce RTX 3080, 10240 MiB",
+    "installed_versions": {"paddlepaddle-gpu": "3.2.1", "paddleocr": "3.7.0", "paddlex": "3.7.2"},
+    "cuda_preflight": "Paddle imports successfully, CUDA compiled True, one GPU detected.",
+    "model_preparation": "Official PP-DocLayoutV3 and PaddleOCR-VL-1.5 weights downloaded; the v1.5 pipeline initialized with device=cpu. No inference run.",
+    "project_venv_changed": false,
+    "codeit_installation": "Stopped this task's pip process before CUDA dependencies filled the disk; preserved the completed Paddle wheel. No other processes terminated."
+  },
+  "gpu_memory_investigation": {
+    "kernel_pid": 12816,
+    "notebook": "02_retrieval.ipynb",
+    "object": "index (HybridIndex)",
+    "embedding_model": "nlpai-lab/KURE-v1",
+    "torch_allocated_mib": 1092.61962890625,
+    "torch_reserved_mib": 3176,
+    "kernel_responsive": true,
+    "kernel_stopped": false,
+    "frontend_pid": 36444,
+    "frontend_app": "frontend.server:app on port 8765",
+    "frontend_status": "Exited between checks without intervention by this agent."
+  },
+  "expanded_at": "2026-10-16T11:22:07.697153+00:00",
+  "reference_sha256": "3fcb71d4fa9d457d92824b83777c2c2d9dbcb48683eeba8bee94d19e826cc892",
+  "reference_notes": [
+    {
+      "number": 88,
+      "note": "하단 자필 위원 이름은 확실히 판독할 수 없어 추측하지 않았다."
+    },
+    {
+      "number": 134,
+      "note": "자필 문장은 화면 판독에 따른 기준이며 사람의 교정은 받지 않았다."
+    },
+    {
+      "number": 153,
+      "note": "날짜 일부와 기관명 위에 직인이 겹친 스캔이다."
+    },
+    {
+      "number": 159,
+      "note": "건축 평면도의 아주 작은 배경 표기는 확실히 읽을 수 없어 주요 색상 영역의 명칭·치수를 전사했다."
+    },
+    {
+      "number": 186,
+      "note": "오른쪽 예시 차트의 축·범례 작은 글씨는 판독이 제한된다."
+    },
+    {
+      "number": 202,
+      "note": "사진 속 토론회 작은 글씨 일부는 판독이 제한된다."
+    }
+  ],
+  "vm_cache_inspection": {
+    "read_only": true,
+    "root_free_gb": 2.6,
+    "pip_cache_mb": 1513.5,
+    "huggingface_gb": 2.2,
+    "vscode_servers_gb": 2.6,
+    "active_vscode_version": "2a59476c9bfcb90b3ddc372c36762471b7dfad1c",
+    "deleted_files": []
+  },
+  "reference_exclusions": [
+    {
+      "number": 222,
+      "image_sha256": "cc0a56733c489d4d9141bd87ff526012de6696bd3e187dfd1f9c63c9b719cda5",
+      "reason": "Handwritten sections not reliably transcribable by the agent; excluded before candidate calls to avoid scoring readable candidate text against incomplete references."
+    },
+    {
+      "number": 224,
+      "image_sha256": "9d47481c933f91bf7f8a7ffe9a9e00acad13b12e2c92d571b95a6b26d6d2f70e",
+      "reason": "Handwritten sections not reliably transcribable by the agent; excluded before candidate calls to avoid scoring readable candidate text against incomplete references."
+    },
+    {
+      "number": 263,
+      "image_sha256": "5c1805a6d25ef26158dc55ff794fc592bf50e726be07fbfdcb5f35705c406548",
+      "reason": "Handwritten sections not reliably transcribable by the agent; excluded before candidate calls to avoid scoring readable candidate text against incomplete references."
+    }
+  ]
 }

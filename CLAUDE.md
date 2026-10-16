@@ -97,7 +97,7 @@ Its tests live in `tests/golden/`, so the gate runs them.
 Choose the OCR engine separately for each image type using measured quality and measured
 cost per image on a reference set. Allowed engines are the OpenAI API, the Gemini API
 through its OpenAI-compatible endpoint, and PaddleOCR-VL-1.5 in its own environment
-on the team VM `codeit`. Log every paid OCR call and its cost through `rag/usage.py`;
+on the local Windows PC. Log every paid OCR call and its cost through `rag/usage.py`;
 record seconds per image for PaddleOCR. Before the benchmark's first paid call and
 before the full run, show a per-model token-price estimate and wait for approval.
 01 reads saved captions without API calls. The existing `OCR = True` path still uses
