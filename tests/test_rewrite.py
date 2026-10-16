@@ -41,7 +41,28 @@ def test_rewrite_settings_usage_and_empty_output(monkeypatch, content, details, 
                       "cost_usd": 0.000085, "latency_s": 0.25}
 
 
-@pytest.mark.parametrize("route", [{}, {"A": {"doc-a"}}, {"A": {"doc-a"}, "B": {"doc-b"}}])
+def test_rewrite_sends_last_ten_turns_as_chat_messages(monkeypatch):
+    response = ChatCompletion(
+        id="rewrite-test", created=0, model="rewrite-model", object="chat.completion",
+        choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "검색용 질문"}}],
+        usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.chat.completions.create.return_value = response
+    monkeypatch.setattr(rewrite.openai, "OpenAI", MagicMock(return_value=client))
+    cfg = {"model": "rewrite-model", "max_tokens": 10, "reasoning_effort": "low", "usd_per_1m_tokens": [0, 0, 0]}
+    history = [{"question": f"질문 {i}", "answer": f"답변 {i}"} for i in range(12)]
+
+    rewrite.rewrite_question("그 사업 예산은?", cfg, history=history)
+
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    assert messages == ([{"role": "system", "content": rewrite.REWRITE_PROMPT}]
+                        + [message for i in range(2, 12) for message in
+                           [{"role": "user", "content": f"질문 {i}"}, {"role": "assistant", "content": f"답변 {i}"}]]
+                        + [{"role": "user", "content": "그 사업 예산은?"}])
+
+
+@pytest.mark.parametrize("route",[{}, {"A": {"doc-a"}}, {"A": {"doc-a"}, "B": {"doc-b"}}])
 def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypatch, route):
     for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL"):
         monkeypatch.setenv(key, "")
@@ -69,8 +90,8 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
 
     row, = generation.answer_questions([item], index, llm_cfg, rewrite_cfg)
 
-    rewrite_fn.assert_called_once_with(item["question"], rewrite_cfg)
-    index.router.route.assert_called_once_with(item["question"])
+    rewrite_fn.assert_called_once_with(item["question"], rewrite_cfg, history=[])
+    index.router.route.assert_called_once_with("검색용 질문")
     expected_calls = ([call("검색용 질문", set(), doc_ids) for doc_ids in route.values()] if len(route) > 1
                       else [call("검색용 질문", set(), next(iter(route.values()), None))])
     assert index._rank.call_args_list == expected_calls

@@ -80,7 +80,7 @@ def generate(question: str, hits: list[dict], llm_cfg: dict, history: list[dict]
 def answer_question(item: dict, index, llm_cfg: dict, rewrite_cfg: dict, history: list[dict] | None = None) -> dict:
     """질문 하나: 재작성 → 검색 → 이전 대화를 참고해 원본 질문으로 생성."""
     t0 = time.perf_counter()
-    rewrite = rewrite_question(item["question"], rewrite_cfg)
+    rewrite = rewrite_question(item["question"], rewrite_cfg, history=history)
     langfuse = get_client()
     with langfuse.start_as_current_observation(name="retrieve-context", as_type="retriever",
                                               input={"question": item["question"], "query": rewrite["question"]}) as span:

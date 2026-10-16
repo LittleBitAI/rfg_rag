@@ -146,6 +146,9 @@ stored_rewrites_reused). 05 rejects incomplete answers before any paid call.
 `rerun_retrieval` searches dev again using each stored rewritten query, without rewrite,
 generation or judge API calls, and writes the same row format in a separate experiment folder.
 It retains the old answers and clears trace IDs; score that file only for Retrieval.
+Preserve the integrated dev behavior: 04 passes recent conversation history to rewriting
+and generation; both search entry points route using the rewritten query (original on empty
+rewrite). Retrieval-only reruns reuse that stored query for routing and ranking without API calls.
 
 Use dev to tune. Build a separate labelled test evaluation set with 03's existing functions,
 then run 04 and all four 05 evaluations once with fixed settings for the final result.

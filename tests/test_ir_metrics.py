@@ -106,7 +106,7 @@ def test_rerun_uses_stored_rewrite_and_changed_settings_without_any_llm(monkeypa
     [row] = evaluation.rerun_retrieval(answers, output, index)
     assert row == read_jsonl(output)[0]
     assert read_jsonl(answers) == [_answer_row()]
-    index.router.route.assert_called_once_with("질문")
+    index.router.route.assert_called_once_with("재작성 질문")
     assert index._dense.call_args.args[0] == "재작성 질문"
     assert row["context_chunk_ids"] == ["c0"]
     assert len(row["ranked_candidates"]) == 2
