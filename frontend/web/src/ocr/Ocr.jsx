@@ -11,6 +11,8 @@ export default function Ocr() {
   const [cards, setCards] = useState(null)
   const [error, setError] = useState(null)
   const [batch, setBatch] = useState(() => Number(new URLSearchParams(location.search).get('batch')) || null)
+  // 크게 보는 그림: 이 묶음에서 미리보기가 있는 카드 중 몇 번째인지 (닫혀 있으면 null)
+  const [zoom, setZoom] = useState(null)
 
   // StrictMode 는 개발 중 이 effect 를 두 번 돌린다. 물러난 실행의 늦은 응답이 그 사이 매긴 라벨을 덮지 않게 버린다
   useEffect(() => {
@@ -42,11 +44,13 @@ export default function Ocr() {
   // 맡은 묶음은 주소(?batch=N)에 두어 새로고침해도 그대로다
   function chooseBatch(n) {
     setBatch(n)
+    setZoom(null)
     history.replaceState(null, '', `?batch=${n}`)
     window.scrollTo(0, 0)
   }
 
   const shown = cards?.filter((c) => c.batch === batch) ?? []
+  const viewable = shown.filter((c) => c.viewable)
   // 내보내기는 서버에 저장된 라벨만 담으므로, 저장 중인 라벨은 진행 수에서 빼고 내보내기를 잠근다
   const saving = shown.filter((c) => c.saving).length
   const done = shown.filter((c) => c.label !== null && !c.saving).length
@@ -76,20 +80,23 @@ export default function Ocr() {
         {error && <p className="error">{error}</p>}
         {!cards && !error && <p className="meta lead">그림 목록을 읽는 중…</p>}
         <div className="grid">
-          {shown.map((card) => <Card key={card.key} card={card} onLabel={label} />)}
+          {shown.map((card) => <Card key={card.key} card={card} onLabel={label} onZoom={() => setZoom(viewable.indexOf(card))} />)}
         </div>
       </main>
+      {zoom !== null && <Zoom cards={viewable} at={zoom} setAt={setZoom} />}
     </>
   )
 }
 
-function Card({ card, onLabel }) {
+function Card({ card, onLabel, onZoom }) {
   const name = card.file.split('/').at(-1)
   const o = card.occurrence
   return (
     <article className="card">
       {card.viewable ? (
-        <img className="preview" src={fileUrl(card.file)} alt={name} loading="lazy" />
+        <button className="zoom-open" aria-label={`${name} 크게 보기`} onClick={onZoom}>
+          <img className="preview" src={fileUrl(card.file)} alt={name} loading="lazy" />
+        </button>
       ) : (
         <div className="preview placeholder">
           <span className="label">미리보기 없음 · {name.split('.').at(-1).toUpperCase()}</span>
@@ -108,6 +115,33 @@ function Card({ card, onLabel }) {
       </div>
       {card.error && <p className="error">{card.error}</p>}
     </article>
+  )
+}
+
+// 크게 보기: 바깥을 누르거나 Esc 로 닫고, ◀ ▶ · ← → 로 이 묶음의 앞뒤 그림으로 간다.
+// 끝에서 돌아 들어가지 않고 그쪽 화살표를 감춰, 묶음 끝에 닿았음을 보인다
+function Zoom({ cards, at, setAt }) {
+  const card = cards[at]
+  const hasPrev = at > 0
+  const hasNext = at < cards.length - 1
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === 'Escape') setAt(null)
+      if (e.key === 'ArrowLeft' && hasPrev) setAt(at - 1)
+      if (e.key === 'ArrowRight' && hasNext) setAt(at + 1)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [at, hasPrev, hasNext, setAt])
+  // --ratio 는 그림 비율 — CSS 가 창 너비 · 높이 중 먼저 닿는 쪽까지 키운다 (작은 그림도 크게)
+  return (
+    <div className="zoom" onClick={(e) => e.target === e.currentTarget && setAt(null)}>
+      {hasPrev && <button className="step prev" aria-label="이전 그림" onClick={() => setAt(at - 1)}>◀</button>}
+      <img key={card.key} src={fileUrl(card.file)} alt={card.file.split('/').at(-1)}
+        onLoad={(e) => e.target.style.setProperty('--ratio', e.target.naturalWidth / e.target.naturalHeight)} />
+      <p className="label caption">{card.occurrence.source} · {where(card.occurrence)}</p>
+      {hasNext && <button className="step next" aria-label="다음 그림" onClick={() => setAt(at + 1)}>▶</button>}
+    </div>
   )
 }
 

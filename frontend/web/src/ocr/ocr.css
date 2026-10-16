@@ -101,6 +101,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--surface);
   border-radius: 6px;
 }
+.zoom-open { display: block; padding: 0; border: 0; border-radius: 6px; background: none; cursor: zoom-in; }
+.zoom-open .preview { display: block; }
 .placeholder {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   padding: 16px;
@@ -129,6 +131,40 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .choices button:hover { background: var(--surface); }
 .choices button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+/* ── 크게 보기: 창을 덮는 어두운 바탕 · 그림 · 문서 이름과 위치 한 줄 · 양옆 ◀ ▶ ── */
+.zoom {
+  position: fixed; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  padding: 24px 72px;
+  background: rgb(28 28 26 / 0.88);
+  cursor: zoom-out;
+}
+/* 112px = 위아래 여백 48 + 간격 12 + 설명 한 줄 · 여유. --ratio 를 모르는 첫 순간에는 max-* 가 창 안에 묶는다 */
+.zoom img {
+  flex: none;
+  width: min(100%, (100vh - 112px) * var(--ratio));
+  max-width: 100%; max-height: calc(100vh - 112px);
+  background: var(--bg);
+  border-radius: 6px;
+  cursor: default;
+}
+.caption {
+  max-width: 100%;
+  color: var(--on-accent);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: default;
+}
+.step {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px;
+  border: 0; border-radius: 50%;
+  background: rgb(255 255 255 / 0.16);
+  color: var(--on-accent);
+}
+.step:hover { background: rgb(255 255 255 / 0.28); }
+.prev { left: 16px; }
+.next { right: 16px; }
 
 @media (max-width: 480px) {
   :root { --gutter: 16px; }
