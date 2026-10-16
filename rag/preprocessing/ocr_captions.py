@@ -95,37 +95,58 @@ def add_pdf_captions(records: list[dict], rows: list[dict], path: str) -> list[d
                 output.extend(original)
                 continue
             text = next((r["text"] for r in original if r["kind"] == "text"), "")
-            output.extend(_pdf_text_captions(text, document[page - 1], by_page[page]))
-            output.extend(r for r in original if r["kind"] != "text")
+            tables = [r for r in original if r["kind"] == "table"]
+            output.extend(_pdf_page_captions(text, document[page - 1], by_page[page], tables))
     return output
 
 
-def _pdf_text_captions(text: str, page, rows: list[dict]) -> list[dict]:
-    positioned = [(_pdf_offset(text, page, row), row["image_index"], row) for row in rows]
+def _pdf_page_captions(text: str, page, rows: list[dict], tables: list[dict]) -> list[dict]:
+    anchors = _pdf_table_anchors(page, tables)
+    anchors += [(_pdf_image_top(page, row), caption_record(row["text"], page.number + 1)) for row in rows]
+    lines = _pdf_line_offsets(text, page)
+    positioned = [(_pdf_offset(lines, top), top, record) for top, record in anchors]
     records = []
     previous = 0
-    for offset, _, row in sorted(positioned, key=lambda entry: entry[:2]):
+    for offset, _, record in sorted(positioned, key=lambda entry: entry[:2]):
         if text[previous:offset].strip():
             records.append({"page": page.number + 1, "kind": "text", "text": text[previous:offset]})
-        records.append(caption_record(row["text"], page.number + 1))
+        records.append(record)
         previous = offset
     if text[previous:].strip():
         records.append({"page": page.number + 1, "kind": "text", "text": text[previous:]})
     return records
 
 
-def _pdf_offset(text: str, page, row: dict) -> int:
+def _pdf_table_anchors(page, records: list[dict]) -> list[tuple[float, dict]]:
+    from .parsing import _md_table_blocks
+
+    if not records:
+        return []
+    tops = [table.bbox[1] for table in page.find_tables().tables
+            for block in _md_table_blocks(table.to_markdown()) if block.count("|") >= 4]
+    return list(zip(tops, records, strict=True))
+
+
+def _pdf_image_top(page, row: dict) -> float:
     xref = page.get_images()[row["image_index"]][0]
     if "xref" in row and xref != row["xref"]:
         raise ValueError(f"OCR PDF image changed: page {page.number + 1}")
-    top = min(rect.y0 for rect in page.get_image_rects(xref))
-    offsets = [0]
+    return min(rect.y0 for rect in page.get_image_rects(xref))
+
+
+def _pdf_line_offsets(text: str, page) -> list[tuple[float, int]]:
+    offsets = []
+    cursor = 0
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
-            if line["bbox"][3] > top:
-                continue
             value = "".join(span["text"] for span in line["spans"]).strip()
             pattern = r"\s*".join(re.escape(c) for c in value if not c.isspace())
-            matches = list(re.finditer(pattern, text)) if pattern else []
-            offsets.extend(match.end() for match in matches)
-    return max(offsets)
+            match = re.compile(pattern).search(text, cursor) if pattern else None
+            if match is not None:
+                cursor = match.end()
+                offsets.append((line["bbox"][3], cursor))
+    return offsets
+
+
+def _pdf_offset(lines: list[tuple[float, int]], top: float) -> int:
+    return max((offset for bottom, offset in lines if bottom <= top), default=0)
