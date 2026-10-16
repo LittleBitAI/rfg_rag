@@ -1,4 +1,6 @@
 """분포 계획: eligible 단위로만 근거 묶음을 만들고, 계획을 해시로 고정하며, 판정과 다른 패키지면 멈춘다."""
+import json
+
 import pytest
 
 from golden_pipeline import evidence, storage
@@ -65,6 +67,25 @@ def test_units_of_a_skipped_plan_are_left_out_and_the_skip_is_recorded(evidence_
 
     assert unit_ids(after) and not set(unit_ids(after)) & set(unit_ids(before))
     assert after["skipped_plans"] == {"p1": storage._sha256(first)}
+
+
+def test_a_side_keeps_only_bundles_that_ask_a_document_on_that_side_of_a_split(evidence_run, make_item):
+    # 앞 분할에 주제를 더할 때 dev 만 모자라면 dev 문서로만 다시 만든다. unanswerable 은 근거가 아니라 묻는 문서로 가린다.
+    split_dir = storage.OUTPUTS / "splits" / "s1"
+    split_dir.mkdir(parents=True)
+    item = make_item()
+    item["evidence"] = [{**item["evidence"][0], "doc_sha": DOC_2}]
+    (split_dir / "dev.jsonl").write_text(json.dumps(item) + "\n", encoding="utf-8")
+    storage._write_json(split_dir / "manifest.json", {"dev": {"sha256": storage._sha256(split_dir / "dev.jsonl")}})
+
+    make_plan("p1", "ev1", {"numeric": 2, "unanswerable": 2}, 2000, package=evidence_run, side=("s1", "dev"))
+
+    plan = load_plan("p1")[0]
+    assert {bundle["doc_sha"] for bundle in plan["bundles"]} == {DOC_2}
+    assert plan["planned"] == {"numeric": 1, "unanswerable": 2}
+    borrowed = [unit for bundle in plan["bundles"] if bundle["topic"] == "unanswerable" for unit in bundle["units"]]
+    assert {unit["ref"]["doc_sha"] for unit in borrowed} == {DOC_1}
+    assert plan["side"]["split"] == "s1" and plan["side"]["part"] == "dev"
 
 
 def table_row(row, text):

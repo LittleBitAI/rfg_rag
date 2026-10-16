@@ -9,7 +9,7 @@ REPO = storage.PACKAGE.parent
 @pytest.mark.parametrize("path", [
     REPO / "data" / "golden.jsonl",
     REPO / "artifacts" / "eval_set.jsonl",
-    REPO / "eval" / "golden_set.jsonl",
+    REPO / "eval" / "golden" / "dev.jsonl",
     REPO / "golden_pipeline" / "configs" / "x.json",
     REPO / "golden_pipeline" / "outputs" / ".." / "x.json",
     REPO / "golden_pipeline" / "outputs_other" / "x.json",

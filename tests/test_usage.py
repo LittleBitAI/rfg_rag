@@ -106,6 +106,22 @@ def test_answer_saves_actual_model_usage_and_recent_history(monkeypatch, tmp_pat
     assert messages[-1]["content"].startswith("[검색 컨텍스트]\n")
 
 
+def _eval_item(item_id: str, question: str) -> dict:
+    return {"id": item_id, "question": question, "reference": "정답", "key_facts": ["정답"], "reset_context": False,
+            "answerable": True}
+
+
+def test_an_eval_set_from_before_answerable_stops_before_any_paid_call(monkeypatch):
+    # 옛 eval_set.jsonl 로 04 를 돌리면 답변 파일에도 answerable 이 없어, 05 가 RAGAS 비용을 쓴 뒤에야 KeyError 로 멈췄다.
+    generate = MagicMock()
+    monkeypatch.setattr(generation, "generate", generate)
+    old = {k: v for k, v in _eval_item("q1", "질문").items() if k != "answerable"}
+
+    with pytest.raises(ValueError, match="answerable.*03 검증을 다시 실행"):
+        generation.answer_questions([old], MagicMock(), {}, {})
+    generate.assert_not_called()
+
+
 def test_rewrite_and_recent_answer_history_are_preserved_together(monkeypatch):
     rewrite = MagicMock(side_effect=lambda question, cfg: {"question": "검색 " + question})
     generate = MagicMock(side_effect=lambda question, hits, cfg, history:
@@ -115,7 +131,7 @@ def test_rewrite_and_recent_answer_history_are_preserved_together(monkeypatch):
     monkeypatch.setattr(generation, "get_client", MagicMock())
     index = MagicMock()
     index.search.return_value = []
-    items = [{"id": f"q{i}", "question": f"질문 {i}"} for i in range(12)]
+    items = [_eval_item(f"q{i}", f"질문 {i}") for i in range(12)]
 
     rows = generation.answer_questions(items, index, {}, {})
 
@@ -148,7 +164,7 @@ def test_reset_context_from_eval_yaml_clears_history_before_that_question(monkey
 
 def _answer_row() -> dict:
     return {"id": "q1", "question": "질문", "reference": "근거", "key_facts": ["근거"], "answer": "근거",
-            "contexts": ["근거"], "trace_id": None, "latency_s": 1.25,
+            "answerable": True, "contexts": ["근거"], "trace_id": None, "latency_s": 1.25,
             "input_tokens": 100, "cached_input_tokens": 40, "output_tokens": 30, "reasoning_tokens": 20,
             "cost_usd": 0.000076,
             "rewrite": {"input_tokens": 20, "cached_input_tokens": 0, "output_tokens": 10,
@@ -209,3 +225,44 @@ def test_each_evaluation_function_saves_scores_without_notebook(monkeypatch, tmp
                             "generation": ("key_facts_in_answer", 0)}[name]
         assert table[column].tolist() == [expected, expected]
     pd.testing.assert_frame_equal(pd.read_csv(tmp_path / f"{name}.csv", keep_default_na=False), table)
+
+
+@pytest.mark.parametrize("name", ["retrieval", "generation", "grounding", "end_to_end"])
+def test_an_answers_file_from_before_answerable_stops_before_ragas_is_paid(monkeypatch, tmp_path, name):
+    # 옛 answers.jsonl 은 RAGAS 채점을 다 산 뒤 KeyError: 'answerable' 로 멈추고 CSV 도 남기지 않았다.
+    calculate = MagicMock()
+    monkeypatch.setattr(evaluation, "_ragas", calculate)
+    monkeypatch.setattr(evaluation, "Embedder", MagicMock())
+    answers = tmp_path / "answers.jsonl"
+    write_jsonl([{k: v for k, v in _answer_row().items() if k != "answerable"}], answers)
+
+    with pytest.raises(ValueError, match=r"\['answerable'\].*03 → 02 설정 셀 → 04"):
+        getattr(evaluation, f"evaluate_{name}")(answers, load_config())
+    calculate.assert_not_called()
+
+
+@pytest.mark.parametrize("name, scores, left_out", [
+    ("retrieval", [{"llm_context_precision_with_reference": 0.5, "context_recall": 1.0},
+                   {"llm_context_precision_with_reference": 0.0, "context_recall": 0.0}],
+     ["context_precision", "context_recall", "key_facts_in_context"]),
+    ("generation", [{"answer_relevancy": 0.7}, {"answer_relevancy": 0.0}], ["answer_relevancy"]),
+])
+def test_scores_a_correct_refusal_cannot_earn_are_left_out_of_the_mean(monkeypatch, tmp_path, name, scores, left_out):
+    # 답이 문서에 없는 질문은 다른 문서 본문을 검색하고 거절해야 맞다. 그 질문의 검색 지표 · answer_relevancy 는
+    # 잘 해도 0 이라, 평균에 넣으면 맞게 동작한 검색 · 생성이 실패로 잡혔다.
+    monkeypatch.setattr(evaluation, "_ragas", MagicMock(return_value=scores))
+    monkeypatch.setattr(evaluation, "Embedder", MagicMock())
+    monkeypatch.setattr(evaluation, "_send_scores", MagicMock())
+    answers = tmp_path / "answers.jsonl"
+    refusal = {**_answer_row(), "id": "q2", "answerable": False, "key_facts": ["확인할 수 없"],
+               "reference": "제공된 문서에서 확인할 수 없습니다.", "answer": "제공된 문서에서 확인할 수 없습니다.",
+               "contexts": ["다른 사업의 본문"]}
+    write_jsonl([_answer_row(), refusal], answers)
+
+    table = getattr(evaluation, f"evaluate_{name}")(answers, load_config()).set_index("id")
+
+    for column in left_out:
+        assert pd.isna(table.loc["q2", column])
+        assert table.loc["평균", column] == table.loc["q1", column]
+    if name == "generation":
+        assert table.loc["q2", "key_facts_in_answer"] == 1

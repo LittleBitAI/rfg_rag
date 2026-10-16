@@ -10,12 +10,15 @@ RFP 문서(PDF · HWP · HWPX)를 파싱해 청크로 나누고, BM25 + 임베�
 ## 설치 — Python 3.10 (Windows, NVIDIA GPU)
 PyTorch 를 **먼저** CUDA 빌드로 설치한 뒤 `requirements.txt` 를 설치합니다.
 RTX 50 계열(Blackwell sm_120)은 CUDA 12.8 이상 빌드가 필요합니다 (cu124 이하는 `no kernel image` 오류).
+torchvision 도 같이 설치합니다. `easyocr` 가 torchvision 을 요구해, 먼저 설치해 두지 않으면 pip 가 PyPI 의
+CPU 빌드 torchvision 을 받으면서 torch 도 CPU 빌드로 바꿉니다. 그러면 임베딩이 GPU 대신 CPU 로 돌아 몇 시간이 걸립니다.
 
 ```bash
 python3.10 -m venv .venv
 .venv\Scripts\activate                       # Linux/WSL: source .venv/bin/activate
-python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 python -m pip install -r requirements.txt
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"   # 2.x.x+cu128 True
 ```
 
 저장소 최상위에 `.env` 를 만듭니다.
@@ -95,10 +98,9 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 본문이 `[IMAGE]` 표시뿐인 청크는 제외하고, 패키지에 쪽 번호가 없는 HWP는 `page = None`을 유지합니다.
 이후 02부터 다시 실행해 새 입력의 색인을 만드세요. 임베딩의 `max_seq_length` 기본값은 2048입니다.
 
-현재 파서와 v11을 비교할 때는 `eval/golden_set.jsonl`과 `eval/eval_questions.yaml`만
-`load_eval_items` → `check_eval_items`로 읽어 통과한 질문을 하나의 `eval_set.jsonl`로 고정합니다.
-03의 청크 기반 질문 생성은 실행하지 않습니다. 두 입력에 같은 질문 파일과 02 설정을 사용하고,
-각각 02 → 04 → 05를 실행해 네 평가 CSV를 별도 보관합니다.
+현재 파서와 v11을 비교할 때는 03을 한 번 실행해 골든 dev 분할(`eval/golden/dev.jsonl`)과 `eval/eval_questions.yaml`로
+만든 `eval_set.jsonl`을 두 입력에 똑같이 씁니다. 골든 test 분할(`eval/golden/test.jsonl`)은 최종 점수용이라 비교에 쓰지 않습니다.
+두 입력에 같은 질문 파일과 02 설정을 사용하고, 각각 02 → 04 → 05를 실행해 네 평가 CSV를 별도 보관합니다.
 
 ## 팀 VM `codeit` 에서 작업 (VS Code Remote-SSH, GPU NVIDIA L4)
 코드는 그대로이고, VS Code 가 VM 에 접속해 VM 의 GPU 로 실행합니다. 임베딩은 GPU 가 있으면 알아서 `cuda` 를 씁니다.
@@ -116,7 +118,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
    ```bash
    git clone https://github.com/LittleBitAI/rfg_rag ~/rfg_rag && cd ~/rfg_rag
    python3.10 -m venv .venv
-   .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+   .venv/bin/python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
    .venv/bin/python -m pip install -r requirements.txt
    .venv/bin/python -c "import torch; print(torch.cuda.is_available())"   # True
    ```
@@ -136,10 +138,10 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 |---|---|---|---|
 | ① 전처리 | `01_preprocessing.ipynb` | `rag/preprocessing/parsing.py` (PDF · HWP/HWPX 파싱 · 정제 · OCR), `rag/preprocessing/chunking.py` (청크 분할) | `artifacts/chunks.jsonl`, `artifacts/docs.jsonl` |
 | ② 검색 | `02_retrieval.ipynb` | `rag/retrieval/indexing.py` (임베딩 · FAISS · BM25 색인), `rag/retrieval/rewrite.py` (질문 재작성 · API 사용량), `rag/retrieval/retrieval.py` (하이브리드 검색 · 발주기관 라우팅) | `artifacts/index/` · `artifacts/retrieval_settings.jsonl` |
-| ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (QA 생성 · 근거 키워드 정리 · 분할 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
+| ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (골든 dev 분할 · 평가 질문 읽기 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
 | ④ 생성 | `04_generation.ipynb` | `rag/generation/generation.py` (검색 → 이전 대화를 참고해 답변 · 토큰 · 지연 시간) | `artifacts/answers.jsonl` |
 | ⑤ 평가 | `05_evaluation.ipynb` | `rag/evaluation/evaluation.py` (네 가지 평가) | `artifacts/retrieval.csv` · `generation.csv` · `grounding.csv` · `end_to_end.csv` |
-| ⑥ 질문 화면 | — | `frontend/server.py` (`answer_question` 을 감싸는 `POST /api/ask`), `frontend/web/` (React + Vite 화면), `frontend/start.cmd` · `frontend/start.command` (실행기) | 브라우저 화면의 답변 · 출처 |
+| ⑥ 질문 화면 | — | `frontend/server.py` (`answer_question` 을 감싸는 `POST /api/ask`), `frontend/web/` (React + Vite 화면), `frontend/start.cmd` · `frontend/start.command` (실행기); `frontend/ocr_select/` (OCR 이미지 라벨링 화면) | 브라우저 화면의 답변 · 출처, `artifacts/ocr_labels/labels.jsonl` |
 
 공통: `rag/config.py` (`config.yaml` · `.env` 읽기, jsonl 읽기/쓰기), `config.yaml` (모든 설정 — 파이프라인별 구역).
 
@@ -166,6 +168,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 답변 생성도 실제 응답 모델·캐시 입력 토큰·비용을 저장합니다. 05는 저장된 비용을 사용하므로 평가 시 설정을 바꿔도 이전 생성 비용이 바뀌지 않습니다.
 `latency_s`는 재작성·검색·답변 생성 전체 시간입니다. `end_to_end.csv`의 `cost_usd`는 rewrite + 답변 생성 비용이며 `rewrite_cost_usd`, `answer_cost_usd`로 구분됩니다. OCR과 평가 비용은 별도로 집계합니다.
 이번 변경 전에 만든 `answers.jsonl`은 새 사용량 필드가 없으므로 02 설정 셀 → 04 → 05를 다시 실행하세요.
+평가 항목에 `answerable` 이 생기기 전에 만든 `eval_set.jsonl` · `answers.jsonl` 은 04 · 05 가 API 호출 전에 빠진 필드를 알리고 멈춥니다. 03 → 02 설정 셀 → 04 → 05 를 다시 실행하세요.
 
 ## 질문 화면 — 브라우저에서 묻고 답 받기
 채팅 화면입니다. 내 질문은 오른쪽 말풍선, 답변은 왼쪽 `문서 도우미` 아래에 나옵니다.
@@ -187,7 +190,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
   ```
 
 실행
-- Windows: 탐색기에서 `frontend\start.cmd` 를 더블클릭합니다. 창 하나에서 API 서버(포트 8765)와 Vite 개발 서버(5173)가 함께 돌고(먼저 `npm install` — 처음 한 번만 오래 걸림), 기본 브라우저로 화면을 엽니다. 화면을 쓰는 동안 이 창을 닫지 마세요. 창을 닫으면 둘 다 꺼집니다.
+- Windows: 탐색기에서 `frontend\start.cmd` 를 더블클릭합니다. 창 하나에서 API 서버(포트 8765), OCR 이미지 라벨링 화면의 API 서버(8766), Vite 개발 서버(5173)가 함께 돌고(먼저 `npm install` — 처음 한 번만 오래 걸림), 기본 브라우저로 화면을 엽니다. 화면을 쓰는 동안 이 창을 닫지 마세요. 창을 닫으면 모두 꺼집니다.
 - macOS: Finder 에서 `frontend/start.command` 를 더블클릭합니다. 터미널 창 하나에서 둘 다 돌고, 창을 닫으면 API 서버도 꺼집니다.
 - 직접 실행 — 저장소 최상위에서 터미널 두 개:
   ```bash
@@ -200,6 +203,26 @@ API 서버는 켤 때 색인과 KURE-v1 을 읽느라 수십 초 걸립니다. A
 
 화면에서 묻는 질문도 OpenAI API 를 부르므로 `artifacts/api_usage.csv` 에 `rewrite` · `answer` 행이 추가됩니다.
 04 노트북의 행과 구분하는 열이 없어 `timestamp` 로만 가릴 수 있고, 노트북의 누적 사용량 표에 함께 잡힙니다. 평가 점수 CSV 에는 영향이 없습니다.
+
+## OCR 이미지 라벨링 화면
+RFP 문서에서 꺼낸 그림마다 OCR 이 필요한지 사람이 매기는 화면입니다. 카드 하나가 그림이 나온 위치 하나입니다. 같은 그림(반복 로고 등)도 나온 곳마다 카드가 따로 있고 따로 매깁니다.
+라벨은 `1` 꼭 인식해야 함 · `2` 인식해야 하나 어려움 · `3` 인식할 필요 없음 셋이고, 누르는 즉시 저장됩니다. 화면을 다시 열면 매긴 라벨이 그대로 보입니다.
+WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카드(형식 · 문서 이름 · 위치)로 나오고 라벨을 매길 수 있습니다.
+`artifacts/ocr_selection.jsonl`(CRAFT 선별 기록)이 있으면 카드에 CRAFT 분류를 함께 보여 줍니다. 없어도 화면은 그대로 동작합니다.
+라벨은 기록만 합니다. 01 전처리가 라벨을 읽어 OCR 대상을 고르게 하는 일은 전처리 담당의 별도 변경입니다.
+
+실행 — 저장소 최상위에서
+1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다. 문서 100개에 1분 남짓 걸립니다.
+2. 화면 열기: 질문 화면과 같은 실행기(`frontend\start.cmd` · `frontend/start.command`)를 더블클릭하고, 첫 화면 오른쪽 위 `설정` → `OCR 이미지 라벨링` 을 누릅니다 (`http://localhost:5173/ocr.html`). 실행기가 라벨링 화면의 API 서버(포트 8766)도 함께 띄웁니다.
+3. 묶음 고르기: 상단 바에서 맡은 `묶음 1` ~ `묶음 5` 를 누릅니다. 카드를 문서 이름 · 문서 안 위치 순서로 세워 다섯으로 고르게 자른 것이라(209 · 209 · 209 · 209 · 208곳), 같은 `data/rfp.zip` 으로 extract 했다면 누구 컴퓨터에서나 같은 묶음입니다. 고른 묶음은 주소(`?batch=2`)에 남아 새로고침해도 그대로입니다.
+4. 결과 내보내기: 다 매기면 상단 바의 `결과 내보내기` 를 눌러 `ocr_labels_batchN.jsonl` 을 내려받고, 합치는 사람에게 보냅니다. 저장 중인 라벨이 있으면 저장이 끝날 때까지 이 버튼이 잠기고, 진행 수는 저장을 마친 라벨만 셉니다.
+5. 합치기 (한 사람): 받은 파일을 모두 넘겨 `.venv\Scripts\python -m frontend.ocr_select.merge ocr_labels_batch1.jsonl ocr_labels_batch2.jsonl ...` 를 실행합니다. 묶음마다 매긴 수와 빠진 위치 수를 출력하고 `artifacts/ocr_labels/merged_labels.jsonl` 에 씁니다. 같은 위치를 두 사람이 매겼으면 `labelled_at` 이 늦은 라벨이 남습니다.
+
+결과 — `artifacts/ocr_labels/`
+- `images/<그림 해시>.<확장자>`: 꺼낸 그림. 같은 바이트의 그림은 파일 하나입니다. extract 를 다시 실행하면 이 폴더만 새로 만듭니다.
+- `images.jsonl`: 서로 다른 그림 한 줄씩 — `image_sha256`, `file`, `viewable`, `reason`, `occurrences`(위치마다 `doc_id` · `source` · `document_sha256` · `format`, HWP 는 `image_name` · `marker_start` · `repeated_occurrences`, PDF 는 `page` · `image_index` · `xref` · `bbox_points` — CRAFT 기록과 같은 이름). 문서에 들어 있지만 본문에 `[IMAGE]` 표시가 없는 HWP 그림(쪽에 놓이지 않은 그림 등)은 `marker_start` 가 `null` 이고, 01 전처리 · CRAFT 는 이 그림을 보지 않습니다.
+- `labels.jsonl`: 라벨을 누를 때마다 `{image_sha256, label, labelled_at, occurrences}` 한 줄을 덧붙입니다. `occurrences` 에는 매긴 위치 하나가 들어갑니다. 다시 매긴 라벨도 새 줄이고, 위치마다 마지막 줄이 지금 라벨입니다. extract 를 다시 실행해도 지우지 않습니다.
+- `merged_labels.jsonl`: 합친 결과. 매긴 위치마다 한 줄 — `labels.jsonl` 과 같은 모양에 `batch`(묶음 번호)가 더해집니다. 내려받는 `ocr_labels_batchN.jsonl` 도 같은 모양입니다.
 
 ## API 사용량 자동 기록
 
@@ -233,17 +256,17 @@ CSV는 UTF-8 without BOM입니다.
 | Grounding | 답이 검색한 청크 안에서만 나왔나 (환각) | RAGAS `faithfulness` |
 | End-to-End | 최종 답이 정답과 맞나 · 얼마나 걸리고 들었나 | RAGAS `factual_correctness`, 질문당 `latency_s` · 입력/출력/추론 토큰 · 예상 비용 `cost_usd` |
 
+- 답할 수 없음(`unanswerable`) 질문은 찾아 올 정답 근거가 없고 맞는 답이 거절 문장이라, 그 질문의 `context_precision` · `context_recall` · `key_facts_in_context` · `answer_relevancy`(거절을 0 으로 매김)는 잘 해도 0 이 나옵니다. 평가 항목의 `answerable` 이 `false` 인 질문은 이 지표를 빈 칸(NaN)으로 두어 평균에서 뺍니다.
 - Retrieval 이 낮으면 검색 문제, Retrieval 은 높은데 Grounding 이 낮으면 환각, 둘 다 높은데 End-to-End 가 낮으면 정답 · 질문을 다시 볼 차례입니다.
 - 심판 LLM 은 `config.yaml` 의 `evaluation.judge_model`(`gpt-5-mini`)입니다. 평가할 때마다 OpenAI 비용이 듭니다.
 - 프로젝트 책임자는 Langfuse Cloud 에서 질문마다 추적 하나(`answer-question` 안에 검색 `retrieve-context` · 생성 `generate-answer` — 모델 · 토큰 · 비용 포함)를 보고, 05 의 질문별 점수도 그 추적에 붙어 있습니다. 키가 없는 팀원은 노트북 표와 CSV 로 봅니다.
 
 ### 평가 데이터셋 (03 검증)
-- `eval/golden_set.jsonl`: 직접 만든 질문 · 정답(`reference`) · 핵심 사실(`key_facts`).
-- `eval/eval_questions.yaml`: 오타 · 한영 자판 · 한자 · 영어 혼용 · 잘못된 전제 질문(연말정산)과 RFP 질문. 핵심 사실은 `must_include` (`'A|B'` = 둘 중 하나).
-- 청크로 만든 QA 의 test 분할 (최대 `validation.max_qa` 개, 핵심 사실 = 근거 키워드).
+- `eval/golden/dev.jsonl`: `golden_pipeline` 분할 `final6` 의 dev 분할(30개 문서 408문항). `final2` 의 다섯 주제 396문항을 그대로 두고, 질문이 묻는 문서가 dev 에 있는 새 두 유형 12문항을 더했습니다 — 답할 수 없음(`unanswerable` 8문항: 다른 사업 문서의 속성을 묻고 정답은 `제공된 문서에서 확인할 수 없습니다.`. 검증기가 묻는 문서 전체를 표는 머리글과 함께 읽고도 답하지 못한 질문만 남김)과 틀린 전제(`false_premise` 4문항: 질문의 금액 · 기간 · 개수 · 날짜가 문서와 다르고 정답이 문서의 값으로 바로잡음). 정답은 `answer`, 핵심 사실은 주제별로 뽑습니다 — 수치형은 값+단위(`180일`), 비교형은 고른 쪽(`MAR-006`), 조건형은 조건 문장, 답할 수 없음은 `확인할 수 없`, 틀린 전제는 문서의 값+단위(`12개월`), 표형은 정답 칸(` | ` 로 나뉜 칸은 각각), 다중 근거형은 정답이 언급한 근거 표 칸 값과 칸 속 글머리 항목(◦ · - · o 로 나뉜 줄)(근거 단위마다 따로 찾힘. 문서 3개 이상에서 행 첫 칸으로 되풀이되는 `요구사항 분류` 같은 항목 이름은 빼고, 맨 수는 정답의 단위도 받음 — `47|47개`). 표 칸 값이 없거나, 정답을 바꿔 말해 사실이 정답의 60% 를 못 덮거나, 묻는 항목의 값이 질문에도 다른 뜻으로 나와 질문이 준 값인지 가를 수 없는(분류 '기능' 과 질문의 '지도기반 기능') 다중 근거 24문항은 핵심 사실 없음으로 빠져 384문항이 남습니다.
+- `eval/golden/test.jsonl`: 같은 분할의 test 분할(68개 문서 943문항: `final2` 930문항 + 답할 수 없음 8 · 틀린 전제 5). 설정을 dev 에 맞춰 고르면 test 점수가 부풀지 않게 최종 점수에만 쓰며, 03 은 읽지 않습니다. `manifest.json` 은 두 분할의 개수 · 해시입니다.
+- `eval/eval_questions.yaml`: 직접 만든 RFP 질문(멀티턴 대화 포함). 핵심 사실은 `must_include` (`'A|B'` = 둘 중 하나).
 - 질문 없음 · 중복 질문 · 대화의 후속 질문 · 정답 없음 · 핵심 사실 없음은 사유와 함께 제외합니다.
-
-> ⚠️ 연말정산 질문의 근거(국세청 연말정산 안내 등)가 ZIP 에 없으면 "제공된 문서에서 확인할 수 없습니다" 가 정상 답입니다.
+- `eval/golden/` 은 `golden_pipeline/outputs/splits/final6/` 를 그대로 복사한 것입니다(`outputs/` 는 커밋되지 않음). 새 릴리스로 바꿀 때는 다시 복사합니다.
 
 ## OCR (선택, 기본 꺼짐)
 `01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
@@ -347,7 +370,7 @@ ruff check .                              # 함수 복잡도 (C901 ≤ 8, PLR091
 01_preprocessing.ipynb … 05_evaluation.ipynb   파이프라인별 노트북 (설정 · 호출 · 표만)
 config.yaml                설정 (① 전처리 ~ ⑤ 평가 구역)
 eval/
-  golden_set.jsonl         골든 셋 (질문 · 정답 · 핵심 사실)
+  golden/                  골든 분할 final6 복사본 — dev.jsonl (03 입력) · test.jsonl (최종 점수용, 읽지 않음) · manifest.json
   eval_questions.yaml      평가 질문 세트 (질문 · 정답 · must_include)
 rag/
   config.py                config.yaml · .env 읽기, jsonl 읽기/쓰기
@@ -359,8 +382,9 @@ rag/
 golden_pipeline/           ③ 주제별 골든 데이터 스키마 · 상태 · 저장 규약 · v11 근거 어댑터 (테스트는 tests/golden/)
 frontend/                  ⑥ 질문 화면
   server.py                POST /api/ask — answer_question 을 감싸는 FastAPI
-  web/                     React + Vite 화면 (/api 는 server.py 로 프록시)
+  web/                     React + Vite 화면 (/api 는 server.py, /ocr-api 는 ocr_select/server.py 로 프록시; ocr.html 은 라벨링 화면)
   start.cmd · start.command  Windows · macOS 실행기
+  ocr_select/              OCR 이미지 라벨링 — extract.py (그림 꺼내기) · server.py (API, 위 실행기가 8766 에 띄움) · merge.py (묶음 결과 합치기)
 tests/test_smoke.py        게이트: rag/ 모든 모듈 import
 artifacts/                 (커밋 안 함) 노트북 사이에 주고받는 파일
 ```

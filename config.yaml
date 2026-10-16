@@ -56,17 +56,8 @@ rewrite:
 
 # ── ③ 검증 (03_validation) ──
 validation:
-  golden_sets: [eval/golden_set.jsonl, eval/eval_questions.yaml]   # 직접 만든 질문·정답·핵심 사실
-  qa_per_doc: 15                # 문서당 QA 를 만들 청크 수 (gpt 호출 수 = 문서 수 × 이 값)
-  qa_min_chunk_chars: 250       # 이보다 짧은 청크로는 QA 를 만들지 않음
-  qa_workers: 4                 # 동시에 보내는 QA 생성 요청 수
-  qa_max_tokens: 3000
-  qa_reasoning_effort: low
-  min_keywords: 2               # 근거 청크에 실제로 있는 근거 키워드가 이 개수 미만인 QA 는 제외
-  max_keywords: 8               # QA 당 근거 키워드 최대 개수
-  split_ratio: [0.7, 0.15, 0.15]  # train / valid / test — 평가에는 test 만 사용
-  seed: 42
-  max_qa: 30                    # 평가 데이터셋에 넣는 test QA 최대 개수
+  # 골든 dev 분할 + RFP 평가 질문. 골든 test 분할(eval/golden/test.jsonl)은 최종 점수용으로 남겨 두고 읽지 않음
+  golden_sets: [eval/golden/dev.jsonl, eval/eval_questions.yaml]
 
 # ── ④ 생성 (04_generation) ──
 llm:

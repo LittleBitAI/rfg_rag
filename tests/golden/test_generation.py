@@ -321,3 +321,45 @@ def test_c_sidecar_with_an_unknown_field_is_refused(planned, tmp_path):
     with pytest.raises(ValueError, match="sidecar"):
         import_c("numeric", "p1", "c1", [export], sidecar)
     assert not (storage.OUTPUTS / "goldens").exists()
+
+
+REFUSAL = "제공된 문서에서 확인할 수 없습니다."
+DUE = "하자 보수 기간은 계약 종료 후 1년 이내로 한다."
+
+
+@pytest.mark.parametrize("question, answer, structure, ok", [
+    ("하자 보수 기간은 얼마인가?", REFUSAL, {"attribute": "하자 보수 기간", "key_terms": ["하자"]}, True),
+    # 답이 거절 문장이 아니면 ④ 생성의 거절과 견줄 수 없다.
+    ("하자 보수 기간은 얼마인가?", "1년 이내", {"attribute": "하자 보수 기간", "key_terms": ["하자"]}, False),
+    # 빌린 속성은 근거에 적혀 있어야 한다.
+    ("드론 해상도는?", REFUSAL, {"attribute": "드론 해상도", "key_terms": ["드론"]}, False),
+    # 핵심어는 속성의 낱말이고 질문에도 있어야 한다. 아니면 문서 검사가 엉뚱한 낱말을 찾는다.
+    ("하자 보수 기간은 얼마인가?", REFUSAL, {"attribute": "하자 보수 기간", "key_terms": ["입찰"]}, False),
+    ("보수 기간은 얼마인가?", REFUSAL, {"attribute": "하자 보수 기간", "key_terms": ["하자"]}, False),
+    ("하자 보수 기간은 얼마인가?", REFUSAL, {"attribute": "하자 보수 기간", "key_terms": ["하자 보수"]}, False),
+])
+def test_unanswerable_borrows_an_attribute_from_its_evidence_and_answers_with_the_refusal(question, answer, structure, ok):
+    row = {"question": question, "answer": answer, "structure": structure}
+    reason = check_structure("unanswerable", topic_spec("unanswerable")[0], row, [unit(DUE)])
+    assert (reason is None) == ok, reason
+
+
+BUDGET = "사업 예산은 130,000,000원(부가세 포함)이며 계약 기간은 12개월이다."
+
+
+@pytest.mark.parametrize("question, answer, stated, actual, ok", [
+    ("계약 기간 9개월은 언제 끝나나?", "계약 기간은 9개월이 아니라 12개월이다.", "9개월", "12개월", True),
+    # actual 은 근거에 수 · 단위째 그대로 있어야 한다. 130,000,000원 안의 30,000,000원 은 근거의 값이 아니다.
+    ("사업 예산 20,000,000원은 부가세를 포함하나?", "예산은 30,000,000원이다.", "20,000,000원", "30,000,000원", False),
+    ("계약 기간 9개는 언제 끝나나?", "계약 기간은 9개가 아니라 12개다.", "9개", "12개", False),
+    # 단위가 다르면 같은 값일 수 있다 (1년 = 12개월).
+    ("계약 기간 1년은 언제 끝나나?", "계약 기간은 12개월이다.", "1년", "12개월", False),
+    ("계약 기간 9개월, 즉 12개월은?", "12개월이다.", "9개월", "12개월", False),
+    ("계약 기간 9개월은 언제 끝나나?", "9개월이 아니다.", "9개월", "12개월", False),
+    # 금액 · 기간 · 개수 · 날짜만 전제로 쓴다.
+    ("낙찰 하한율 3%는?", "5%이다.", "3%", "5%", False),
+])
+def test_false_premise_states_a_value_the_evidence_corrects(question, answer, stated, actual, ok):
+    row = {"question": question, "answer": answer, "structure": {"stated": stated, "actual": actual}}
+    reason = check_structure("false_premise", topic_spec("false_premise")[0], row, [unit(BUDGET)])
+    assert (reason is None) == ok, reason

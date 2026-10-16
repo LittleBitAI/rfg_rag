@@ -118,6 +118,8 @@ UNITS = [
     ("u7", DOC_2, "평가 위원은 7명으로 구성한다.", "held"),
     ("u8", DOC_2, "입찰 보증금은 입찰 금액의 5% 이상으로 한다.", "eligible"),
 ]
+GRID_UNIT = f"grid:{DOC_2}:BodyText/Section0:7:0:0"
+GRID_CELL = "하자 보수 기간: 2년\n"
 
 
 def _unit(unit_id, doc, body, row):
@@ -167,15 +169,24 @@ def evidence_run(outputs, tmp_path, monkeypatch):
         "파일명,발주기관\n사단법인가기관_가사업 구축.hwp,가기관\n나기관_[재공고]나사업 운영.hwp,나기관\n", encoding="utf-8")
     (package / "manifest.json").write_text('{"package": "fake v11"}', encoding="utf-8")
 
+    # 원본 그리드 참고 파일의 셀은 늘 held 다. 문서에 없음을 보는 주제는 이 셀의 글까지 읽는다.
+    (package / "validation").mkdir()
+    _write_jsonl(package / evidence.GRIDS, [{"source_document_sha256": DOC_2, "stream": "BodyText/Section0", "control": 7,
+                                             "cells": [{"row": 0, "col": 0, "rowspan": 1, "text": GRID_CELL}]}])
+    grid = {**_unit("g", DOC_2, "", None), "unit_id": GRID_UNIT, "chunk_id": None, "element_id": None,
+            "location": {"kind": "table", "grid": "original_reference", "row": 0, "cell": 0}}
+
     run_dir = outputs / "outputs" / "evidence" / "ev1"
     run_dir.mkdir(parents=True)
     table_rows = iter(range(len(rows)))
     _write_jsonl(run_dir / "units.jsonl", [
-        _unit(unit_id, doc, body, next(table_rows) if isinstance(body, list) else None)
-        for unit_id, doc, body, _ in UNITS
+        *(_unit(unit_id, doc, body, next(table_rows) if isinstance(body, list) else None)
+          for unit_id, doc, body, _ in UNITS),
+        grid,
     ])
     _write_jsonl(run_dir / "judgments.jsonl", [
-        {"unit_id": unit_id, "judgment": judgment, "reasons": []} for unit_id, _, _, judgment in UNITS
+        *({"unit_id": unit_id, "judgment": judgment, "reasons": []} for unit_id, _, _, judgment in UNITS),
+        {"unit_id": GRID_UNIT, "judgment": "held", "reasons": [evidence.GRID_UNVERIFIED]},
     ])
     pinned = {name: storage._sha256(package / name) for name in ("manifest.json", "final_elements.jsonl")}
     (run_dir / "manifest.json").write_text(json.dumps({"pinned_sha256": pinned}), encoding="utf-8")

@@ -39,6 +39,10 @@ FAILURE_CODES = (
     ("답 덧붙임", "answer_dump"),
     ("비교 아님", "invalid_comparison"),
     ("판정기 출력 오류", "validator_output"),
+    ("대상 문서에 있음", "present_in_target"),
+    ("전제가 문서에 있음", "premise_in_document"),
+    ("근거 지칭", "evidence_reference"),
+    ("배점 기준", "scoring_as_requirement"),
 )
 # 규칙 글을 바꾸면 PREVENTION_VERSION 을 올린다. 기록 항목은 쓸 때의 버전을 남긴다.
 PREVENTION_RULES = {
@@ -57,6 +61,8 @@ PREVENTION_RULES = {
     "single_chunk": "evidence 에 청크 번호가 다른 근거를 함께 넣고, 그 근거들을 이어야 답이 나오게 묻는다.",
     "validator_output":"질문은 근거만 읽고 짧은 답 하나로 답할 수 있게 묻는다.",
     "evidence_conflict": "근거끼리 값이 다르게 적힌 사실은 묻지 않는다.",
+    "present_in_target": "어느 사업 문서에나 있을 만한 속성 말고, 근거 사업에만 있는 고유한 속성과 핵심어로 묻는다.",
+    "premise_in_document": "stated 는 문서의 어느 값과도 겹치지 않게, 근거의 다른 값이나 흔한 값을 피한 드문 수로 바꾼다.",
     # 아래는 검증을 통과했지만 규칙 검사(validation.rule_reason) · 출시 쓸모 판정이 뺀 실패의 코드다 (record_screen).
     "useless_answer": "답이 '방문 후 열람 가능' · '없음' 같은 안내 문구나 빈 값이 되는 질문은 만들지 않는다.",
     "ordinal_reference": "대상을 순번('1행' · '번호 3' · '연번 2'), '둘 중', '첫 번째 값' · '값과 단위' 로 가리키지 말고 이름으로 가리킨다.",
@@ -64,6 +70,7 @@ PREVENTION_RULES = {
     "answer_dump": "답에는 묻는 내용만 쓰고, 근거 원문이나 '(조건: …)' 같은 덧붙임을 붙이지 않는다.",
     "invalid_comparison": "같은 종류의 대상끼리만 비교하고, 표 머리글 · 합계와 그 부분 · 서로 다른 속성(예: 인원과 기간)은 비교하지 않는다.",
     "malformed_question": "질문은 끊기지 않은 완결된 한 문장으로 쓴다.",
+    "scoring_as_requirement": "배점표의 기준값은 배점 · 평가 기준으로 묻고, 제출 · 참가 요건처럼 묻지 않는다.",
     "personal_info": "사람 이름 · 연락처 · 결재란을 묻지 않는다.",
     "structure_question": "목차 번호 · 항목 위치 · 표 형식을 묻지 말고 내용을 묻는다.",
     "evidence_reference": "질문자는 근거를 보지 못하므로 'E1 · E2' · '근거들' · '이 요구사항' 처럼 근거를 가리키지 말고 이름으로 묻는다.",

@@ -73,7 +73,7 @@ Each has exactly one owner.
 | 3 | Validation | Building and checking the evaluation dataset | Evaluation dataset |
 | 4 | Generation | Answering questions from retrieved chunks | Answers |
 | 5 | Evaluation | Four evaluations of one answers file: Retrieval, Generation, Grounding, End-to-End | Four score tables and CSV files |
-| 6 | Frontend | `frontend/`: the question screen and its launchers; wraps `answer_question` and holds no RAG logic | Answers on screen |
+| 6 | Frontend | `frontend/`: the question screen and the OCR image labelling screen (`frontend/ocr_select/`), with their launchers; wraps `answer_question` and reuses preprocessing functions, holds no RAG logic | Answers on screen, OCR image labels in `artifacts/ocr_labels/` |
 
 | # | Notebook | Modules |
 |---|---|---|

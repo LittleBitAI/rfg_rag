@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 
 from golden_pipeline.state import TRANSITIONS
 
-TOPICS = ("numeric", "table", "condition", "comparison", "multi_hop")
+# 계획은 이 차례로 묶음을 고른다. 뒤에 더한 두 주제가 앞 다섯의 묶음 선택을 바꾸지 않게 끝에 둔다.
+TOPICS = ("numeric", "table", "condition", "comparison", "multi_hop", "unanswerable", "false_premise")
 METHODS = ("A", "B", "C")
 STATES = ("candidate", "auto_validated", "rejected", "released")
 # 표 위치가 원본 격자를 확인한 것인지, 검증되지 않은 원본 격자 참고 파일의 것인지,

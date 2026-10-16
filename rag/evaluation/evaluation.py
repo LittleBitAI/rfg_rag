@@ -45,7 +45,8 @@ def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, embeddin
 
 _DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
 _UNITS = "원|초|분|시간|개월|년|월|일|명|개|건|회|%|조|항|호|차|점|장|단계"
-_NUMBER = re.compile(rf"(?<![\d.,]){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*(?:\s*(?:{_UNITS}))?")
+# '글자-' 바로 뒤 숫자는 SFR-009 같은 식별자의 일부라 수량이 아니다 — 'SFR-009\n분류' 가 9분이 되지 않게
+_NUMBER = re.compile(rf"(?<![\d.,])(?<![^\W\d_]-){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*(?:\s*(?:{_UNITS}))?")
 _NUMBER_PART = re.compile(rf"({_DIGITS})?([억만천백])|({_DIGITS})")
 _MULTIPLIERS = {"억": 100_000_000, "만": 10_000, "천": 1_000, "백": 100}
 _TIME = r"(?:\d{1,2}:\d{2}|(?:오전|오후)\s*\d{1,2}시(?:\s*\d{1,2}분)?)"
@@ -133,8 +134,11 @@ def _canonical_text(text: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 def _negated(text: str, start: int, end: int) -> bool:
-    return (start > 0 and text[start - 1] in "미불비"
-            or re.search(r"않|제외|별도|없", text[end:end + 6]) is not None)
+    if start > 0 and text[start - 1] in "미불비" or re.search(r"않|제외|없", text[end:end + 6]):
+        return True
+    # '별도' 는 '부가세 별도' 처럼 말이 끝날 때만 부정이다. '별도 시건장치' · '별도로' 처럼 뒤를 꾸미면 '따로' 다
+    separate = re.search(r"별도", text[end:end + 6])
+    return separate is not None and not re.match(r"\s*\w", text[end + separate.end():])
 
 
 def _fact_pattern(fact: str) -> str:
@@ -148,7 +152,8 @@ def _fact_pattern(fact: str) -> str:
             parts.append(re.escape(token))
         cursor = end
     parts.append(re.escape(_plain_text(fact, cursor, len(fact))[0]))
-    return "".join(parts)
+    # 식별자 숫자는 글자 그대로 찾으므로 앞뒤에 숫자가 더 붙으면 다른 값이다 (SFR-009 ≠ SFR-0091)
+    return ("(?<!\\d)" if fact[:1].isdigit() else "") + "".join(parts) + ("(?!\\d)" if fact[-1:].isdigit() else "")
 
 
 def _fact_matches(fact: str, hay: str, positions: list[tuple[int, int]], text: str) -> bool:
@@ -190,30 +195,53 @@ def _table(rows: list[dict], scores: list[dict], path: Path) -> pd.DataFrame:
     return table
 
 
+# 05 의 네 평가가 답변 파일 한 행에서 읽는 필드
+ANSWER_FIELDS = ("id", "question", "reference", "key_facts", "answerable", "answer", "contexts", "trace_id", "latency_s",
+                 "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "cost_usd", "rewrite")
+
+
+def _read_answers(answers_path: Path) -> list[dict]:
+    """답변 파일을 읽고, 평가가 읽을 필드가 빠진 행이 있으면 RAGAS 호출(유료) 전에 멈춘다"""
+    answers = read_jsonl(answers_path)
+    missing = sorted({field for r in answers for field in ANSWER_FIELDS if field not in r})
+    if missing:
+        raise ValueError(f"{answers_path} 에 {missing} 필드가 없습니다. 03 → 02 설정 셀 → 04 를 다시 실행해 답변 파일을 만드세요")
+    return answers
+
+
+def _unanswerable_as_nan(rows: list[dict], scores: list[dict], names: tuple[str, ...]) -> list[dict]:
+    """답이 문서에 없는 질문(answerable False)에서 names 지표를 NaN 으로 — 평균 · Langfuse 에서 빠진다.
+    그 질문은 찾아 올 정답 근거가 없고 맞는 답이 거절 문장('확인할 수 없습니다')이라, 이 지표들은 잘 해도 0 이 나온다"""
+    return [s if r["answerable"] else {**s, **dict.fromkeys(names, math.nan)} for r, s in zip(rows, scores)]
+
+
 def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Retrieval: 검색한 청크가 정답에 필요한 내용을 담았나"""
-    rows = read_jsonl(answers_path)
+    rows = _read_answers(answers_path)
     ragas = _ragas(rows, [LLMContextPrecisionWithReference(), LLMContextRecall()], cfg, "retrieval")
     scores = [{"context_precision": s["llm_context_precision_with_reference"], "context_recall": s["context_recall"],
                "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))}
               for r, s in zip(rows, ragas)]
+    scores = _unanswerable_as_nan(rows, scores, ("context_precision", "context_recall", "key_facts_in_context"))
     _send_scores(rows, scores)
     return _table(rows, scores, answers_path.with_name("retrieval.csv"))
 
 
 def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Generation: 답이 질문에 맞게 핵심 사실을 담았나 (answer_relevancy 는 KURE 임베딩으로 계산)"""
-    rows = read_jsonl(answers_path)
+    rows = _read_answers(answers_path)
     ragas = _ragas(rows, [ResponseRelevancy()], cfg, "generation", embeddings=Embedder(cfg["embedding"]))
     scores = [{"answer_relevancy": s["answer_relevancy"], "key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])}
               for r, s in zip(rows, ragas)]
+    # answer_relevancy 는 얼버무린 답(거절 포함)을 0 으로 매긴다. 거절이 정답인 질문에서는 뺀다
+    scores = _unanswerable_as_nan(rows, scores, ("answer_relevancy",))
     _send_scores(rows, scores)
     return _table(rows, scores, answers_path.with_name("generation.csv"))
 
 
 def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Grounding: 답의 주장들이 검색한 청크로 뒷받침되나 (낮으면 환각)"""
-    rows = read_jsonl(answers_path)
+    rows = _read_answers(answers_path)
     ragas = _ragas(rows, [Faithfulness()], cfg, "grounding")
     scores = [{"faithfulness": s["faithfulness"]} for s in ragas]
     _send_scores(rows, scores)
@@ -222,7 +250,7 @@ def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
 
 def evaluate_end_to_end(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """End-to-End: 최종 답이 정답과 사실이 맞는지 + 질문당 지연 시간·토큰·예상 비용(USD)"""
-    rows = read_jsonl(answers_path)
+    rows = _read_answers(answers_path)
     ragas = _ragas(rows, [FactualCorrectness()], cfg, "end_to_end")
     # 지연 시간 · 토큰 · 비용은 추적에 이미 있으므로 점수로는 factual_correctness 만 보낸다
     _send_scores(rows, [{"factual_correctness": s["factual_correctness(mode=f1)"]} for s in ragas])

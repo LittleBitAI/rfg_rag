@@ -44,7 +44,8 @@ def test_rewrite_settings_usage_and_empty_output(monkeypatch, content, details, 
 def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypatch, route):
     for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
-    item = {"id": "q1", "question": "원본 기관 비교 질문", "reference": "정답", "key_facts": ["근거"]}
+    item = {"id": "q1", "question": "원본 기관 비교 질문", "reference": "정답", "key_facts": ["근거"],
+            "reset_context": False, "answerable": True}
     rewrite_result = {"question": "검색용 질문", "model": "rewrite-model", "input_tokens": 10,
                       "output_tokens": 5, "reasoning_tokens": 2, "latency_s": 0.1}
     rewrite_fn = MagicMock(return_value=rewrite_result)
