@@ -60,11 +60,13 @@ export default function Review() {
     try {
       const res = await fetch('/ocr-api/review/verdicts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_sha256: card.image_sha256, verdict }),
+        body: JSON.stringify({ image_sha256: card.image_sha256, transcription_sha256: card.transcription_sha256, verdict }),
       })
+      if (res.status === 409) throw new Error('OCR 결과가 바뀌었습니다. 새로고침한 뒤 다시 검토하세요.')
       if (!res.ok) throw new Error('판정을 저장하지 못했습니다. 다시 눌러 주세요.')
       const saved = await res.json()
-      setCards((current) => current.map((c) => c.image_sha256 === saved.image_sha256 ? { ...c, ...saved } : c))
+      setCards((current) => current.map((c) => c.image_sha256 === saved.image_sha256 &&
+        c.transcription_sha256 === saved.transcription_sha256 ? { ...c, ...saved } : c))
       setIndex(position)
     } catch (err) {
       setError(err.message)

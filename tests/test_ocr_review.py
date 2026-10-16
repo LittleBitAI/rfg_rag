@@ -54,17 +54,19 @@ def test_391_places_become_320_cards_with_all_places_and_unchanged_transcription
 
 
 def test_verdicts_append_and_reload_uses_last_row_without_changing_inputs_or_usage(saved_results):
-    client, _ = saved_results
+    client, captions = saved_results
     usage = review.ROOT / "artifacts" / "api_usage.csv"
     before = {path: path.read_bytes() for path in (review.CAPTIONS, review.IMAGES, usage) if path.exists()}
-    assert client.get("/ocr-api/review").status_code == 200
+    card = client.get("/ocr-api/review").json()[0]
+    identity = {key: card[key] for key in ("image_sha256", "transcription_sha256")}
     entries = []
     for verdict in ("wrong", "partly_wrong", "ok"):
         prefix = review.REVIEWS.read_bytes() if review.REVIEWS.exists() else b""
-        response = client.post("/ocr-api/review/verdicts", json={"image_sha256": "image-0", "verdict": verdict})
+        response = client.post("/ocr-api/review/verdicts", json={**identity, "verdict": verdict})
         assert response.status_code == 200
         entry = response.json()
-        assert set(entry) == {"image_sha256", "verdict", "reviewed_at"}
+        assert set(entry) == {"image_sha256", "transcription_sha256", "verdict", "reviewed_at"}
+        assert entry["transcription_sha256"] == identity["transcription_sha256"]
         assert entry["verdict"] == verdict
         assert datetime.fromisoformat(entry["reviewed_at"]).tzinfo is not None
         assert review.REVIEWS.read_bytes().startswith(prefix)
@@ -74,14 +76,57 @@ def test_verdicts_append_and_reload_uses_last_row_without_changing_inputs_or_usa
     assert reloaded[0]["verdict"] == "ok" and reloaded[0]["reviewed_at"] == entries[-1]["reviewed_at"]
     assert all(card["verdict"] is None for card in reloaded[1:])
     assert all(path.read_bytes() == payload for path, payload in before.items())
+    captions[0]["source"] = "renamed.pdf"
+    write_rows(review.CAPTIONS, captions)
+    assert client.get("/ocr-api/review").json()[0]["verdict"] == "ok"
+
+
+@pytest.mark.parametrize("field,value", [("text", "변경된 전사"), ("engine", "new-engine"), ("image_type", "text")])
+def test_changed_transcription_requires_new_review_and_rejects_stale_save(saved_results, field, value):
+    client, captions = saved_results
+    original = client.get("/ocr-api/review").json()[0]
+    payload = {key: original[key] for key in ("image_sha256", "transcription_sha256")}
+    assert client.post("/ocr-api/review/verdicts", json={**payload, "verdict": "ok"}).status_code == 200
+    before = review.REVIEWS.read_bytes()
+    for row in captions:
+        if row["image_sha256"] == original["image_sha256"]:
+            row[field] = value
+    write_rows(review.CAPTIONS, captions)
+
+    changed = client.get("/ocr-api/review").json()[0]
+    assert changed[field] == value
+    assert changed["transcription_sha256"] != original["transcription_sha256"]
+    assert changed["verdict"] is None and changed["reviewed_at"] is None
+    assert client.post("/ocr-api/review/verdicts", json={**payload, "verdict": "wrong"}).status_code == 409
+    assert review.REVIEWS.read_bytes() == before
+
+    payload["transcription_sha256"] = changed["transcription_sha256"]
+    assert client.post("/ocr-api/review/verdicts", json={**payload, "verdict": "partly_wrong"}).status_code == 200
+    assert client.get("/ocr-api/review").json()[0]["verdict"] == "partly_wrong"
+    entries = review.read_rows(review.REVIEWS)
+    assert [row["transcription_sha256"] for row in entries] == [
+        original["transcription_sha256"], changed["transcription_sha256"]]
+    assert review.REVIEWS.read_bytes().startswith(before)
+
+
+def test_legacy_verdict_without_transcription_identity_is_preserved_but_not_applied(saved_results):
+    client, _ = saved_results
+    write_rows(review.REVIEWS, [{"image_sha256": "image-0", "verdict": "ok", "reviewed_at": "2026-10-17T00:00:00Z"}])
+    before = review.REVIEWS.read_bytes()
+    card = client.get("/ocr-api/review").json()[0]
+    assert card["verdict"] is None and card["reviewed_at"] is None
+    assert client.post("/ocr-api/review/verdicts", json={"image_sha256": "image-0", "verdict": "ok"}).status_code == 422
+    assert review.REVIEWS.read_bytes() == before
 
 
 @pytest.mark.parametrize("payload,status", [
-    ({"image_sha256": "unknown", "verdict": "ok"}, 404),
+    ({"image_sha256": "unknown", "transcription_sha256": "unknown", "verdict": "ok"}, 404),
     ({"image_sha256": "image-0", "verdict": "maybe"}, 422),
     ({"image_sha256": "image-0", "verdict": "ok", "text": "edited"}, 422),
 ])
 def test_invalid_verdict_does_not_create_a_review_file(saved_results, payload, status):
     client, _ = saved_results
-    assert client.post("/ocr-api/review/verdicts", json=payload).status_code == status
+    card = client.get("/ocr-api/review").json()[0]
+    identity = {key: card[key] for key in ("image_sha256", "transcription_sha256")}
+    assert client.post("/ocr-api/review/verdicts", json={**identity, **payload}).status_code == status
     assert not review.REVIEWS.exists()
