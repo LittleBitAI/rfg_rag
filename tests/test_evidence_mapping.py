@@ -1,5 +1,6 @@
 """실제 파일 SHA와 골든 좌표를 쓰되 API·색인 없이 라벨 연결을 검증한다."""
 import hashlib
+import io
 import json
 import unicodedata
 import zipfile
@@ -255,3 +256,74 @@ def test_supported_ingestion_to_notebook_without_previous_artifacts(tmp_path, ro
     assert labelled["evidence"][0]["chunk_id"] == chunks[0]["chunk_id"]
     assert len(namespace["sample"]) == 1
     assert namespace["mapping"]["doc_unmapped"].sum() == 0
+
+
+def _two_document_items(package, first, second):
+    [item] = _source_golden(package, TEXT, hashlib.sha256(first).hexdigest())
+    other = {**item, "id": "other", "golden_evidence": [
+        {**item["golden_evidence"][0], "doc_sha": hashlib.sha256(second).hexdigest()}]}
+    return [item, other]
+
+
+@pytest.mark.parametrize("route", ["zip", "nested_zip", "directory_zip"])
+def test_zip_labels_do_not_depend_on_previous_nested_extractions(tmp_path, route):
+    previous, current = b"previous document bytes", b"different current document bytes"
+    nested = io.BytesIO()
+    with zipfile.ZipFile(nested, "w") as archive:
+        archive.writestr("사업.pdf", previous)
+    old_zip = tmp_path / "old-run.zip"
+    with zipfile.ZipFile(old_zip, "w") as archive:
+        archive.writestr("old.zip", nested.getvalue())
+    raw = tmp_path / "artifacts/raw"
+    collect_inputs(old_zip, raw)
+    input_path = _pdf_input(tmp_path, route, current)
+    collect_inputs(input_path, raw)
+    package = tmp_path / "package"
+    package.mkdir()
+    items = _two_document_items(package, previous, current)
+    chunks = [{"source": "사업.pdf", "doc_id": "current", "chunk_id": "live", "body": TEXT}]
+
+    labelled = label_evidence(items, chunks, raw, package, input_path)
+
+    assert labelled[0]["evidence"][0]["reason"] == "doc_unmapped"
+    assert labelled[0]["evidence"][0]["chunk_id"] is None
+    assert labelled[1]["evidence"][0]["chunk_id"] == "live"
+    clean_raw = tmp_path / "clean/raw"
+    collect_inputs(input_path, clean_raw)
+    assert labelled == label_evidence(items, chunks, clean_raw, package, input_path)
+
+
+def test_zip_rejects_cached_bytes_that_do_not_match_the_current_archive(tmp_path):
+    previous, current = b"old!", b"new!"
+    raw = tmp_path / "raw"
+    for name, data in [("previous", previous), ("current", current)]:
+        with zipfile.ZipFile(tmp_path / f"{name}.zip", "w") as archive:
+            archive.writestr("사업.pdf", data)
+        collect_inputs(tmp_path / f"{name}.zip", raw)
+    # 01은 길이가 같은 기존 파일을 다시 풀지 않으므로 아카이브 본문과의 대조가 필요하다.
+    assert (raw / "사업.pdf").read_bytes() == previous
+    package = tmp_path / "package"
+    package.mkdir()
+    items = _two_document_items(package, previous, current)
+    chunks = [{"source": "사업.pdf", "doc_id": "current", "chunk_id": "live", "body": TEXT}]
+
+    labelled = label_evidence(items, chunks, raw, package, tmp_path / "current.zip")
+
+    assert all(it["doc_ids"] == [] and it["evidence"][0]["chunk_id"] is None for it in labelled)
+    assert all(it["evidence"][0]["reason"] == "doc_unmapped" for it in labelled)
+
+
+def test_different_active_files_with_the_same_source_name_are_not_certified(tmp_path):
+    source = tmp_path / "source"
+    for name, data in [("a", b"first document"), ("b", b"second document")]:
+        folder = source / name
+        folder.mkdir(parents=True)
+        (folder / "사업.pdf").write_bytes(data)
+    package = tmp_path / "package"
+    package.mkdir()
+    items = _two_document_items(package, b"first document", b"second document")
+    chunks = [{"source": "사업.pdf", "doc_id": "current", "chunk_id": "live", "body": TEXT}]
+
+    labelled = label_evidence(items, chunks, tmp_path / "absent-raw", package, source)
+
+    assert all(it["doc_ids"] == [] and it["evidence"][0]["reason"] == "doc_unmapped" for it in labelled)

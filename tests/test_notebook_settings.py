@@ -12,6 +12,14 @@ from rag.preprocessing import parsing
 from rag.usage import UsageCallback
 
 
+def test_notebooks_have_no_saved_execution_results():
+    for path in sorted(ROOT.glob("*.ipynb")):
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        for cell in notebook["cells"]:
+            assert cell.get("execution_count") is None, path.name
+            assert not cell.get("outputs"), path.name
+
+
 def test_ocr_parser_uses_selected_model_and_effort(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     cfg = {"model": "gpt-5-mini", "max_tokens": 1234, "reasoning_effort": "high"}

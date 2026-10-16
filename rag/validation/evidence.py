@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import random
 import re
 import unicodedata
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
 
 from ..config import read_jsonl
+from ..preprocessing.parsing import SUPPORTED, _safe_name, _zip_name
 
 
 # 짧은 수·코드·항목 이름만으로 청크를 확정하지 않는다. test 결과와 무관하게 고정한다.
@@ -23,16 +26,39 @@ def normalize_evidence(text: str) -> str:
     return " ".join(unicodedata.normalize("NFC", text).replace("|", " ").split())
 
 
-def _input_files(input_path: Path, raw_dir: Path) -> list[Path]:
-    if input_path.is_dir():
-        files = list(input_path.rglob("*"))
-        archives = [p for p in files if p.suffix.lower() == ".zip"]
-        files.extend(p for archive in archives for p in (raw_dir / archive.stem).rglob("*"))
-    elif input_path.suffix.lower() == ".zip":
-        files = list(raw_dir.rglob("*"))
-    else:
-        files = [input_path]
-    return sorted(p for p in files if p.is_file() and p.suffix.lower() in (".pdf", ".hwp", ".hwpx"))
+def _archive_files(archive, raw_dir: Path):
+    with zipfile.ZipFile(archive) as zipped:
+        for info in zipped.infolist():
+            name = _zip_name(info)
+            source = _safe_name(re.sub(r'[<>:"|?*\x00-\x1f]', "_", name.replace("\\", "/").split("/")[-1]).strip())
+            if info.is_dir() or "__MACOSX" in name or source.startswith("._"):
+                continue
+            if source.lower().endswith(".zip"):
+                yield from _archive_files(io.BytesIO(zipped.read(info)), raw_dir / Path(source).stem)
+            elif source.lower().endswith(SUPPORTED):
+                yield raw_dir / source, hashlib.sha256(zipped.read(info)).hexdigest()
+
+
+def _input_files(input_path: Path, raw_dir: Path):
+    paths = sorted(input_path.rglob("*")) if input_path.is_dir() else [input_path]
+    for path in paths:
+        if not path.is_file():
+            continue
+        if path.suffix.lower() == ".zip":
+            destination = raw_dir / path.stem if input_path.is_dir() else raw_dir
+            yield from _archive_files(path, destination)
+        elif path.suffix.lower() in SUPPORTED:
+            yield path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _raw_documents(sources: dict, raw_dir: Path, input_path: Path) -> dict:
+    candidates = defaultdict(set)
+    for path, expected_sha in _input_files(input_path, raw_dir):
+        source = unicodedata.normalize("NFC", path.name)
+        if source in sources and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == expected_sha:
+            candidates[source].add(expected_sha)
+    return {next(iter(shas)): {"source": source, "doc_id": sources[source]}
+            for source, shas in candidates.items() if len(shas) == 1}
 
 
 def link_documents(chunks: list[dict], raw_dir: Path, input_path: Path, elements: dict) -> dict[str, dict]:
@@ -46,12 +72,8 @@ def link_documents(chunks: list[dict], raw_dir: Path, input_path: Path, elements
             documents[metadata["sha256"]] = {"source": source, "doc_id": metadata["doc_id"]}
     if all(doc_id in documents for doc_id in sources.values()):
         return documents
-    for path in _input_files(input_path, raw_dir):
-        source = unicodedata.normalize("NFC", path.name)
-        if source in sources and sources[source] not in documents:
-            sha = hashlib.sha256(path.read_bytes()).hexdigest()
-            documents[sha] = {"source": source, "doc_id": sources[source]}
-    return documents
+    unlinked = {source: doc_id for source, doc_id in sources.items() if doc_id not in documents}
+    return {**documents, **_raw_documents(unlinked, raw_dir, input_path)}
 
 
 def _evidence_text(ref: dict, elements: dict) -> str:
