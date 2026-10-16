@@ -106,6 +106,22 @@ def test_answer_saves_actual_model_usage_and_recent_history(monkeypatch, tmp_pat
     assert messages[-1]["content"].startswith("[검색 컨텍스트]\n")
 
 
+def _eval_item(item_id: str, question: str) -> dict:
+    return {"id": item_id, "question": question, "reference": "정답", "key_facts": ["정답"], "reset_context": False,
+            "answerable": True}
+
+
+def test_an_eval_set_from_before_answerable_stops_before_any_paid_call(monkeypatch):
+    # 옛 eval_set.jsonl 로 04 를 돌리면 답변 파일에도 answerable 이 없어, 05 가 RAGAS 비용을 쓴 뒤에야 KeyError 로 멈췄다.
+    generate = MagicMock()
+    monkeypatch.setattr(generation, "generate", generate)
+    old = {k: v for k, v in _eval_item("q1", "질문").items() if k != "answerable"}
+
+    with pytest.raises(ValueError, match="answerable.*03 검증을 다시 실행"):
+        generation.answer_questions([old], MagicMock(), {}, {})
+    generate.assert_not_called()
+
+
 def test_rewrite_and_recent_answer_history_are_preserved_together(monkeypatch):
     rewrite = MagicMock(side_effect=lambda question, cfg: {"question": "검색 " + question})
     generate = MagicMock(side_effect=lambda question, hits, cfg, history:
@@ -115,7 +131,7 @@ def test_rewrite_and_recent_answer_history_are_preserved_together(monkeypatch):
     monkeypatch.setattr(generation, "get_client", MagicMock())
     index = MagicMock()
     index.search.return_value = []
-    items = [{"id": f"q{i}", "question": f"질문 {i}"} for i in range(12)]
+    items = [_eval_item(f"q{i}", f"질문 {i}") for i in range(12)]
 
     rows = generation.answer_questions(items, index, {}, {})
 
@@ -209,6 +225,20 @@ def test_each_evaluation_function_saves_scores_without_notebook(monkeypatch, tmp
                             "generation": ("key_facts_in_answer", 0)}[name]
         assert table[column].tolist() == [expected, expected]
     pd.testing.assert_frame_equal(pd.read_csv(tmp_path / f"{name}.csv", keep_default_na=False), table)
+
+
+@pytest.mark.parametrize("name", ["retrieval", "generation", "grounding", "end_to_end"])
+def test_an_answers_file_from_before_answerable_stops_before_ragas_is_paid(monkeypatch, tmp_path, name):
+    # 옛 answers.jsonl 은 RAGAS 채점을 다 산 뒤 KeyError: 'answerable' 로 멈추고 CSV 도 남기지 않았다.
+    calculate = MagicMock()
+    monkeypatch.setattr(evaluation, "_ragas", calculate)
+    monkeypatch.setattr(evaluation, "Embedder", MagicMock())
+    answers = tmp_path / "answers.jsonl"
+    write_jsonl([{k: v for k, v in _answer_row().items() if k != "answerable"}], answers)
+
+    with pytest.raises(ValueError, match=r"\['answerable'\].*03 → 02 설정 셀 → 04"):
+        getattr(evaluation, f"evaluate_{name}")(answers, load_config())
+    calculate.assert_not_called()
 
 
 @pytest.mark.parametrize("name, scores, left_out", [

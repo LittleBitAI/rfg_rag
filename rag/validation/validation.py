@@ -185,6 +185,10 @@ def _problem(item: dict, questions: set, convs: set) -> str:
     return ""
 
 
+# 평가 데이터셋(artifacts/eval_set.jsonl) 한 항목의 필드. 04 생성은 이 필드가 모두 있는지 보고 나서 답하기 시작한다.
+EVAL_ITEM_FIELDS = ("id", "question", "reference", "key_facts", "reset_context", "answerable")
+
+
 def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:
     """평가에 쓸 수 없는 항목을 사유와 함께 걸러낸다
     → (평가 데이터셋 {id, question, reference, key_facts, reset_context, answerable}, 점검 표)"""
@@ -197,5 +201,5 @@ def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:
         if not problem:
             # 통과한 항목만 질문을 차지한다 — 정답 없는 골든 항목이 같은 질문의 온전한 yaml 항목을 막지 않게
             questions.add(it["question"])
-            kept.append({k: it[k] for k in ("id", "question", "reference", "key_facts", "reset_context", "answerable")})
+            kept.append({k: it[k] for k in EVAL_ITEM_FIELDS})
     return kept, pd.DataFrame(report)

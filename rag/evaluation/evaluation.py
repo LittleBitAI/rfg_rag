@@ -195,6 +195,20 @@ def _table(rows: list[dict], scores: list[dict], path: Path) -> pd.DataFrame:
     return table
 
 
+# 05 의 네 평가가 답변 파일 한 행에서 읽는 필드
+ANSWER_FIELDS = ("id", "question", "reference", "key_facts", "answerable", "answer", "contexts", "trace_id", "latency_s",
+                 "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_tokens", "cost_usd", "rewrite")
+
+
+def _read_answers(answers_path: Path) -> list[dict]:
+    """답변 파일을 읽고, 평가가 읽을 필드가 빠진 행이 있으면 RAGAS 호출(유료) 전에 멈춘다"""
+    answers = read_jsonl(answers_path)
+    missing = sorted({field for r in answers for field in ANSWER_FIELDS if field not in r})
+    if missing:
+        raise ValueError(f"{answers_path} 에 {missing} 필드가 없습니다. 03 → 02 설정 셀 → 04 를 다시 실행해 답변 파일을 만드세요")
+    return answers
+
+
 def _unanswerable_as_nan(rows: list[dict], scores: list[dict], names: tuple[str, ...]) -> list[dict]:
     """답이 문서에 없는 질문(answerable False)에서 names 지표를 NaN 으로 — 평균 · Langfuse 에서 빠진다.
     그 질문은 찾아 올 정답 근거가 없고 맞는 답이 거절 문장('확인할 수 없습니다')이라, 이 지표들은 잘 해도 0 이 나온다"""
@@ -203,7 +217,7 @@ def _unanswerable_as_nan(rows: list[dict], scores: list[dict], names: tuple[str,
 
 def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Retrieval: 검색한 청크가 정답에 필요한 내용을 담았나"""
-    rows = read_jsonl(answers_path)
+    rows = _read_answers(answers_path)
     ragas = _ragas(rows, [LLMContextPrecisionWithReference(), LLMContextRecall()], cfg, "retrieval")
     scores = [{"context_precision": s["llm_context_precision_with_reference"], "context_recall": s["context_recall"],
                "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))}
@@ -215,7 +229,7 @@ def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
 
 def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Generation: 답이 질문에 맞게 핵심 사실을 담았나 (answer_relevancy 는 KURE 임베딩으로 계산)"""
-    rows = read_jsonl(answers_path)
+    rows = _read_answers(answers_path)
     ragas = _ragas(rows, [ResponseRelevancy()], cfg, "generation", embeddings=Embedder(cfg["embedding"]))
     scores = [{"answer_relevancy": s["answer_relevancy"], "key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])}
               for r, s in zip(rows, ragas)]
@@ -227,7 +241,7 @@ def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
 
 def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Grounding: 답의 주장들이 검색한 청크로 뒷받침되나 (낮으면 환각)"""
-    rows = read_jsonl(answers_path)
+    rows = _read_answers(answers_path)
     ragas = _ragas(rows, [Faithfulness()], cfg, "grounding")
     scores = [{"faithfulness": s["faithfulness"]} for s in ragas]
     _send_scores(rows, scores)
@@ -236,7 +250,7 @@ def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
 
 def evaluate_end_to_end(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """End-to-End: 최종 답이 정답과 사실이 맞는지 + 질문당 지연 시간·토큰·예상 비용(USD)"""
-    rows = read_jsonl(answers_path)
+    rows = _read_answers(answers_path)
     ragas = _ragas(rows, [FactualCorrectness()], cfg, "end_to_end")
     # 지연 시간 · 토큰 · 비용은 추적에 이미 있으므로 점수로는 factual_correctness 만 보낸다
     _send_scores(rows, [{"factual_correctness": s["factual_correctness(mode=f1)"]} for s in ragas])

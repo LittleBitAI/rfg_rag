@@ -165,6 +165,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 답변 생성도 실제 응답 모델·캐시 입력 토큰·비용을 저장합니다. 05는 저장된 비용을 사용하므로 평가 시 설정을 바꿔도 이전 생성 비용이 바뀌지 않습니다.
 `latency_s`는 재작성·검색·답변 생성 전체 시간입니다. `end_to_end.csv`의 `cost_usd`는 rewrite + 답변 생성 비용이며 `rewrite_cost_usd`, `answer_cost_usd`로 구분됩니다. OCR과 평가 비용은 별도로 집계합니다.
 이번 변경 전에 만든 `answers.jsonl`은 새 사용량 필드가 없으므로 02 설정 셀 → 04 → 05를 다시 실행하세요.
+평가 항목에 `answerable` 이 생기기 전에 만든 `eval_set.jsonl` · `answers.jsonl` 은 04 · 05 가 API 호출 전에 빠진 필드를 알리고 멈춥니다. 03 → 02 설정 셀 → 04 → 05 를 다시 실행하세요.
 
 ## 질문 화면 — 브라우저에서 묻고 답 받기
 채팅 화면입니다. 내 질문은 오른쪽 말풍선, 답변은 왼쪽 `문서 도우미` 아래에 나옵니다.

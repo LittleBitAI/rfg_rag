@@ -99,7 +99,9 @@ def eligible_units(run_dir, package):
 
 
 def document_units(run_dir, package, docs):
-    """문서 SHA → 그 문서의 모든 근거 단위(eligible 과 held) {unit_id, text}, 패키지 순서대로.
+    """문서 SHA → 그 문서의 모든 근거 단위(eligible 과 held) {unit_id, element_id, location, text}, 패키지 순서대로.
+
+    element_id · location 은 표 행이 어느 표의 몇 행인지 알려, 검증기에 나눠 줄 때 머리글과 행을 떼지 않게 한다.
 
     문서에 무엇이 없음을 보이려면 보류된 단위(UNVERIFIED 원문, 범위 없는 OCR, 원본 그리드 셀)까지 읽어야 한다.
     eligible 만 보면 보류된 글에 든 답을 놓친다. 원본 그리드 셀의 글은 원본 그리드 참고 파일에서 읽는다.
@@ -114,7 +116,8 @@ def document_units(run_dir, package, docs):
     found = defaultdict(list)
     for unit in units:
         text = _unit_text(unit, elements[unit["element_id"]]) if unit["chunk_id"] else cells[unit["unit_id"]]
-        found[unit["doc_sha"]].append({"unit_id": unit["unit_id"], "text": text})
+        found[unit["doc_sha"]].append({"unit_id": unit["unit_id"], "element_id": unit["element_id"],
+                                       "location": unit["location"], "text": text})
     return found
 
 

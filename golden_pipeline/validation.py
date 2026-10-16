@@ -16,7 +16,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-5"
+VALIDATOR_VERSION = "validation-6"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -42,6 +42,8 @@ EVIDENCE_LABEL = re.compile(r"(?<![A-Za-z])E\d+(?!\d)|머리글 행")
 SCORING_WORDS = re.compile(r"배점|점수|평가|\d+점|만점|득점|감점|가점")
 # unanswerable 검증기에 한 번에 주는 대상 문서의 글자 수. 문서(중앙 6만 6천 자, 가장 긴 것 20만 자)를 몇 번에 나눠 모두 읽힌다.
 DOCUMENT_BATCH_CHARS = 60_000
+# 새 묶음 앞에 다시 주는 앞 묶음 끝의 글자 수. 표 밖의 소제목('A시스템')과 그 아래 글이 경계로 갈리지 않게 한다.
+DOCUMENT_OVERLAP_CHARS = 2_000
 
 
 def validate(topic, method, run_id, config_path, client):
@@ -677,7 +679,8 @@ def _absent_verdict(item, document, ask):
     핵심어 검사(_key_terms_absent)는 글자로만 본다. 핵심어를 다른 말로 쓴 근거(하자보수 · 하자담보책임)는 검증기가 찾는다.
     일부 단위만 주면 그 밖의 단위에 있는 답을 놓치므로, 없음은 문서 전체를 읽고서야 정한다.
     근거 충돌도 거절한다. 같은 사실의 값이 근거마다 다르다는 것은 속성이 문서에 있다는 뜻이다.
-    ponytail: 묶음 경계에 걸친 답(표 머리글과 그 행이 다른 묶음)이나 묶음 사이의 충돌은 보지 못한다. 놓치면 묶음을 겹쳐 나눈다.
+    묶음은 저마다 따로 읽히므로, 표 행은 그 표의 머리글과 같은 묶음에 든다 (document_batches).
+    ponytail: 묶음 사이의 충돌과, 경계에서 DOCUMENT_OVERLAP_CHARS 보다 멀리 떨어진 표 밖 소제목은 보지 못한다.
     """
     for batch in document_batches(document):
         found, error = ask(item["question"], batch)
@@ -691,15 +694,54 @@ def _absent_verdict(item, document, ask):
 
 
 def document_batches(document):
-    """대상 문서의 근거 단위를 문서 차례대로 DOCUMENT_BATCH_CHARS 자 안팎씩 나눈다. 라벨(E1 …)은 문서 전체에서 이어 붙인다."""
-    batches, size = [[]], 0
-    for n, unit in enumerate(document, 1):
-        if batches[-1] and size + len(unit["text"]) > DOCUMENT_BATCH_CHARS:
-            batches.append([])
-            size = 0
-        batches[-1].append({**unit, "label": f"E{n}"})
-        size += len(unit["text"])
+    """대상 문서의 근거 단위를 문서 차례대로 DOCUMENT_BATCH_CHARS 자 안팎씩 나눈다. 라벨(E1 …)은 문서 전체에서 이어 붙인다.
+
+    검증기는 묶음마다 따로 읽으므로, 묶음 하나가 홀로 읽혀야 한다.
+    한 표의 행은 한 묶음에 넣고, 한 묶음보다 큰 표는 행 경계에서 나누어 이어지는 묶음마다 그 표의 머리글(0행)을 다시 준다.
+    새 묶음은 앞 묶음 끝 DOCUMENT_OVERLAP_CHARS 자를 다시 받는다. 다시 주는 단위는 처음의 라벨을 그대로 쓴다.
+    """
+    labelled = [{**unit, "label": f"E{n}"} for n, unit in enumerate(document, 1)]
+    batches, size, fresh = [[]], 0, 0
+    for group in _table_groups(labelled):
+        headers = [unit for unit in group if _row(unit) == 0]
+        if fresh and size + sum(len(unit["text"]) for unit in group) > DOCUMENT_BATCH_CHARS:
+            batches.append(_tail(batches[-1]))
+            size, fresh = sum(len(unit["text"]) for unit in batches[-1]), 0
+        for unit in group:
+            if fresh and size + len(unit["text"]) > DOCUMENT_BATCH_CHARS:
+                carried = _tail(batches[-1])
+                batches.append([header for header in headers if _row(unit) and header not in carried] + carried)
+                size, fresh = sum(len(unit["text"]) for unit in batches[-1]), 0
+            batches[-1].append(unit)
+            size, fresh = size + len(unit["text"]), fresh + 1
     return batches
+
+
+def _table_groups(units):
+    """단위를 문서 차례대로 두되, 한 표의 행은 처음 나온 자리에 모은다. 논리 표는 요소, 원본 그리드는 stream · control 이 한 표다."""
+    groups = {}
+    for unit in units:
+        if unit["location"]["kind"] != "table":
+            key = unit["unit_id"]
+        else:
+            key = unit["element_id"] or unit["unit_id"].rsplit(":", 2)[0]
+        groups.setdefault(key, []).append(unit)
+    return list(groups.values())
+
+
+def _row(unit):
+    return unit["location"]["row"] if unit["location"]["kind"] == "table" else None
+
+
+def _tail(batch):
+    """묶음 끝에서 DOCUMENT_OVERLAP_CHARS 자 안에 드는 단위들."""
+    tail, size = [], 0
+    for unit in reversed(batch):
+        size += len(unit["text"])
+        if size > DOCUMENT_OVERLAP_CHARS:
+            break
+        tail.insert(0, unit)
+    return tail
 
 
 def _table_relation(item, units, document):
