@@ -41,12 +41,17 @@ def _hwp_reason(path: str) -> str | None:
     return None
 
 
+def hwp_text(path: str, image_dir: str) -> str:
+    """marker_start 가 가리키는 본문 — parsing._hwp_text 와 같은 정리. 라벨링 화면의 원본 보기도 이 글에서 앞뒤를 자른다."""
+    return repair_md_tables(clean_tab_garbage(_hwp_raw_text(path, image_dir)))
+
+
 def hwp_images(path: str) -> list[dict]:
     """HWP/HWPX 의 [IMAGE: 이름] 표시마다 그림 하나. marker_start 는 parsing._hwp_text 가 정리한 본문 기준이라 CRAFT 기록과 같다.
     라이브러리가 꺼냈지만 본문에 표시가 없는 그림(쪽에 놓이지 않은 BinData, 머리말 · 글상자 속 그림 등)도
     marker_start=None 으로 싣는다. 01 전처리와 CRAFT 는 이 그림을 보지 않는다."""
     with tempfile.TemporaryDirectory(prefix="ocr_labels_") as image_dir:
-        text = repair_md_tables(clean_tab_garbage(_hwp_raw_text(path, image_dir)))
+        text = hwp_text(path, image_dir)
         marks = [((m.group(1) or "").strip(), m.start()) for m in _IMG_MARK.finditer(text)]
         counts = Counter(name for name, _ in marks)
         marks += [(name, None) for name in sorted(os.listdir(image_dir)) if name not in counts]
