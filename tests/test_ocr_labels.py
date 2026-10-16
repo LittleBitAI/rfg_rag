@@ -1,5 +1,6 @@
 """OCR 라벨링 화면: 같은 그림 묶기, 그림 저장 경로 · PDF 자리 실패, 위치마다 카드 하나와 라벨 · CRAFT 기록의 마지막 줄 우선,
-문서 순서 다섯 묶음, 묶음 결과 합치기, 1~3 밖 라벨 거부, images/ 밖 파일 차단."""
+문서 순서 다섯 묶음, 묶음 결과 합치기, 1~3 밖 라벨 거부, images/ 밖 파일 차단, 원본 보기가 바뀐 문서를 따라감."""
+import hashlib
 import io
 
 import pymupdf
@@ -169,3 +170,22 @@ def test_context_cuts_whole_lines_around_the_marker(monkeypatch):
 
     assert server.context(text, start) == {"before": "near\n", "marker": "[IMAGE: BIN2.png]", "after": " after"}
     assert server.context("[IMAGE: BIN1.png]", 0) == {"before": "", "marker": "[IMAGE: BIN1.png]", "after": ""}
+
+
+def test_source_view_follows_a_document_replaced_after_the_first_request(tmp_path, monkeypatch):
+    doc = tmp_path / "a.hwp"
+    doc.write_bytes(b"old")
+    monkeypatch.setattr(server, "load_config", lambda: {"paths": {"input": str(tmp_path)}})
+    monkeypatch.setattr(server, "collect_inputs", lambda _input, _raw: [str(doc)])
+    monkeypatch.setattr(server, "hwp_text", lambda path, _dir: open(path, encoding="utf-8").read())
+    server._documents.cache_clear()
+    server._hwp_text.cache_clear()
+    assert server._hwp_text(hashlib.sha256(b"old").hexdigest()) == "old"
+
+    doc.write_bytes(b"new")  # 같은 경로의 문서를 바꾸고 extract 를 다시 돌린 뒤, 서버는 그대로
+    new = hashlib.sha256(b"new").hexdigest()
+
+    assert server._document(new) == doc
+    assert server._hwp_text(new) == "new"
+    server._documents.cache_clear()
+    server._hwp_text.cache_clear()

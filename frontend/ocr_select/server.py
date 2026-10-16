@@ -150,16 +150,19 @@ def _documents() -> dict[str, Path]:
 
 def _document(document_sha256: str) -> Path:
     if document_sha256 not in _documents():
+        _documents.cache_clear()  # 서버를 띄운 채 extract 를 다시 돌렸다면 새 문서 해시는 다시 찾아야 나온다
+    if document_sha256 not in _documents():
         raise HTTPException(404, "원본 문서를 찾을 수 없습니다. 그림 목록을 만든 뒤 문서가 바뀌었다면 "
                                  "python -m frontend.ocr_select.extract 를 다시 실행하세요.")
     return _documents()[document_sha256]
 
 
 @lru_cache(maxsize=8)
-def _hwp_text(path: Path) -> str:
-    """한 문서를 읽는 데 1초 남짓 걸려, 같은 문서의 그림을 잇달아 볼 때 다시 읽지 않게 최근 문서 몇 개를 둔다."""
+def _hwp_text(document_sha256: str) -> str:
+    """한 문서를 읽는 데 1초 남짓 걸려, 같은 문서의 그림을 잇달아 볼 때 다시 읽지 않게 최근 문서 몇 개를 둔다.
+    경로가 아니라 문서 해시로 두어, 같은 경로의 문서가 바뀌면 새로 읽는다."""
     with tempfile.TemporaryDirectory(prefix="ocr_context_") as image_dir:
-        return hwp_text(str(path), image_dir)
+        return hwp_text(str(_document(document_sha256)), image_dir)
 
 
 def context(text: str, start: int) -> dict:
@@ -186,7 +189,7 @@ def context_endpoint(key: str) -> dict:
     _, o = _find(key)
     if o["format"] != "hwp" or o["marker_start"] is None:
         raise HTTPException(404, "본문에 표시가 있는 HWP 그림만 앞뒤 본문을 보일 수 있습니다.")
-    text = _hwp_text(_document(o["document_sha256"]))
+    text = _hwp_text(o["document_sha256"])
     if not _IMG_MARK.match(text, o["marker_start"]):  # 그림 목록을 만든 코드와 지금 본문 정리가 다르면 위치가 어긋난다
         raise HTTPException(409, "그림 위치가 지금 본문과 맞지 않습니다. python -m frontend.ocr_select.extract 를 다시 실행하세요.")
     return context(text, o["marker_start"])
