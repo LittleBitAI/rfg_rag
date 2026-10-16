@@ -598,10 +598,11 @@ def _patch_pymupdf_image_extraction():
 # ====================================================================================================
 def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, captions_path=None) -> list[dict]:
     """문서마다 {doc_id, source, title, doc_type, cover_text, head_text, records}.
-    ocr=False 면 그림을 API 로 보내지 않는다. True 면 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다."""
+    ocr=False 면 저장 캡션을 읽고 그림을 API 로 보내지 않는다.
+    True 면 저장 캡션 대신 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다."""
     from .ocr_captions import load_captions
 
-    saved = load_captions(captions_path)
+    saved = {} if ocr else load_captions(captions_path)
     callback = UsageCallback("ocr", ocr_cfg["usd_per_1m_tokens"]) if ocr else None
     image_parser = _ocr_parser(ocr_cfg, callback) if ocr else None
     if image_parser is not None and pcfg.get("craft", {}).get("enabled", False):
