@@ -38,6 +38,10 @@ WORKERS = 8
 _KIWI_LOCK = threading.Lock()
 
 
+class BudgetExceeded(RuntimeError):
+    """실험 장부(experiment.Ledger)가 보내기 전에 거절한 호출. 보내지 않았으므로 청구되지 않았다."""
+
+
 def generate(method, topic, plan_id, run_id, config_path, client, revision=None, part=None):
     """A 또는 B 로 계획의 근거 묶음마다 한 번 호출해 후보를 만든다.
 
@@ -411,6 +415,7 @@ def _call_all(client, config, instructions, bundles, notes):
     """호출 수 한도와 예산 안에서 묶음마다 한 번 호출한다. 한도에 닿으면 멈추고 그 이유를 status 로 남긴다.
 
     WORKERS 개씩 함께 보내고 한도는 그 사이에서 본다. 출력은 묶음 차례대로 남는다.
+    실험 장부가 호출을 거절하면 함께 끝난 출력은 남기고 ceiling 으로 멈춘다. 거절된 묶음은 출력이 없다.
     """
     calls, outputs = [], []
     while len(outputs) < len(bundles):
@@ -419,7 +424,10 @@ def _call_all(client, config, instructions, bundles, notes):
             return calls, outputs, stop
         size = min(WORKERS, config["max_calls"] - len(calls))
         batch = bundles[len(outputs):len(outputs) + size]
-        for bundle, response in zip(batch, parallel(lambda b: _ask(client, config, instructions, b, notes), batch)):
+        responses = parallel(lambda b: _ask(client, config, instructions, b, notes), batch)
+        for bundle, response in zip(batch, responses):
+            if response is None:
+                continue
             calls.append({
                 "bundle_id": bundle["bundle_id"],
                 "model": response["model"],
@@ -427,6 +435,8 @@ def _call_all(client, config, instructions, bundles, notes):
                 "output_tokens": response["output_tokens"],
             })
             outputs.append((bundle, response["text"]))
+        if None in responses:
+            return calls, outputs, "ceiling"
     return calls, outputs, "complete"
 
 
@@ -437,9 +447,17 @@ def _ask(client, config, instructions, bundle, notes):
 
 
 def parallel(work, items):
-    """items 마다 work 를 WORKERS 개까지 함께 돌려, 결과를 items 차례대로 돌려준다."""
+    """items 마다 work 를 WORKERS 개까지 함께 돌려, 결과를 items 차례대로 돌려준다.
+
+    실험 장부가 어느 호출을 거절하면 그 자리만 None 이다. 함께 보낸 다른 호출은 이미 정산됐으므로 그 결과를 버리지 않는다.
+    """
+    def attempt(item):
+        try:
+            return work(item)
+        except BudgetExceeded:
+            return None
     with ThreadPoolExecutor(max(1, min(WORKERS, len(items)))) as pool:
-        return list(pool.map(work, items))
+        return list(pool.map(attempt, items))
 
 
 def limit_reached(config, calls, cost, needed=1):

@@ -121,8 +121,14 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
             break
         verdicts = generation.parallel(lambda item: _verdict(
             item, spec, units[item["candidate_id"]], ask, judge, survivors, documents.get(item["candidate_id"])), batch)
-        judged += [_settle(item, verdict, units[item["candidate_id"]], survivors) for item, verdict in zip(batch, verdicts)]
-    unjudged = to_judge[len(judged):]
+        judged += [_settle(item, verdict, units[item["candidate_id"]], survivors)
+                   for item, verdict in zip(batch, verdicts) if verdict is not None]
+        if None in verdicts:
+            # 실험 장부가 거절한 후보는 pending 으로 남고, 그 후보가 먼저 쓴 호출은 calls 에 남아 비용으로 잡힌다.
+            status = "ceiling"
+            break
+    done = {item["candidate_id"] for item in judged}
+    unjudged = [item for item in to_judge if item["candidate_id"] not in done]
     free_rejects += _static_rejections(unjudged, spec, units, survivors, documents)
     rejected_ids.update(item["candidate_id"] for item in free_rejects)
     pending = [item["candidate_id"] for item in unjudged if item["candidate_id"] not in rejected_ids]

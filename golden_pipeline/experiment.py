@@ -25,10 +25,6 @@ MESSAGE_OVERHEAD_TOKENS = 16
 RETRIES = 8
 
 
-class BudgetExceeded(RuntimeError):
-    pass
-
-
 def freeze(experiment_id, pool_plan_id):
     """큰 계획(pool)에서 주제마다 몫별 PARTS 개를 계획 차례대로 골라 실험 계획 plans/{experiment_id}.json 으로 고정한다.
 
@@ -81,8 +77,13 @@ def pro_packets(experiment_id):
     root = storage._child(storage.OUTPUTS / "experiments", experiment_id)
     record = storage._read_json(root / "freeze.json")
     planned, sha = plan.load_plan(experiment_id)
-    if sha != record["plan"]["sha256"]:
-        raise ValueError(f"계획 {experiment_id} 가 고정한 뒤 바뀌었습니다")
+    current = {"계획": sha, "prompts/C.txt": storage._sha256(storage.PROMPTS / "C.txt"),
+               **{f"주제 명세 {topic}": plan.topic_spec(topic)[1] for topic in TOPICS}}
+    frozen = {"계획": record["plan"]["sha256"], "prompts/C.txt": record["prompts"]["C.txt"],
+              **{f"주제 명세 {topic}": record["topic_specs"][topic] for topic in TOPICS}}
+    changed = [name for name in current if current[name] != frozen[name]]
+    if changed:
+        raise ValueError(f"실험 {experiment_id} 를 고정한 뒤 바뀌었습니다: {changed}")
     template = Template((storage.PROMPTS / "C.txt").read_text(encoding="utf-8"))
     folder = root / "pro"
     folder.mkdir(exist_ok=True)
@@ -186,7 +187,7 @@ class Ledger:
         call_id = uuid.uuid4().hex
         with self.lock:
             if self.committed + reserved > self.settings["ceiling_usd"]:
-                raise BudgetExceeded(f"실험 상한 {self.settings['ceiling_usd']} USD: 확정 {self.committed:.4f} + 이번 호출 최대 {reserved:.4f}")
+                raise generation.BudgetExceeded(f"실험 상한 {self.settings['ceiling_usd']} USD: 확정 {self.committed:.4f} + 이번 호출 최대 {reserved:.4f}")
             self.committed += reserved
             storage._append_jsonl(self.path, [{"id": call_id, "event": "reserve", "at": storage._now(), "model": model,
                                                "reserved_usd": reserved}])

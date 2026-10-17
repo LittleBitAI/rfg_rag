@@ -367,6 +367,7 @@ run 설정(JSON 파일)은 아래 여섯 값을 모두 가져야 하고, 빠지�
 
 호출 수가 `max_calls` 에 닿거나 누적 비용이 `budget_usd` 에 닿으면 남은 묶음을 부르지 않고 `status` 에 `call_cap` · `budget` 을 남깁니다.
 예산은 호출 사이에만 보므로 마지막 호출 하나만큼 넘을 수 있습니다.
+비교 실험(`--experiment`)에서 실험 장부가 호출을 거절하면 함께 끝난 출력은 남기고 `ceiling` 으로 멈춥니다.
 
 C 의 sidecar(JSON)는 `model_label` (화면에 보인 모델 표시), `run_date`, `provided_files`, `tool_use`, `input_limits` 만 받습니다.
 없거나 비어 있는 값은 `unobserved` 로 남기고, API 모델과 같다고 추정하지 않습니다. 다른 필드가 있으면 멈춥니다.
@@ -596,7 +597,7 @@ loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 loop 안 run 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정(`loops/{loop_id}/{name}-*.json`)으로 돕니다.
 채택 · held-out 을 재는 호출도 같은 한도에서 빠집니다.
 쓴 호출 · 비용은 호출이 돌아올 때마다 `calls.jsonl` 에 남기므로, 생성 · 검증이 도중에 끊겨도 이어 돌 때 그만큼 한도에서 빠집니다.
-멈춘 이유는 `max_rounds` · `call_cap` · `budget` · `no_open_bundles` 중 하나로 `report.json` 에 남습니다.
+멈춘 이유는 `max_rounds` · `call_cap` · `budget` · `ceiling` (실험 장부) · `no_open_bundles` 중 하나로 `report.json` 에 남습니다.
 생성이나 검증이 한도에 닿아 끝나지 않은 round 가 있으면 그 round 에서 멈추고, 검증 전에 한도에 닿은 round 는 `not_validated` 로 남습니다.
 
 멈춘 loop 를 같은 인자로 다시 부르면 이어 돕니다. 생성 run · `validation.json` · 실패 기록이 이미 있는 단계는 건너뛰므로

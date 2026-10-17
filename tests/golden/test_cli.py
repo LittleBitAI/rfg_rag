@@ -2,15 +2,15 @@
 import json
 import os
 import subprocess
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from golden_pipeline import cli, evidence, storage
+from golden_pipeline import adoption, cli, evidence, generation, storage
 from golden_pipeline.improvement import PREVENTION_RULES
-from golden_pipeline.plan import load_plan
+from golden_pipeline.plan import load_plan, topic_spec
 
 GENERATOR = ["--model", "generator-test", "--reasoning-effort", "low", "--price", "1", "4"]
 VALIDATOR = ["--model", "validator-test", "--reasoning-effort", "high", "--price", "1", "4"]
@@ -177,6 +177,66 @@ def test_b_with_part_train_calls_only_the_bundles_a_round_one_calls(planned, api
                *GENERATOR, *LIMITS, *A_ONLY)
 
 
+def write_freeze(plan_sha=None):
+    """compare 가 읽는 실험 x1 의 고정 기록: 계획 p3 과 그 SHA-256, 지금의 프롬프트 · 주제 명세, numeric 의 몫, 승인 예산."""
+    planned_plan, sha = load_plan("p3")
+    parts = {part: [b["bundle_id"] for b in planned_plan["bundles"] if adoption.split(b["bundle_id"]) == part]
+             for part in ("train", "validation", "held_out")}
+    record = {"plan": {"plan_id": "p3", "sha256": plan_sha or sha}, "prompts": storage.snapshot(storage.PROMPTS),
+              "topic_specs": {"numeric": topic_spec("numeric")[1]}, "parts": {"numeric": parts}}
+    root = storage.OUTPUTS / "experiments/x1"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "freeze.json").write_text(json.dumps(record), encoding="utf-8")
+    (storage.CONFIGS / "experiments/x1.json").write_text(json.dumps({"ceiling_usd": 3, "max_output_tokens": 9, "prices": {}}),
+                                                         encoding="utf-8")
+    return root
+
+
+def test_compare_refuses_runs_outside_the_frozen_plan_or_train_assignment(planned, api):
+    # B 가 --part train 없이 validation · held-out 묶음까지 부르면 그 출력이 수용률 · 비용 · 검토 표본에 섞인다.
+    golden("--experiment", "x1", "run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", *GENERATOR, *LIMITS)
+    write_freeze()
+    for command in ("compare", "review-packets"):
+        with pytest.raises(ValueError, match="train 몫이 아닌"):
+            golden(command, "x1")
+
+    write_freeze(plan_sha="0" * 64)
+    with pytest.raises(ValueError, match="고정한 계획"):
+        golden("compare", "x1")
+
+
+def test_a_refused_call_keeps_the_settled_sibling_calls_of_its_batch(planned, api, monkeypatch):
+    # 실험 장부가 함께 보낸 호출 하나를 거절해도, 이미 정산한 다른 호출의 출력 · 판정은 run 에 남아야 한다.
+    monkeypatch.setattr(generation, "WORKERS", 2)
+    refuse = {"text": "5%"}
+
+    def client(model, reasoning_effort, messages):
+        if refuse["text"] in messages[1]["content"]:
+            raise generation.BudgetExceeded("실험 상한")
+        return api(model, reasoning_effort, messages)
+
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(client))
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
+    sent = json.loads((storage.OUTPUTS / "goldens/numeric/runs/B/b1/manifest.json").read_text(encoding="utf-8"))["generation"]
+    called = [call["bundle_id"] for call in sent["calls"]]
+    assert sent["status"] == "ceiling" and planned["budget"] in called and planned["bond"] not in called
+    assert len(called) == len(api.requests)
+
+    refuse["text"] = "보증금"
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(api))
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b2", "--part", "train", *GENERATOR, *LIMITS)
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(client))
+    before = len(api.requests)
+    golden("audit", "--topic", "numeric", "--method", "B", "--id", "b2", *VALIDATOR, *LIMITS)
+    record = json.loads((storage.OUTPUTS / "goldens/numeric/runs/B/b2/validation.json").read_text(encoding="utf-8"))
+    ids = {item["bundle_id"]: item["candidate_id"] for item in read_jsonl(storage.OUTPUTS / "goldens/numeric/runs/B/b2/candidates.jsonl")}
+    assert record["status"] == "ceiling" and len(record["calls"]) == len(api.requests) - before > 0
+    assert record["pending"] == [ids[planned["bond"]]]
+    # 출시는 판정을 다 해야 쓰므로, 장부가 중간에 거절할 수 있는 실험에서는 시작하지 않는다.
+    with pytest.raises(SystemExit, match="출시하지 않습니다"):
+        golden("--experiment", "x1", "release", "--topic", "numeric", "--version", "v1", "--run", "B:b2", *VALIDATOR, *LIMITS)
+
+
 def test_experiment_comparison_counts_missing_and_malformed_outputs_and_samples_blinded_strata(planned, api, tmp_path):
     x = ("--experiment", "x1")
     golden(*x, "run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
@@ -186,10 +246,7 @@ def test_experiment_comparison_counts_missing_and_malformed_outputs_and_samples_
     export, sidecar = export_c(tmp_path, [(planned["budget"], BUDGET), (planned["bond"], BOND), "JSON 아님"])
     golden(*x, "import", "--topic", "numeric", "--plan", "p3", "--id", "c1", "--export", export, "--sidecar", sidecar)
     golden(*x, "audit", "--topic", "numeric", "--method", "C", "--id", "c1", *VALIDATOR, *LIMITS)
-    root = storage.OUTPUTS / "experiments/x1"
-    (root / "freeze.json").write_text(json.dumps({"plan": {"plan_id": "p3"}, "parts": {"numeric": {"train": list(planned.values())}}}), encoding="utf-8")
-    (storage.CONFIGS / "experiments/x1.json").write_text(json.dumps({"ceiling_usd": 3, "max_output_tokens": 9, "prices": {}}),
-                                                         encoding="utf-8")
+    root = write_freeze()
 
     golden("review-packets", "x1")
     review = (root / "review/judgments.csv").read_text(encoding="utf-8-sig").splitlines()

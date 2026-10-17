@@ -6,7 +6,7 @@ import httpx
 import openai
 import pytest
 
-from golden_pipeline import adoption, cli, experiment, storage
+from golden_pipeline import adoption, cli, comparison, experiment, generation, storage
 from golden_pipeline.schema import TOPICS
 
 REQUEST = httpx.Request("POST", "https://api.test/v1/chat/completions")
@@ -21,7 +21,11 @@ def write_pool(outputs, parts):
     """주제마다 묶음 id 와 그 몫을 정한 큰 계획. adoption.split 이 그 몫을 돌려주게 바꾼다."""
     bundles = [{"bundle_id": bundle_id, "topic": topic, "doc_sha": "d", "units": [], "context": "c"}
                for topic in TOPICS for bundle_id in parts[topic]]
-    pool = {"plan_id": "pool", "evidence_run": "ev", "v11_manifest_sha256": "v", "topic_specs": {}, "bundles": bundles}
+    (outputs / "configs/topics").mkdir()
+    for topic in TOPICS:
+        (outputs / f"configs/topics/{topic}.json").write_text('{"requires": "r", "structure": {}}', encoding="utf-8")
+    specs = {topic: storage._sha256(outputs / f"configs/topics/{topic}.json") for topic in TOPICS}
+    pool = {"plan_id": "pool", "evidence_run": "ev", "v11_manifest_sha256": "v", "topic_specs": specs, "bundles": bundles}
     (outputs / "outputs/plans").mkdir(parents=True)
     (outputs / "outputs/plans/pool.json").write_text(json.dumps(pool), encoding="utf-8")
     (outputs / "outputs/evidence/ev").mkdir(parents=True)
@@ -55,6 +59,40 @@ def test_freeze_refuses_a_topic_with_an_empty_part_and_writes_no_plan(outputs, m
     assert not (outputs / "outputs/plans/x1.json").exists()
 
 
+def test_pro_packets_refuse_a_c_prompt_or_topic_spec_changed_after_freeze(outputs, monkeypatch):
+    # 고정한 뒤 바뀐 프롬프트 · 주제 명세로 만든 Pro 프롬프트는 A · B 와 다른 실험 정의를 C 에 준다.
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
+    c_prompt, spec = outputs / "prompts/C.txt", outputs / "configs/topics/numeric.json"
+    c_prompt.write_text("$topic $requires $structure $count $bundles", encoding="utf-8")
+    experiment.freeze("x1", "pool")
+
+    for path, changed in ((c_prompt, "$topic $requires $structure $count\n$bundles"), (spec, '{"requires": "r2", "structure": {}}')):
+        original = path.read_text(encoding="utf-8")
+        path.write_text(changed, encoding="utf-8")
+        with pytest.raises(ValueError, match="고정한 뒤 바뀌었습니다"):
+            experiment.pro_packets("x1")
+        path.write_text(original, encoding="utf-8")
+    assert len(list(experiment.pro_packets("x1").glob("*.txt"))) == len(TOPICS)
+
+
+def test_review_quality_is_unmeasured_unless_every_sampled_output_is_judged_exactly_once(outputs):
+    # 빠진 행은 표본을 고르게 줄이지 않고, 겹친 행은 한 출력을 두 번 센다. 둘 다 판정이 다 된 것처럼 보이면 안 된다.
+    storage.EXPERIMENT = "x1"
+    folder = outputs / "outputs/experiments/x1/review"
+    folder.mkdir(parents=True)
+    entries = [{"review_id": review_id, "method": "A", "topic": "numeric", "stratum": "rejected"} for review_id in ("R01", "R02")]
+    (folder / "key.json").write_text(json.dumps({"entries": entries}), encoding="utf-8")
+    header = "review_id,evidence_support,answer_correct,topic_fit,useful,note"
+    judged = {"R01": "R01,Y,Y,Y,Y,", "R02": "R02,N,Y,Y,Y,", "R03": "R03,Y,Y,Y,Y,"}
+
+    for rows in ([], ["R01"], ["R01", "R01", "R02"], ["R01", "R02", "R03"]):
+        (folder / "judgments.csv").write_text("\n".join([header, *(judged[r] for r in rows)]) + "\n", encoding="utf-8-sig")
+        assert comparison._human("x1")["measured"] is False, rows
+    (folder / "judgments.csv").write_text("\n".join([header, judged["R01"], judged["R02"]]) + "\n", encoding="utf-8-sig")
+    assert comparison._human("x1")["cells"]["A · all"] == {"numerator": 1, "denominator": 2, "value": 0.5}
+
+
 def test_experiment_state_ignores_the_shared_catalog_owner_and_keeps_its_own(outputs, make_item):
     # 지난 run 이 다른 주제로 가진 근거 묶음이 실험의 run 을 막으면, 지난 상태가 방식 비교에 끼어든다.
     storage.write_run("numeric", "A", "r1", [make_item(candidate_id="n-1")])
@@ -85,7 +123,7 @@ def test_ledger_refuses_a_call_whose_worst_case_would_pass_the_ceiling_before_se
         call = book.guard(lambda *args: sent.append(args) or response())
         call("m", "low", MESSAGES)
         # 첫 호출은 10 · 10 토큰으로 정산되어 상한 아래지만, 둘째 호출의 최악 비용을 더하면 넘는다.
-        with pytest.raises(experiment.BudgetExceeded):
+        with pytest.raises(generation.BudgetExceeded):
             call("m", "low", MESSAGES)
 
     assert len(sent) == 1 and sent[0][3] == 100
@@ -105,7 +143,7 @@ def test_ledger_counts_in_flight_reservations_of_concurrent_calls(outputs):
         for thread in threads:
             thread.start()
         started.wait()
-        with pytest.raises(experiment.BudgetExceeded):
+        with pytest.raises(generation.BudgetExceeded):
             call("m", "low", MESSAGES)
         release.set()
         for thread in threads:

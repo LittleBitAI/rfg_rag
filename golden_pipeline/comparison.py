@@ -11,7 +11,6 @@ from collections import Counter
 
 from golden_pipeline import experiment, improvement, plan, report, storage, validation
 from golden_pipeline.generation import UNOBSERVED
-from golden_pipeline.schema import TOPICS
 
 LOOP, B_RUN, C_RUN = "a1", "b1", "c1"
 RUBRIC = ("evidence_support", "answer_correct", "topic_fit", "useful")
@@ -25,7 +24,7 @@ def compare(experiment_id):
     """주제마다 · 전체의 지표, 비용, 장부 대조, 사람 판정을 모은 결과."""
     storage.EXPERIMENT = experiment_id
     record = storage._read_json(storage.state_root() / "freeze.json")
-    topics = {topic: _topic(topic, parts["train"]) for topic, parts in record["parts"].items()}
+    topics = {topic: _topic(topic, record) for topic in record["parts"]}
     result = {"experiment": experiment_id, "created_at": storage._now(), "topics": topics,
               "overall": _overall(topics), "ledger": experiment.usage(experiment_id)}
     result["reconciliation"] = _reconcile(topics, result["ledger"])
@@ -33,10 +32,11 @@ def compare(experiment_id):
     return result
 
 
-def _topic(topic, assigned):
+def _topic(topic, record):
+    assigned = record["parts"][topic]["train"]
+    rounds = _checked_runs(topic, record)["A"]
     first = {"A": [f"{LOOP}-r1"], "B": [B_RUN], "C": [C_RUN]}
     methods = {method: _method(topic, method, runs, set(assigned)) for method, runs in first.items()}
-    rounds = [run_dir.name for run_dir in improvement._rounds(topic, LOOP)] if _exists(topic, "A", f"{LOOP}-r1") else []
     full = _method(topic, "A", rounds, set(assigned)) if rounds else None
     loop_report = improvement._loop_path(topic, LOOP) / "report.json"
     loop = storage._read_json(loop_report) if loop_report.exists() else None
@@ -60,6 +60,53 @@ def _method(topic, method, runs, assigned):
         "pending": sum(o["state"] == "candidate" for o in outputs),
         "unique_valid_questions": len(_valid_questions(topic, method, runs)),
     }
+
+
+def _checked_runs(topic, record):
+    """주제의 비교 run (A loop 의 round 전부 · B · C) 이 고정한 실험 정의로 만들어졌는지 보고 돌려준다. 어긋나면 견줄 수 없어 멈춘다.
+
+    계획 · 그 SHA-256 · 주제 명세, A · B 의 생성 프롬프트, 검증기 · 판정기 프롬프트가 고정 기록과 같아야 하고,
+    출력이 train 몫 밖의 고정 묶음을 가리키지 않아야 하며, A · B 의 생성 설정과 세 방식의 검증 설정이 같아야 한다 (한도 · 예산은 빼고).
+    """
+    runs = {"A": [run_dir.name for run_dir in improvement._rounds(topic, LOOP)] if _exists(topic, "A", f"{LOOP}-r1") else [],
+            "B": [B_RUN] if _exists(topic, "B", B_RUN) else [], "C": [C_RUN] if _exists(topic, "C", C_RUN) else []}
+    settings = {"생성": set(), "검증": set()}
+    for method, run_ids in runs.items():
+        for run_id in run_ids:
+            generated, checked = _check_run(topic, method, run_id, record)
+            settings["생성"].update(generated)
+            settings["검증"].update(checked)
+    mixed = [name for name, found in settings.items() if len(found) > 1]
+    if mixed:
+        raise ValueError(f"{topic} 의 방식들이 서로 다른 {mixed} 설정으로 돌았습니다")
+    return runs
+
+
+def _check_run(topic, method, run_id, record):
+    """run 하나가 고정 기록과 맞는지 보고, (생성 설정, 검증 설정들) 을 돌려준다."""
+    run_dir = storage.run_path(topic, method, run_id)
+    where = f"{topic}/{method}/{run_id}"
+    generated = storage._read_json(run_dir / "manifest.json")["generation"]
+    pinned = (record["plan"]["plan_id"], record["plan"]["sha256"], record["topic_specs"][topic])
+    if (generated["plan_id"], generated["plan_sha256"], generated["topic_spec_sha256"]) != pinned:
+        raise ValueError(f"{where} 는 고정한 계획 · 주제 명세로 만든 run 이 아닙니다")
+    outside = {bundle_id for part, ids in record["parts"][topic].items() if part != "train" for bundle_id in ids}
+    stray = sorted({output["bundle_id"] for output in report._outputs(topic, method, run_id, run_dir)} & outside)
+    if stray:
+        raise ValueError(f"{where} 에 train 몫이 아닌 묶음의 출력이 있습니다: {stray}")
+    checked = [storage._read_json(path) for path in storage.validation_records(run_dir)]
+    # C 는 웹에서 만들어 생성 프롬프트 기록이 없다. C 의 프롬프트는 pro-packets 가 고정 기록과 맞춰 본다.
+    prompts = {(generated["prompt_file"], generated["prompt_sha256"])} if method != "C" else set()
+    prompts |= {(name, row[key]) for row in checked
+                for name, key in (("validator.txt", "prompt_sha256"), ("judge.txt", "judge_prompt_sha256"))}
+    changed = sorted(name for name, sha in prompts if record["prompts"].get(name) != sha)
+    if changed:
+        raise ValueError(f"{where} 가 고정한 뒤 바뀐 프롬프트로 돌았습니다: {changed}")
+    return ([_priced(generated["run_config"])] if method != "C" else []), [_priced(row["run_config"]) for row in checked]
+
+
+def _priced(config):
+    return tuple(sorted((key, value) for key, value in config.items() if key not in ("max_calls", "budget_usd")))
 
 
 def _valid_questions(topic, method, runs):
@@ -126,11 +173,14 @@ def review_packets(experiment_id):
     질문 · 답이 없어 표본에 넣지 않는다. 표본은 거절을 일부러 넣은 것이라 전체 품질의 추정이 아니다.
     """
     storage.EXPERIMENT = experiment_id
-    planned, _ = plan.load_plan(storage._read_json(storage.state_root() / "freeze.json")["plan"]["plan_id"])
+    record = storage._read_json(storage.state_root() / "freeze.json")
+    planned, _ = plan.load_plan(record["plan"]["plan_id"])
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
     rng = random.Random(SEED)
     chosen = []
-    for topic in TOPICS:
+    # 고정 기록의 주제 차례는 schema.TOPICS 차례다 (freeze).
+    for topic in record["parts"]:
+        _checked_runs(topic, record)
         for method, run_id in (("A", f"{LOOP}-r1"), ("B", B_RUN), ("C", C_RUN)):
             if _exists(topic, method, run_id):
                 chosen += [{"topic": topic, "method": method, "run_id": run_id, **pick} for pick in _sample(topic, method, run_id, rng)]
@@ -189,6 +239,12 @@ def _human(experiment_id):
     key = {entry["review_id"]: entry for entry in storage._read_json(folder / "key.json")["entries"]}
     with (folder / "judgments.csv").open(encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
+    # 빠진 행은 표본을 줄이고 겹친 행은 한 출력을 두 번 세므로, 표본의 모든 출력을 꼭 한 번씩 판정했을 때만 잰다.
+    ids = Counter(row["review_id"] for row in rows)
+    if set(ids) != set(key) or max(ids.values(), default=0) > 1:
+        return {"measured": False, "reason": "판정 행이 표본과 하나씩 맞지 않습니다",
+                "missing": sorted(set(key) - set(ids)), "unknown": sorted(set(ids) - set(key)),
+                "duplicated": sorted(review_id for review_id, n in ids.items() if n > 1)}
     if any(row[name].strip().upper() not in ("Y", "N") for row in rows for name in RUBRIC):
         return {"measured": False, "reason": "판정에 Y · N 이 아닌 칸이 있습니다"}
     cells = {}

@@ -109,6 +109,9 @@ def _audit(args):
 
 
 def _release(args):
+    # 출시는 쓸모 판정을 다 해야 쓰므로, 실험 장부가 중간에 호출을 거절하면 이미 낸 판정 비용이 기록 없이 남는다.
+    if storage.EXPERIMENT:
+        raise SystemExit("비교 실험(--experiment)은 출시하지 않습니다")
     runs = [tuple(run.split(":", 1)) for run in args.run]
     config = {**_priced(args.model, args.reasoning_effort, args.price), "max_calls": args.max_calls, "budget_usd": args.budget}
     with _config_file(config) as path, api_client() as call:
