@@ -10,7 +10,7 @@ from rag.retrieval import indexing
 from rag.retrieval.quantities import facts
 from rag.retrieval.quantity_filter import parse_condition
 from rag.retrieval.quantity_metadata import quantity_rows
-from rag.retrieval.retrieval import DocRouter, HybridIndex
+from rag.retrieval.retrieval import DocRouter, HybridIndex, retrieval_fields
 
 
 @pytest.mark.parametrize("text", ["1억 3천만원", "130백만원", "130,000,000원", "금 130,000,000원"])
@@ -155,7 +155,8 @@ def test_filter_skips_heading_and_toc_candidates(index, toc_body):
     index._rank.side_effect = lambda *args: [{"index": 9, "score": 1}, {"index": 10, "score": 0.9},
                                            {"index": 6, "score": 0.8}]
     hits, candidates = index.search_with_candidates("예산 1억원 이하인 사업의 개요")
-    assert hits[0]["chunk_id"] == candidates[0]["chunk_id"] == "a-overview"
+    assert hits[0]["chunk_id"] == candidates[0]["chunk_id"] == "a"
+    assert "chunk_id=a-overview" in hits[0]["body"]
     assert "개요: 가 사업" in hits[0]["body"] and "목 차" not in hits[0]["body"]
 
 
@@ -165,6 +166,25 @@ def test_original_value_is_preserved_when_overview_tokenizer_normalizes_spaces(i
     index.embedder.truncate = lambda text, budget: " ".join(text[:budget].split())
     hits, _ = index.search_with_candidates("예산 1억원 이하 사업")
     assert original in hits[0]["body"]
+
+
+@pytest.mark.parametrize("value_page,overview_page,overview_source,location", [
+    (1, 2, "a.pdf", "p.2"), (None, None, "a.hwp", "Overview"),
+])
+def test_filter_value_and_overview_keep_their_own_locations(index, value_page, overview_page, overview_source, location):
+    index.chunks[0].update(page=value_page, section="Budget")
+    index.chunks[6].update(page=overview_page, section="Overview", source=overview_source)
+    index.chunk_file = "fixture/chunks.jsonl"
+    question = "예산 1억원 이하인 사업의 개요"
+    hits, record = retrieval_fields(index, question, question, reused=False)
+    candidates = record["ranked_candidates"]
+    assert hits[0]["chunk_id"] == candidates[0]["chunk_id"] == "a"
+    assert record["context_chunk_ids"] == ["a"]
+    assert (hits[0]["source"], hits[0]["page"], hits[0]["section"]) == ("a.pdf", value_page, "Budget")
+    assert f"개요 출처: {overview_source} {location}" in hits[0]["body"]
+    assert "개요: 가 사업" in hits[0]["body"]
+    value_location = "p.1" if value_page else "Budget"
+    assert f"[1] (a.pdf {value_location}" in format_context(hits)
 
 
 @pytest.mark.parametrize("question", [
@@ -248,7 +268,6 @@ def test_build_index_persists_quantities_and_embeds_distinct_phrases_once(monkey
     ("사업예산: ￦493,270,440 부가세포함", 493270440),
     ("사업예산: 50,000,000(금 오천만원/VAT포함)", 50000000),
     ("사업예산: 일금 육천만원정", 60000000),
-    ("과업비/과업기간 : 100,000천원 / 착수일로부터 5개월", 100000000),
 ])
 def test_audited_quantity_formats_preserve_original_spans(text, value):
     rows = quantity_rows([chunk("a", text)])
@@ -345,13 +364,95 @@ def test_table_cell_subject_overrides_generic_header_and_reference_is_not_own_va
     assert rows[1]["illustrative"]
 
 
-def test_currency_unit_headers_and_per_case_fines_are_not_budget_values():
-    rows = quantity_rows([chunk("a", "사업예산(천원) | 부문\n10 | 운영"),
-                          chunk("b", "건당 500만원 | 300만원 | 100만원"),
+def test_per_case_fines_are_not_budget_fields_and_standalone_scale_is_an_amount():
+    rows = quantity_rows([chunk("b", "건당 500만원 | 300만원 | 100만원"),
                           chunk("c", "사업예산: 천원")])
-    assert not any(r["doc_id"] == "a" and r["unit"] == "원" for r in rows)
     assert all(not r["phrase"] for r in rows if r["doc_id"] == "b")
     assert next(r for r in rows if r["doc_id"] == "c")["value"] == 1000
+
+
+@pytest.mark.parametrize("text,value,unit,phrase", [
+    ("사업예산(천원) | 부문\n10 | 운영", 10000, "원", "사업 예산"),
+    ("(단위: 천원)\n사업예산 | 부문\n10 | 운영", 10000, "원", "사업 예산"),
+    ("부문 | 사업예산(백만원)\n운영 | 1.5", 1500000, "원", "사업 예산 운영"),
+    ("사업기간(개월) | 부문\n10 | 운영", 10, "개월", "사업 기간"),
+    ("수량(개) | 부문\n10 | 운영", 10, "개", "수량"),
+    ("용량(MB) | 부문\n10 | 운영", 10, "MB", "용량"),
+])
+def test_declared_table_units_scale_numeric_cells_and_preserve_spans(text, value, unit, phrase):
+    rows = quantity_rows([chunk("a", text)])
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["value"], row["unit"], row["phrase"]) == (value, unit, phrase)
+    assert text[slice(*row["span"])] == row["original"]
+    declaration = row["unit_declaration"]
+    assert text[slice(*declaration["span"])] == declaration["original"]
+
+
+def test_table_units_are_column_specific_and_end_with_the_table():
+    text = ("(단위: 천원)\n사업예산 | 사업기간(개월)\n10 | 5\n20원 | 6개월\n"
+            "다음 본문\n사업예산 | 부문\n30 | 운영")
+    rows = quantity_rows([chunk("a", text), chunk("b", "10 | 운영")])
+    assert [(row["value"], row["unit"], row["phrase"]) for row in rows] == [
+        (10000, "원", "사업 예산"), (5, "개월", "사업 기간"),
+        (20, "원", "사업 예산"), (6, "개월", "사업 기간")]
+    assert not any(row["doc_id"] == "b" for row in rows)
+    assert not any(row.get("unit_declaration") for row in rows[2:])
+    assert quantity_rows([chunk("c", "사업예산(부가세포함) | 부문\n10 | 운영")]) == []
+
+
+def test_filter_displays_the_inherited_unit_with_the_original_numeric_cell(index):
+    index.chunks[0] = chunk("a", "사업예산(천원) | 부문\n10 | 운영")
+    index.quantity_rows = quantity_rows([index.chunks[0]])
+    index.quantity_phrases = [index.quantity_rows[0]["phrase"]]
+    index.quantity_vectors = index.embedder.encode(index.quantity_phrases)
+    hits, _ = index.search_with_candidates("예산 10000원 이상 사업")
+    assert hits.values[0]["value"] == 10000
+    assert hits[0]["body"].splitlines()[0] == "사업 예산: 10 (천원)"
+
+
+def test_declared_table_units_preserve_component_labels_and_collapsed_total_cells():
+    text = ("예산과목 | 주요 내용 | 예산(천원)\n"
+            "전산개발비 | 시스템 구축 | 140,000\n장비비 | 장비 구입 | 60,000\n계 | 200,000")
+    rows = quantity_rows([chunk("a", text)])
+    assert [(row["value"], row["phrase"]) for row in rows] == [
+        (140000000, "사업 예산 전산 개발비"), (60000000, "사업 예산 장비 비"), (200000000, "사업 예산 계")]
+    assert all(text[slice(*row["span"])] == row["original"] for row in rows)
+
+
+@pytest.mark.parametrize("text", [
+    "과업비/과업기간 : 100,000천원 / 착수일로부터 5개월",
+    "과업기간/과업비: 착수일로부터 5개월/100,000천원",
+    "내용 | 과업비/과업기간 : 100,000천원 / 착수일로부터 5개월",
+    "1. 과업비/과업기간: 100,000천원/5개월",
+])
+def test_parallel_fields_assign_each_quantity_to_its_corresponding_label(text):
+    rows = quantity_rows([chunk("a", text)])
+    assert {(row["value"], row["unit"], row["phrase"]) for row in rows} == {
+        (100000000, "원", "사업 과업비"), (5, "개월", "과업 기간")}
+    assert all(text[slice(*row["span"])] == row["original"] for row in rows)
+
+
+def test_parallel_values_keep_compound_units_and_support_more_than_two_fields():
+    rows = quantity_rows([chunk("a", "속도/기간: 100MB/s/5개월"),
+                          chunk("b", "예산/사업기간/수량: 1억원/6개월/12개")])
+    assert [(row["value"], row["unit"], row["phrase"]) for row in rows] == [
+        (100, "MB/s", "속도"), (5, "개월", "기간"),
+        (100000000, "원", "사업 예산"), (6, "개월", "사업 기간"), (12, "개", "수량")]
+
+
+@pytest.mark.parametrize("text", [
+    "사용 시스템/메뉴: SAP / 관리 화면 상세 설명: 퇴직 3개월 전 알림",
+    "접근권한 관리 내역 기록 - 사용 시스템/메뉴: SAP / 권한모니터링 등 ❍ 기능 요구사항 - 내역 저장(3개월 이상)",
+])
+def test_parallel_field_scope_does_not_relabel_later_clauses_or_numbered_glossaries(text):
+    rows = quantity_rows([chunk("a", text)])
+    assert len(rows) == 1 and rows[0]["unit"] == "개월" and rows[0]["phrase"] != "메뉴"
+    glossary = "(용어설명) 1. I/O Driver: 설명 2. DIT: 설명 3. SAC: I/O 연결"
+    rows = quantity_rows([chunk("b", glossary)])
+    assert [(row["original"], row["phrase"]) for row in rows] == [
+        ("1. I/O", "용어 설명"), ("2. DIT", "I"), ("3. SAC", "DIT")]
+    assert all(glossary[slice(*row["span"])] == row["original"] for row in rows)
 
 
 @pytest.mark.parametrize("distractor", [
@@ -366,7 +467,8 @@ def test_overview_uses_real_introduction_before_unrelated_value_source(index, di
     index._rank.side_effect = None
     index._rank.return_value = [{"index": 9, "score": 1}, {"index": 10, "score": .9}]
     hits, _ = index.search_with_candidates("예산 1억원 이하인 사업의 개요")
-    assert hits[0]["chunk_id"] == "a-purpose"
+    assert hits[0]["chunk_id"] == "a"
+    assert "chunk_id=a-purpose" in hits[0]["body"]
     assert "스마트 관개" in hits[0]["body"] and "일반개황" not in hits[0]["body"]
 
 

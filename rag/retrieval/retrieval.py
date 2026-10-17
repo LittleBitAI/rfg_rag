@@ -107,12 +107,20 @@ class HybridIndex:
         hits, ranked = [], []
         for row in matched:
             top, overview = self._filter_excerpt(row, condition.remainder)
-            chunk = self.chunks[top["index"]]
-            value = f"{row['phrase']}: {row['original']}\n"
+            value_index = next(i for i, c in enumerate(self.chunks) if c["chunk_id"] == row["chunk_id"])
+            chunk = self.chunks[value_index]
+            if top["index"] != value_index:
+                source = self.chunks[top["index"]]
+                loc = f"p.{source['page']}" if source["page"] else source["section"]
+                overview = f"개요 출처: {source['source']} {loc} [chunk_id={source['chunk_id']}]\n" + overview
+            original = row["original"]
+            if row.get("unit_declaration"):
+                original += f" ({row['unit_declaration']['original']})"
+            value = f"{row['phrase']}: {original}\n"
             available = share - self.embedder.token_counts([value])[0] - 2
             body = value + self.embedder.truncate(overview, max(0, available))
             hits.append({**chunk, "body": body, "score": round(row["similarity"], 4)})
-            ranked.append({**top, "dense_score": None, "dense_rank": None, "bm25_score": None,
+            ranked.append({**top, "index": value_index, "dense_score": None, "dense_rank": None, "bm25_score": None,
                            "bm25_rank": None, "exact_code_match": False})
         return FilterHits(hits, summary, matched, chosen), self._candidate_snapshot([ranked], ranked)
 

@@ -47,6 +47,10 @@ UTF-8 CSV에 `파일명`, `발주기관` 열이 있어야 합니다. Excel이 �
 
 Comparison expressions remain marked as bounds. Explicit labelled quantity ceilings, such as `사업예산: 230,000천원 이내` and `사업기간: 계약일로부터 24개월 이내`, can supply the document value; eligibility clauses, examples and explicit reference blocks cannot. Estimated prices (`추정가격`) remain excluded. Won values of 1 or less are unstated; valid one-month and one-item quantities remain usable. Parenthesized currency scales declare units, and counter-only labels such as `건당` cannot supply a budget field. Table-cell subjects take precedence over generic headers, and artificial project context is added only to monetary labels so unrelated periods retain their actual subjects.
 
+Declared column units and a preceding `(단위: 천원)` apply to numeric table cells: `사업예산(천원) | 부문` followed by `10 | 운영` yields 10,000 won. The metadata preserves both the numeric cell and its unit declaration spans; the context displays `10 (천원)`. Explicit cell units take precedence, and inherited units end with the table or chunk. Component row labels remain distinct from a shortened total row. Slash-separated parallel fields such as `과업비/과업기간: 100,000천원/5개월` assign each value to its corresponding field; unit-internal slashes such as `MB/s` remain intact.
+
+Filtered hit metadata, candidate IDs and `context_chunk_ids` identify the selected value's source chunk. When the overview comes from another chunk, its filename, page or section, and chunk ID appear beside that excerpt in the body. Each project still contributes one hit with the existing schema; the overview's ID is recorded in that body rather than added to `context_chunk_ids`.
+
 | 설정 | 의미 |
 | --- | --- |
 | `retrieval.field_similarity` | 질문 항목명과 색인 항목명의 최소 코사인 유사도. 필요한 단위의 사용 가능한 행 중 유사도가 가장 높은 행을 문서 값으로 선택합니다. |

@@ -8,6 +8,85 @@ COMPARISON = re.compile(r"\s*(?:을|를|이|가|은|는)?\s*(이상|이하|초�
 DIGITS = dict(zip("영공일이삼사오육칠팔구", (0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9)))
 KOREAN_MONEY = re.compile(r"(?<![\d,가-힣])(?:일금\s*|금\s*)?([영공일이삼사오육칠팔구십백천만억조]+)\s*원(?:정)?")
 WON_PREFIX = re.compile(r"[₩￦]\s*([+-]?\d[\d,]*(?:\.\d+)?)(?:원+)?")
+UNIT_DECLARATION = re.compile(r"\((?:\s*단위\s*[:：]\s*)?([^()|]+)\)|단위\s*[:：]\s*([^()|\n]+)")
+NUMBER_CELL = re.compile(r"\s*([+-]?\d[\d,]*(?:\.\d+)?)\s*(?:이상|이하|초과|미만|이내|까지)?\s*")
+
+
+def _declared_unit(text, offset=0):
+    for match in UNIT_DECLARATION.finditer(text):
+        group = 1 if match[1] is not None else 2
+        original = match[group].strip()
+        parsed = tokens(original)
+        # Bare parentheses also hold prose such as '(부가세포함)'.
+        if "단위" not in match[0] and len(parsed) > 1 and any(t.tag == "NNG" for t in parsed):
+            continue
+        found = facts("1" + original)
+        if len(found) != 1 or found[0][2] != (0, len(original) + 1) or not found[0][0][1]:
+            continue
+        (scale, unit), _, _ = found[0]
+        start = offset + match.start(group) + len(match[group]) - len(match[group].lstrip())
+        return {"scale": float(scale), "unit": unit, "original": original, "span": [start, start + len(original)]}
+    return None
+
+
+def _cell_column(column, count, declarations):
+    if count < len(declarations):
+        remaining = [i for i in range(column, len(declarations)) if declarations[i] is not None]
+        return remaining[0] if len(remaining) == 1 else None
+    return column
+
+
+def _implicit_cells(line, headers, declarations, default):
+    result = []
+    cells = list(re.finditer(r"[^|]+", line))
+    for column, cell in enumerate(cells):
+        target = _cell_column(column, len(cells), declarations)
+        declaration = declarations[target] if target is not None and target < len(declarations) else None
+        declaration = declaration or default
+        number = NUMBER_CELL.fullmatch(cell[0])
+        if declaration is None or number is None:
+            continue
+        field = headers[target] if target is not None and target < len(headers) else ""
+        if column and _field_label(cells[0][0]):
+            field += " " + cells[0][0].strip()
+        declaration = {**declaration, "field": field}
+        start, end = cell.start() + number.start(1), cell.start() + number.end(1)
+        quantity = (float(number[1].replace(",", "")) * declaration["scale"], declaration["unit"], start, end)
+        result.append((quantity, declaration))
+    return result
+
+
+def _field_label(label):
+    parsed = tokens(label)
+    return any(t.tag in ("NNG", "NNP", "SL") for t in parsed) and not any(
+        t.tag == "SN" or t.tag.startswith(("V", "E")) for t in parsed)
+
+
+def _parallel_parts(line):
+    parts = re.split(r"[:：]", line, maxsplit=1)
+    if len(parts) != 2 or "/" not in parts[0] or "|" in parts[0]:
+        return []
+    labels = parts[0].split("/")
+    labels[0] = re.sub(r"^\s*(?:\d+|[가-하])[.)]\s*", "", labels[0])
+    if not all(_field_label(label) for label in labels):
+        return []
+    tail = parts[1]
+    quantities = _read_value(tail)
+    separators = [m.start() for m in re.finditer("/", tail)
+                  if not any(a <= m.start() < b - int(unit.endswith("/")) for _, unit, a, b in quantities)]
+    if len(separators) != len(labels) - 1:
+        return []
+    offset = len(line) - len(tail)
+    bounds = zip([-1, *separators], [*separators, len(tail)])
+    return [(label, offset + a + 1, offset + b) for label, (a, b) in zip(labels, bounds)]
+
+
+def _parallel_field(line, start):
+    parts = _parallel_parts(line)
+    prefix = re.split(r"[:：]", line[:start], maxsplit=1)
+    if len(prefix) == 2 and re.search(r"[:：□■○◦❍]|\s-\s", prefix[1]):
+        return None
+    return next(((label, True) for label, a, b in parts if a <= start < b), None)
 
 
 def _korean_number(text):
@@ -31,7 +110,7 @@ def _written_amount(line, match, number_starts):
     return match.start(1) in number_starts or match[0].startswith(("금", "일금"))
 
 
-def _read(line):
+def _read_value(line):
     prefixed = [(float(m[1].replace(",", "")), "원", m.start(), m.end()) for m in WON_PREFIX.finditer(line)]
     result = []
     for (value, unit), _, (start, end) in facts(line):
@@ -47,10 +126,27 @@ def _read(line):
     return sorted(result, key=lambda r: r[2])
 
 
+def _read_cell(line):
+    parts = _parallel_parts(line) or [("", 0, len(line))]
+    return [(value, unit, a + start, b + start) for _, start, end in parts
+            for value, unit, a, b in _read_value(line[start:end])]
+
+
+def _read(line):
+    return [(value, unit, a + cell.start(), b + cell.start()) for cell in re.finditer(r"[^|]+", line)
+            for value, unit, a, b in _read_cell(cell[0])]
+
+
+def _strip_unit(match, unit):
+    declaration = _declared_unit(match[0])
+    return "" if declaration and declaration["unit"] == unit else match[0]
+
+
 def _clean_label(label, unit):
     label = re.sub(r"\[IMAGE[^\]]*\]", "", label).strip()
     label = re.sub(r"(?<![가-힣])(?:[가-힣]\s+)+[가-힣](?![가-힣])", lambda m: re.sub(r"\s", "", m[0]), label)
     label = re.sub(r"(?:일금|금)\s*$", "", label).split("/")[0]
+    label = UNIT_DECLARATION.sub(lambda m: _strip_unit(m, unit), label)
     if not any(t.tag in ("NNG", "NNP", "SL") for t in tokens(label)):
         return ""
     phrase = subject_phrase(label)
@@ -64,6 +160,9 @@ def _field(line, start, headers):
     if "|" in line:
         column = next(i for i, cell in enumerate(cells) if cell.start() <= start < cell.end())
         local = line[cells[column].start():start]
+        parallel = _parallel_field(cells[column][0], start - cells[column].start())
+        if parallel is not None:
+            return parallel
         if _clean_label(local, ""):
             return local, ":" in local or "：" in local
         if column < len(headers):
@@ -71,6 +170,9 @@ def _field(line, start, headers):
         if column and not re.search(r"\d", cells[column - 1][0]):
             return cells[column - 1][0], True
         return "", False
+    parallel = _parallel_field(line, start)
+    if parallel is not None:
+        return parallel
     prefix = line[:start]
     declared = ":" in prefix or "：" in prefix
     label = re.split(r"[:：]", prefix)[-2] if declared else prefix
@@ -78,14 +180,14 @@ def _field(line, start, headers):
     return label, declared
 
 
-def _row(chunk, line, quantity, offset, headers, context):
+def _row(chunk, line, quantity, offset, headers, context, declaration=None):
     value, unit, start, end = quantity
     attached = re.search(r"(이상|이하|초과|미만|이내|까지)$", unit)
     if attached:
         unit, end = unit[:attached.start()], end - len(attached[0])
     comparison = COMPARISON.match(line[end:])
     unit = "원" if unit in ("원원", "원정") else unit
-    label, declared = _field(line, start, headers)
+    label, declared = (declaration["field"], True) if declaration else _field(line, start, headers)
     phrase = _clean_label(label, unit)
     illustrative = "예시" in context or bool(re.search(r"\[\s*참고[.\s][^\]]*\]", context))
     cap = (declared and comparison is not None and comparison[1] in ("이하", "이내", "까지")
@@ -97,18 +199,30 @@ def _row(chunk, line, quantity, offset, headers, context):
             "estimated_price": "추정가격" in phrase.replace(" ", "")}
 
 
-def quantity_rows(chunks):
+def _chunk_rows(chunk):
     rows = []
-    for chunk in chunks:
-        offset, headers = 0, []
-        body = unicodedata.normalize("NFC", chunk["body"])
-        for line in body.splitlines(keepends=True):
-            quantities = _read(line)
-            if "|" in line and not quantities and re.search(r"[가-힣]", line):
-                headers = [cell.strip() for cell in line.strip().strip("|").split("|")]
-            for quantity in quantities:
-                rows.append(_row(chunk, line, quantity, offset, headers, body[max(0, offset-200):offset+len(line)]))
-            if "|" not in line:
-                headers = []
-            offset += len(line)
+    offset, headers, declarations, default = 0, [], [], None
+    body = unicodedata.normalize("NFC", chunk["body"])
+    for line in body.splitlines(keepends=True):
+        quantities = [(quantity, None) for quantity in _read(line)]
+        if "|" in line:
+            quantities.extend(_implicit_cells(line, headers, declarations, default))
+            if not quantities and re.search(r"[가-힣]", line):
+                cells = list(re.finditer(r"[^|]+", line.strip().strip("|")))
+                headers = [cell[0].strip() for cell in cells]
+                declarations = [_declared_unit(cell[0], offset + line.index(cell[0])) for cell in cells]
+        else:
+            declared = _declared_unit(line, offset) if "단위" in line else None
+            default = declared if headers or declared else default
+            headers, declarations = [], []
+        for quantity, declaration in quantities:
+            row = _row(chunk, line, quantity, offset, headers, body[max(0, offset-200):offset+len(line)], declaration)
+            if declaration is not None:
+                row["unit_declaration"] = {key: declaration[key] for key in ("original", "span")}
+            rows.append(row)
+        offset += len(line)
     return rows
+
+
+def quantity_rows(chunks):
+    return [row for chunk in chunks for row in _chunk_rows(chunk)]
