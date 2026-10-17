@@ -21,7 +21,7 @@ langfuse>=4.0           # 검색·생성 추적 (.env 에 키가 있을 때만 L
 # ── 검색
 faiss-cpu>=1.8          # GPU 검색을 원하면 conda 의 faiss-gpu 사용
 rank-bm25>=0.2.2
-kiwipiepy>=0.20         # 한국어 형태소 BM25 토크나이저
+kiwipiepy==0.24.0       # 한국어 형태소 BM25 토크나이저
 hanja>=0.15             # 한자 → 한글 독음 (必 → 必(필))
 sentence-transformers>=3.3   # KURE-v1 임베딩
 

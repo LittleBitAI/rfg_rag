@@ -75,10 +75,12 @@ def _canonical(text: str) -> str:
 
 _KIWI_KEEP = ("NNG", "NNP", "NNB", "NR", "NP", "VV", "VA", "XR", "SL", "SH", "SN", "MAG")
 _NEGATION = {("않", "VX"), ("아니", "VCN")}
+_NOISE = {("및", "MAG"), ("하", "VV"), ("되", "VV"), ("있", "VV"), ("등", "NNB"), ("수", "NNB")}
 
 
 def _is_kept(tok) -> bool:
-    return tok.tag.startswith(_KIWI_KEEP) or (tok.form, tok.tag) in _NEGATION
+    return (tok.form, tok.tag) not in _NOISE and (
+        tok.tag.startswith(_KIWI_KEEP) or (tok.form, tok.tag) in _NEGATION)
 
 
 class KiwiTokenizer:
@@ -89,6 +91,9 @@ class KiwiTokenizer:
         self.kiwi = Kiwi(num_workers=-1)
         for word in _USER_WORDS:
             self.kiwi.add_user_word(word.replace(" ", ""), "NNP", 1.0)
+        words = json.loads(Path(__file__).with_name("kiwi_user_words.json").read_text(encoding="utf-8"))
+        for word in words:
+            self.kiwi.add_user_word(word, "NNP", 1.0)
 
     def _keep(self, toks, text: str) -> list[str]:
         out = []
