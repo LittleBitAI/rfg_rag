@@ -1,8 +1,14 @@
 # Corrected-index paid validation
 
+## Frontend acceptance
+
+On 2026-10-17 the person selected `61개 표 확인 완료 (Recommended)` in response to the frontend acceptance choices. The question asked whether submitting the reported budget question in a new thread showed all 61 projects with budgets and overviews and 10 excluded documents. This explicit confirmation satisfies the final human acceptance requirement; it is user-reported browser evidence, not an agent-driven frontend submission.
+
+At acceptance the usage CSV contained two additional user calls for `1억 미만인 사업제안서 목록과 그 사업들이 무엇인지에 대해 알려줘.`: rewrite $0.0001039 and answer $0.0020553. These are separate below-threshold exploration, not another four-question validation or a newly observed exact-main-question frontend pair. No agent call was added to reproduce the person's confirmation. Total observed task usage is 52 calls and $0.07041149; the earlier frontend reservation is an estimate, not an additional charge. The acceptance record and final ledger are in `artifacts/quantity_filter/final_luna_recheck/frontend_acceptance.json` and `whole_work_accounting_at_acceptance.json`.
+
 ## Final four-answer recheck
 
-On 2026-10-17 the person approved `전체 4개 재검증`. Four LUNA answers ran against commit `f131deb`, reusing the saved rewrites and frozen corrected contexts in `artifacts/quantity_filter/post_recheck_fix/`. All four outputs passed the checks below. Explicit frontend acceptance remains outstanding, so this is not the task's completion report.
+On 2026-10-17 the person approved `전체 4개 재검증`. Four LUNA answers ran against commit `f131deb`, reusing the saved rewrites and frozen corrected contexts in `artifacts/quantity_filter/post_recheck_fix/`. All four outputs passed the checks below. The subsequently received frontend acceptance is recorded above.
 
 | Question | Expected projects / table rows | Exclusions | Answer cost | Call time |
 | --- | ---: | ---: | ---: | ---: |
@@ -20,7 +26,7 @@ Usage was 44,873 input tokens, zero cached input and 8,175 output tokens includi
 
 Evidence is preserved in `artifacts/quantity_filter/final_luna_recheck/`: `manifest.json` records approval, commit, prompt, settings, input estimates and context hashes; `calls.jsonl`, the four answer files and `usage_summary.json` preserve the outputs and charges; `audit.json`, `overview_review_pairs.json` and `manual_review.json` record the checks. The run log is `artifacts/quantity_final_luna_recheck.log`.
 
-Production code and tests did not change in this recheck. The final code's existing gate remains 1,183 passed with 12 warnings (`artifacts/quantity_post_recheck_gate.log`), and its test-cleanup audit remains in `artifacts/quantity_filter/post_recheck_fix/test_cleanup.json`; the unchanged suite was not repeated. The frontend and backend returned HTTP 200 without an answer call. The person must submit `사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘.` in a new frontend thread and explicitly confirm all 61 budget/overview rows and 10 exclusions before completion can be reported.
+Production code and tests did not change in this recheck or acceptance record. The final code's existing gate remains 1,183 passed with 12 warnings (`artifacts/quantity_post_recheck_gate.log`), and its test-cleanup audit remains in `artifacts/quantity_filter/post_recheck_fix/test_cleanup.json`; the unchanged suite was not repeated. The frontend and backend returned HTTP 200 without an answer call. The person subsequently confirmed the required result for `사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘.` through the acceptance choices above.
 
 ## Previous four-answer recheck and repair
 

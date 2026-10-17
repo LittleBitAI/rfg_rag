@@ -1,23 +1,22 @@
 # 수량 필터 검증 전체 견적서
 
-Updated 2026-10-17, USD. The person approved the final four-answer recheck with `전체 4개 재검증`. All four outputs passed the recorded checks for $0.0085748 against $0.02132399 estimated. Observed task spending is now $0.06825229 across 50 calls, including the snapshot of 14 user frontend calls. The already approved frontend confirmation pair remains estimated at $0.00705974, giving a projected total of $0.07531203 across 52 calls. No further agent calls are proposed. [Validation evidence](quantity_filter_validation.md) records the output checks and remaining manual acceptance.
+Updated 2026-10-17, USD. The person approved the final four-answer recheck with `전체 4개 재검증`. All four outputs passed for $0.0085748 against $0.02132399 estimated, and the person explicitly confirmed the 61-row frontend table. Two subsequent user calls for a below-threshold query cost $0.0021592. Final observed task spending is $0.07041149 across 52 calls, including 16 user frontend calls. No further agent calls or frontend acceptance calls are required. [Validation evidence](quantity_filter_validation.md) records the output checks and the person's acceptance.
 
 ## Current whole-work accounting
 
-| Work | Calls | Recorded cost or remaining estimate |
+| Work | Calls | Recorded cost |
 | --- | ---: | ---: |
 | Original paired comparison and initial LUNA answer rechecks | 20 | Recorded $0.03569810 |
 | User frontend calls, recorded snapshot | 14 | Recorded $0.00598239 |
 | Corrected-index rewrite/answer validation | 8 | Recorded $0.00909840 |
 | Previous four-answer recheck | 4 | Recorded $0.00889860 |
 | Final approved four-answer recheck | 4 | Recorded $0.00857480 |
-| Observed spending | 50 | Recorded $0.06825229 |
-| Reserved user frontend confirmation | 2 | Estimated $0.00705974 |
-| Recorded spending plus remaining estimate | 52 | $0.07531203 |
+| Additional user frontend exploration below the threshold | 2 | Recorded $0.00215920 |
+| Final observed spending | 52 | Recorded $0.07041149 |
 
-The final four calls used 44,873 input tokens, zero cached input and 8,175 output tokens including 596 reasoning tokens; paid call time summed to 53.187 seconds. Rates remain LUNA Standard input $0.10, cached input $0.01 and output $0.50 per million tokens, checked on 2026-10-17 against the official sources below. Recorded USD is calculated from actual response tokens and configured rates, not reconciled against an invoice. Any separate user calls after the recorded snapshot are outside this total.
+The final four calls used 44,873 input tokens, zero cached input and 8,175 output tokens including 596 reasoning tokens; paid call time summed to 53.187 seconds. The two additional user calls used 10,772 input tokens, zero cached input and 2,164 output tokens including 416 reasoning tokens. Their subject was `1억 미만인 사업제안서 목록과 그 사업들이 무엇인지에 대해 알려줘.`; they are accounted separately from the agent validation. Rates remain LUNA Standard input $0.10, cached input $0.01 and output $0.50 per million tokens, checked on 2026-10-17 against the official sources below. Recorded USD is calculated from actual response tokens and configured rates, not reconciled against an invoice. Calls after this acceptance snapshot are outside this total.
 
-The reserved frontend estimate assumes a new thread and empty history. It includes rewriting at 178 estimated input tokens and a 2,048-token output limit ($0.00104358), then answering at 17,456 estimated input tokens and an 8,192-token output limit ($0.00601616). Output limits include reasoning, effort is `low`, no cache discount is assumed, and input cost includes a 10% allowance. Input estimates use `o200k_base` plus 20 message-overhead tokens. This pair is already approved and has not been executed by the agent. The person submits the exact main question and confirms 61 complete table rows and 10 exclusions.
+The historical frontend reservation was $0.00705974: rewriting at 178 estimated input tokens and a 2,048-token output limit ($0.00104358), then answering at 17,456 estimated input tokens and an 8,192-token output limit ($0.00601616). It assumed a new thread, empty history, `low` reasoning, no cache discount and a 10% input-cost allowance, with `o200k_base` plus 20 message-overhead tokens. Output limits include reasoning. This estimate is not added to final actual spending: no new exact-main-question pair was identified after the final four-call recheck, and acceptance rests on the person's explicit 61-row confirmation. No agent call was made to spend the unused reservation or reproduce that confirmation.
 
 Local work adds no API charge. Paid judges, OCR, embedding APIs, the evaluation test split, further agent calls, extra questions, intentional additional retries and output-limit increases remain excluded. Taxes, exchange rates, fees, labor and electricity are excluded. These are estimates, not an API-enforced cap; any additional paid scope requires a new option-based approval. Final call evidence is in `artifacts/quantity_filter/final_luna_recheck/usage_summary.json`. Historical estimates below remain for comparison.
 
