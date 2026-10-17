@@ -1,5 +1,29 @@
 # Corrected-index paid validation
 
+## Final four-answer recheck
+
+On 2026-10-17 the person approved `전체 4개 재검증`. Four LUNA answers ran against commit `f131deb`, reusing the saved rewrites and frozen corrected contexts in `artifacts/quantity_filter/post_recheck_fix/`. All four outputs passed the checks below. Explicit frontend acceptance remains outstanding, so this is not the task's completion report.
+
+| Question | Expected projects / table rows | Exclusions | Answer cost | Call time |
+| --- | ---: | ---: | ---: | ---: |
+| Budget ≥100 million won and overviews | 61 / 61 | 10 | $0.0034617 | 21.452 s |
+| Project duration ≥6 months | 30 / 30 | 45 | $0.0019689 | 11.712 s |
+| Budget 100–500 million won | 44 / 44 | 10 | $0.0029521 | 17.414 s |
+| Largest budget | 1 / 1 | 10 | $0.0001921 | 2.609 s |
+| Total | 136 / 136 | | $0.0085748 | 53.187 s |
+
+Every expected citation appears once in its corresponding table row. All 136 value cells preserve the selected original value, including currency glyphs, without added tax clauses or other text. Every row has an overview, and all four answers state the supplied exclusion count. The main answer correctly says all 61 projects meet the threshold. Its medical-center overview now describes the emergency medical situation-management system, and its Bonghwa overview summarizes the disaster-response background. The maximum answer explicitly attributes its result to comparison across the available values, with no contradictory comparison disclaimer.
+
+All 136 overview rows were compared with their supplied excerpts and project names. They stay within those sources; some remain brief descriptions based on the project name because the compact context contains little further detail. The duration answer's railway ISP description of current-state and environment analysis is supported by its provided scope section. This is a manual check of these particular outputs, not a formal faithfulness score or evidence of general model equivalence. No paid judges ran.
+
+Usage was 44,873 input tokens, zero cached input and 8,175 output tokens including 596 reasoning tokens. The CSV grew from 503 to 507 rows, exactly four answer calls. Actual cost was 59.8% below the approved $0.02132399 estimate. History was empty; output limit remained 8,192 with `low` reasoning. No new rewrite, retrieval/indexing API, judge, OCR, embedding API or evaluation test-split calls ran. Recorded USD uses actual response tokens and configured rates rather than invoice reconciliation.
+
+Evidence is preserved in `artifacts/quantity_filter/final_luna_recheck/`: `manifest.json` records approval, commit, prompt, settings, input estimates and context hashes; `calls.jsonl`, the four answer files and `usage_summary.json` preserve the outputs and charges; `audit.json`, `overview_review_pairs.json` and `manual_review.json` record the checks. The run log is `artifacts/quantity_final_luna_recheck.log`.
+
+Production code and tests did not change in this recheck. The final code's existing gate remains 1,183 passed with 12 warnings (`artifacts/quantity_post_recheck_gate.log`), and its test-cleanup audit remains in `artifacts/quantity_filter/post_recheck_fix/test_cleanup.json`; the unchanged suite was not repeated. The frontend and backend returned HTTP 200 without an answer call. The person must submit `사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘.` in a new frontend thread and explicitly confirm all 61 budget/overview rows and 10 exclusions before completion can be reported.
+
+## Previous four-answer recheck and repair
+
 ## 4개 답변 재검증 결과와 후속 수정
 
 2026-10-17 사용자가 `전체 4개 재검증 (Recommended)`를 승인하여, `b51bd7f`의 저장된 재작성과 최종 컨텍스트로 LUNA 답변만 4회 호출했다. 실제 비용은 $0.0088986으로 견적 $0.02130892보다 58.2% 낮았다. 재작성·심판·OCR·임베딩 API와 평가 test split은 실행하지 않았다. 이번 실행 전체는 인수 통과가 아니다.

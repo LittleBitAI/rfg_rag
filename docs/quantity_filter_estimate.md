@@ -1,8 +1,29 @@
 # 수량 필터 검증 전체 견적서
 
-2026-10-17 갱신, USD 기준. 승인된 4개 답변 재검증은 실제 $0.0088986으로 끝났다. 관측 누계는 사용자 화면 호출 14회를 포함해 46회, $0.05967749다. 사업 누락은 없지만 첫 질문과 최대 예산 답변에서 결함이 남아 무상으로 보정했다. 아래 추가 유료 견적은 아직 승인되거나 실행되지 않았으며, [검증 결과](quantity_filter_validation.md)에 실패와 후속 수정을 기록했다.
+Updated 2026-10-17, USD. The person approved the final four-answer recheck with `전체 4개 재검증`. All four outputs passed the recorded checks for $0.0085748 against $0.02132399 estimated. Observed task spending is now $0.06825229 across 50 calls, including the snapshot of 14 user frontend calls. The already approved frontend confirmation pair remains estimated at $0.00705974, giving a projected total of $0.07531203 across 52 calls. No further agent calls are proposed. [Validation evidence](quantity_filter_validation.md) records the output checks and remaining manual acceptance.
 
-## 최신 제안: 출력 설명과 서식 보정 후 확인
+## Current whole-work accounting
+
+| Work | Calls | Recorded cost or remaining estimate |
+| --- | ---: | ---: |
+| Original paired comparison and initial LUNA answer rechecks | 20 | Recorded $0.03569810 |
+| User frontend calls, recorded snapshot | 14 | Recorded $0.00598239 |
+| Corrected-index rewrite/answer validation | 8 | Recorded $0.00909840 |
+| Previous four-answer recheck | 4 | Recorded $0.00889860 |
+| Final approved four-answer recheck | 4 | Recorded $0.00857480 |
+| Observed spending | 50 | Recorded $0.06825229 |
+| Reserved user frontend confirmation | 2 | Estimated $0.00705974 |
+| Recorded spending plus remaining estimate | 52 | $0.07531203 |
+
+The final four calls used 44,873 input tokens, zero cached input and 8,175 output tokens including 596 reasoning tokens; paid call time summed to 53.187 seconds. Rates remain LUNA Standard input $0.10, cached input $0.01 and output $0.50 per million tokens, checked on 2026-10-17 against the official sources below. Recorded USD is calculated from actual response tokens and configured rates, not reconciled against an invoice. Any separate user calls after the recorded snapshot are outside this total.
+
+The reserved frontend estimate assumes a new thread and empty history. It includes rewriting at 178 estimated input tokens and a 2,048-token output limit ($0.00104358), then answering at 17,456 estimated input tokens and an 8,192-token output limit ($0.00601616). Output limits include reasoning, effort is `low`, no cache discount is assumed, and input cost includes a 10% allowance. Input estimates use `o200k_base` plus 20 message-overhead tokens. This pair is already approved and has not been executed by the agent. The person submits the exact main question and confirms 61 complete table rows and 10 exclusions.
+
+Local work adds no API charge. Paid judges, OCR, embedding APIs, the evaluation test split, further agent calls, extra questions, intentional additional retries and output-limit increases remain excluded. Taxes, exchange rates, fees, labor and electricity are excluded. These are estimates, not an API-enforced cap; any additional paid scope requires a new option-based approval. Final call evidence is in `artifacts/quantity_filter/final_luna_recheck/usage_summary.json`. Historical estimates below remain for comparison.
+
+## Approved estimate: final four-answer recheck
+
+The person selected the four-answer option below; it completed for $0.0085748. The two-answer alternative was not purchased. The following tables preserve the estimate as shown before approval; current actuals and the remaining frontend pair are above.
 
 저장된 유료 재작성 4개를 그대로 재사용한다. 후보는 답변 4개 전체 재검증 또는 실패한 첫 질문·최대 예산 답변 2개 재검증이다. 이미 승인된 최종 사용자 화면의 재작성·답변 2회는 두 선택지 모두 별도로 남긴다. 최신 프롬프트는 네 질문에 공통으로 적용되므로 전체 4개 확인을 권장한다. 두 개만 실행하면 기간·범위 답변의 새 프롬프트 결과는 검증되지 않는다.
 
@@ -33,7 +54,7 @@
 
 이번 실행은 입력 44,736·캐시 0·출력 8,850·추론 736토큰, 호출 합계 61.123초다. 실제 응답 토큰과 설정 단가에 따른 기록액이며 청구서 대사는 아니다. 사용자의 별도 추가 실행은 이 스냅샷에 포함되지 않는다. 견적은 API 강제 상한이 아니다.
 
-로컬 보정·추출·색인·임베딩·검색·테스트·저장 dev 재검색의 API 비용은 $0다. 유료 심판·OCR·임베딩 API·평가 test split·새 재작성·추가 질문·의도적 추가 재시도·토큰 한도 인상은 제외한다. 세금·환율·수수료·인건비·전기료도 제외한다. 견적 입력은 `artifacts/quantity_filter/post_recheck_fix/recheck_estimate.json`, 실제 사용량은 `artifacts/quantity_filter/post_paid_luna_recheck/usage_summary.json`에 저장했다. 다음 유료 호출 전에 이 두 선택지 중 하나의 승인을 받는다.
+The historical estimate inputs are in `artifacts/quantity_filter/post_recheck_fix/recheck_estimate.json`. The four-answer option was approved before execution; exclusions and remaining-work assumptions are recorded in the current accounting above.
 
 ## 직전 승인 견적과 실행 이력
 
