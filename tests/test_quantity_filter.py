@@ -137,6 +137,51 @@ def test_highest_similarity_wins_over_larger_value(index):
     assert "a" not in [h["doc_id"] for h in hits]
 
 
+@pytest.mark.parametrize("toc_body", [
+    "목 차\n1. 사업개요와 일반사항 1\n2. 사업 추진배경 및 필요성 2\n3. 주요 사업내용 및 범위 3",
+    "Ⅰ. 사업개요와 일반사항 1\n1. 사업 추진배경 및 필요성 2\n2. 주요 사업내용 및 범위 3",
+    "Ⅰ. 사업개요와 일반사항 1 1. 추진배경 2 2. 사업목표 3 3. 사업내용 4 4. 추진체계 5 5. 요구사항 6",
+])
+def test_filter_skips_heading_and_toc_candidates(index, toc_body):
+    heading = chunk("a", "Ⅰ | 사업 개요", "-heading")
+    toc = chunk("a", toc_body, "-toc")
+    index.chunks.extend([heading, toc])
+    index._rank.side_effect = lambda *args: [{"index": 9, "score": 1}, {"index": 10, "score": 0.9},
+                                           {"index": 6, "score": 0.8}]
+    hits, candidates = index.search_with_candidates("예산 1억원 이하인 사업의 개요")
+    assert hits[0]["chunk_id"] == candidates[0]["chunk_id"] == "a-overview"
+    assert "개요: 가 사업" in hits[0]["body"] and "목 차" not in hits[0]["body"]
+
+
+def test_original_value_is_preserved_when_overview_tokenizer_normalizes_spaces(index):
+    original = "100,000,000  원"
+    index.quantity_rows[0]["original"] = original
+    index.embedder.truncate = lambda text, budget: " ".join(text[:budget].split())
+    hits, _ = index.search_with_candidates("예산 1억원 이하 사업")
+    assert original in hits[0]["body"]
+
+
+def test_overview_prefers_actual_value_source_over_high_ranked_blank_proposal_form(index):
+    index.chunks[0]["body"] += "\n사업개요: 시민에게 교통정보를 제공하기 위한 시스템을 구축하는 사업이다."
+    index.chunks.append(chunk("a", "[서식2] 제안 요약서\n사업추진목적 사업추진배경 사업추진전략을 작성하여 제출하는 양식", "-form"))
+    index._rank.side_effect = None
+    index._rank.return_value = [{"index": 9, "score": 1}]
+    hits, candidates = index.search_with_candidates("예산 1억원 이하인 사업의 개요")
+    assert hits[0]["chunk_id"] == candidates[0]["chunk_id"] == "a"
+    assert "시민에게 교통정보" in hits[0]["body"] and "제안 요약서" not in hits[0]["body"]
+
+
+@pytest.mark.parametrize("results", [[], [{"index": 9, "score": 1}]])
+def test_document_is_kept_with_explicit_missing_content_if_no_substantive_candidate(index, results):
+    index.chunks.append(chunk("a", "Ⅰ | 사업 개요", "-heading"))
+    index._rank.side_effect = None
+    index._rank.return_value = results
+    hits, _ = index.search_with_candidates("예산 1억원 이하 사업")
+    assert [h["doc_id"] for h in hits] == ["a"]
+    assert "본문을 찾지 못했습니다" in hits[0]["body"]
+    assert "Ⅰ | 사업 개요" not in hits[0]["body"]
+
+
 def test_unlabelled_values_are_excluded_even_if_empty_embedding_is_similar(index):
     index.quantity_rows = quantity_rows([chunk("a", "9억원")])
     index.quantity_phrases = [""]

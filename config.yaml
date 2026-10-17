@@ -73,7 +73,7 @@ validation:
 # ── ④ 생성 (04_generation) ──
 llm:
   model: gpt-5-mini
-  max_tokens: 2048              # max_completion_tokens (reasoning 토큰 포함!)
+  max_tokens: 8192              # 전체 사업 표와 추론 토큰을 함께 담는 max_completion_tokens
   reasoning_effort: low         # minimal | low | medium | high
   usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
 

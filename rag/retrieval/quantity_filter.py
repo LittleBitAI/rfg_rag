@@ -10,10 +10,29 @@ from .quantities import SCALES, SUBJECT_TAGS, facts, tokens
 
 COMPARISON = re.compile(r"\s*(이상|이하|초과|미만|이내|까지)")
 EXTREME = re.compile(r"(?:가장|최대|최소)\s*(큰|많은|높은|긴|작은|적은|낮은|짧은)")
+HEADING_LINE = re.compile(r"^[\s|#]*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩIVX\d]+[.\s|)]+[^:：]{1,60}$")
 
 
 def subject_phrase(text):
     return " ".join(t.form for t in tokens(text) if t.tag in SUBJECT_TAGS and t.tag != "SN")
+
+
+def substantive(text):
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(text.strip()) < 40 and not re.search(r"[:：]", text):
+        return False
+    if re.search(r"목\s*차", text[:80]):
+        return False
+    if sum(bool(HEADING_LINE.fullmatch(line)) for line in lines) >= len(lines) / 2:
+        return False
+    return len(re.findall(r"\S+\s+\d+(?=\s|$)", text)) < 5
+
+
+def content_query(remainder):
+    words = subject_phrase(remainder).split()
+    if "개요" in words or not set(words) - {"사업"}:
+        return "사업 개요와 목적, 추진배경 및 주요 사업내용"
+    return remainder
 
 
 def _question_subject(question, prefix):

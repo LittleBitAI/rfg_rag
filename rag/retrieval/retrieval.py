@@ -18,7 +18,7 @@ from rank_bm25 import BM25Okapi
 
 from ..config import ROOT, read_jsonl
 from .indexing import Embedder, KiwiTokenizer, find_codes
-from .quantity_filter import choose_values, parse_condition
+from .quantity_filter import choose_values, content_query, parse_condition, substantive
 
 
 _DUP_RATIO = 0.8
@@ -106,14 +106,26 @@ class HybridIndex:
         share = int(self.rcfg["filter_token_budget"]) // max(1, len(matched))
         hits, ranked = [], []
         for row in matched:
-            top = self._rank(condition.remainder or "사업 개요", set(), {row["doc_id"]})[0]
+            top, overview = self._filter_excerpt(row, condition.remainder)
             chunk = self.chunks[top["index"]]
             value = f"{row['phrase']}: {row['original']}\n"
-            body = self.embedder.truncate(value + chunk["body"], max(0, share - 2))
+            available = share - self.embedder.token_counts([value])[0] - 2
+            body = value + self.embedder.truncate(overview, max(0, available))
             hits.append({**chunk, "body": body, "score": round(row["similarity"], 4)})
             ranked.append({**top, "dense_score": None, "dense_rank": None, "bm25_score": None,
                            "bm25_rank": None, "exact_code_match": False})
         return FilterHits(hits, summary, matched, chosen), self._candidate_snapshot([ranked], ranked)
+
+    def _filter_excerpt(self, row, remainder):
+        value_index = next(i for i, c in enumerate(self.chunks) if c["chunk_id"] == row["chunk_id"])
+        query = content_query(remainder)
+        results = self._rank(query, set(), {row["doc_id"]})
+        if query != remainder:
+            results.insert(0, {"index": value_index, "score": 0})
+        top = next((c for c in results if substantive(self.chunks[c["index"]]["body"])), None)
+        if top:
+            return top, self.chunks[top["index"]]["body"]
+        return {"index": value_index, "score": 0}, "(관련 내용을 담은 본문을 찾지 못했습니다.)"
 
     def _candidate_snapshot(self, groups: list, ranked: list) -> tuple:
         for component in ("dense", "bm25"):
