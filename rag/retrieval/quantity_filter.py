@@ -30,7 +30,7 @@ def substantive(text):
 
 def content_query(remainder):
     words = subject_phrase(remainder).split()
-    if "개요" in words or not set(words) - {"사업"}:
+    if "개요" in words or not set(words) - {"사업", "인", "규모"}:
         return "사업 개요와 목적, 추진배경 및 주요 사업내용"
     return remainder
 

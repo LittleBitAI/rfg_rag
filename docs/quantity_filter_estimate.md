@@ -1,101 +1,111 @@
-# 수량 필터 검증 유료 호출 전체 견적서
+# Quantity-filter verification: complete paid-call estimate
 
-작성일: 2026-10-17. 통화: USD. 승인 범위는 4개 질문을 두 모델로 비교하는 16회 호출과 사용자의 프런트엔드 확인 2회, 총 18회다. 입력량 오차 여유를 포함한 총 견적은 GPT-6 LUNA 채택 시 $0.12035, 기존 gpt-5-mini 유지 시 $0.13813이다. 실제 청구는 사용 토큰에 따라 달라진다.
+Date: 2026-10-17. Currency: USD. The approved work is 16 initial comparison calls, four LUNA answer rechecks and two frontend acceptance calls: 22 calls in total. Twenty calls have cost $0.0356981. The remaining frontend pair is estimated below $0.00675, giving a current projected total below $0.04245.
 
-## 작업 범위와 산정 조건
+## Scope and assumptions
 
-모델마다 질문별로 재작성 1회와 답변 1회를 실행한다. 비교 시 이전 대화는 비우고, 동일하게 저장한 검색 컨텍스트를 사용해 답변 차이를 비교한다. 재작성 결과의 조건 보존도 별도로 확인한다. 비교 후 선택한 모델로 사용자가 프런트엔드에서 첫 번째 질문을 입력하고 결과를 확인한다.
+For each of four questions, the initial comparison made one rewrite and one answer call with each model. Both models received identical frozen contexts and empty history. Rewrites were also replayed through retrieval locally. After approval, four LUNA answers were rechecked with a clarified table rule and the same frozen contexts; stored rewrites were reused without paid rewriting.
 
-| 항목 | 수량·조건 |
+The final two calls are reserved for the person to submit the reported question in the frontend and confirm its table. No frontend call has been made by this verification script.
+
+| Item | Quantity or assumption |
 | --- | --- |
-| 비교 질문 | 예산 1억원 이상, 사업기간 6개월 이상, 예산 1억~5억, 최대 예산 |
-| 비교 호출 | 4문항 × 2모델 × 재작성·답변 = 16회 |
-| 프런트엔드 확인 | 선택 모델의 재작성 1회 + 답변 1회 = 2회 |
-| 재작성 출력 한도 | 호출당 2,048토큰, 추론 포함 |
-| 답변 출력 한도 | 호출당 8,192토큰, 추론 포함 |
-| 추론 설정 | 두 모델 모두 `low` |
-| 입력 산정 | 저장 컨텍스트·프롬프트·질문을 `o200k_base`로 계산하고 메시지 처리 여유 20토큰 추가 |
-| 입력 오차 여유 | 입력 비용의 10%를 추가; 출력은 이미 최대 한도로 산정 |
-| 캐시 가정 | 캐시 할인 0%; 실제 캐시 적중 시 비용 감소 |
+| Questions | Budget at least 100 million won; duration at least six months; budget 100–500 million won; largest budget |
+| Initial comparison | 4 questions × 2 models × rewrite and answer = 16 calls |
+| Approved recheck | 4 LUNA answer calls, no new rewrite calls |
+| Frontend acceptance | 1 rewrite + 1 answer with the selected model |
+| Rewrite output limit | 2,048 tokens per call, including reasoning |
+| Answer output limit | 8,192 tokens per call, including reasoning |
+| Reasoning effort | `low` for both models |
+| Input estimate | `o200k_base` tokens for prompts, context and question, plus 20 message-overhead tokens |
+| Input allowance | 10% added to input cost; output is already estimated at its maximum limit |
+| Cache assumption | No cache discount; actual cache hits can lower cost |
+| History | Empty for comparison and acceptance estimates; use a new frontend conversation |
 
-수량 추출·임베딩·검색·단위 테스트·기존 dev 검색 재실행은 로컬 작업이며 이 견적의 API 비용은 $0이다. 유료 judge, OCR, 임베딩 API, test 평가셋, 추가 질문, 의도적인 재호출, 한도 증액은 포함하지 않는다. 세금·환율·카드 수수료·인건비·전기료도 포함하지 않는다. 추가 비용이나 토큰 한도가 필요하면 선택지로 승인을 받는다.
+Local quantity extraction, embeddings, indexing, retrieval, unit tests and stored dev retrieval reruns add $0 in API charges. This quote excludes paid judges, OCR, embedding APIs, the test split, additional questions, intentional extra retries and token-limit increases. Taxes, exchange rates, card fees, labor and electricity are excluded. Any further paid scope or budget increase requires approval through options.
 
-## 적용 단가
+## Rates and calculation
 
-100만 토큰당 가격이다. 입력과 캐시 입력은 중복 청구하지 않고, 추론 토큰은 출력 토큰에 포함한다. 입력이 272,000토큰 이하인 표준 호출 가격을 적용한다.
+Rates below are USD per million tokens for Standard calls with input below 272,000 tokens. Cached input replaces regular input; it is not charged twice. Reasoning tokens are included in output tokens.
 
-| 모델 | 입력 | 캐시 입력 | 출력 |
+| Model | Input | Cached input | Output |
 | --- | ---: | ---: | ---: |
 | gpt-5-mini | $0.25 | $0.025 | $2.00 |
 | GPT-6 LUNA | $0.10 | $0.01 | $0.50 |
 
-가격 근거: [gpt-5-mini 공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-5-mini), [GPT-6 LUNA 공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-6-luna), [공식 API 가격표](https://developers.openai.com/api/docs/pricing). 2026-10-17 확인 기준이며 향후 가격 변경분은 포함하지 않는다.
+Sources checked on 2026-10-17: [gpt-5-mini model documentation](https://developers.openai.com/api/docs/models/gpt-5-mini), [GPT-6 LUNA model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna) and [API pricing](https://developers.openai.com/api/docs/pricing). Future price changes are excluded.
 
-## 질문별 견적
+Cost = `(regular input × input rate + cached input × cached rate + output × output rate) / 1,000,000`.
 
-아래 금액은 각 모델에서 재작성·답변 2회를 합한 금액이다. 출력은 실제 예상 길이가 아니라 두 호출의 최대 한도 합계 10,240토큰을 사용한다. 입력 오차 여유는 뒤의 합계에서 한 번만 더한다.
+## Original per-question estimate
 
-| 질문 | 일치 문서 | 제외 문서 | 합산 입력 추정 | gpt-5-mini | GPT-6 LUNA |
+Each price combines one rewrite and one answer, using the full combined output limit of 10,240 tokens. The input allowance is added once in the total, rather than in each row.
+
+| Question | Matching documents | No matching value | Combined estimated input | gpt-5-mini | LUNA |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘. | 42 | 40 | 14,638 | $0.0241395 | $0.0065838 |
-| 사업기간 6개월 이상인 사업 | 20 | 62 | 6,153 | $0.02201825 | $0.0057353 |
-| 예산이 1억~5억인 사업 | 29 | 40 | 7,150 | $0.0222675 | $0.0058350 |
-| 예산이 가장 큰 사업 | 1 | 40 | 1,193 | $0.02077825 | $0.0052393 |
-| 비교 소계 | | | 모델당 29,134 | $0.0892035 | $0.0233934 |
+| Budget ≥100 million won, with overviews | 42 | 40 | 14,638 | $0.0241395 | $0.0065838 |
+| Duration ≥6 months | 20 | 62 | 6,153 | $0.02201825 | $0.0057353 |
+| Budget 100–500 million won | 29 | 40 | 7,150 | $0.0222675 | $0.0058350 |
+| Largest budget | 1 | 40 | 1,193 | $0.02077825 | $0.0052393 |
+| Four-question subtotal | | | 29,134 per model | $0.0892035 | $0.0233934 |
 
-제외 수는 일치하는 필드 값을 찾지 못한 문서 수다. 값을 찾았지만 조건을 만족하지 않는 문서는 포함하지 않는다.
+The exclusion count means documents without a matching labelled value, rather than documents whose known value fails the condition.
 
-첫 질문의 세부 산식은 다음과 같다.
+For the reported question, the estimate separates as follows.
 
-| 단계 | 입력 추정 | 출력 한도 | gpt-5-mini | GPT-6 LUNA |
+| Stage | Estimated input | Maximum output | gpt-5-mini | LUNA |
 | --- | ---: | ---: | ---: | ---: |
-| 재작성 | 178 | 2,048 | $0.0041405 | $0.0010418 |
-| 답변 | 14,460 | 8,192 | $0.0199990 | $0.0055420 |
+| Rewrite | 178 | 2,048 | $0.0041405 | $0.0010418 |
+| Answer | 14,460 | 8,192 | $0.0199990 | $0.0055420 |
 
-비용 = `(일반 입력 × 입력 단가 + 캐시 입력 × 캐시 단가 + 출력 × 출력 단가) / 1,000,000`. 위 표는 캐시 입력을 0으로 둔다.
+## Whole-work estimate and actual spending
 
-## 전체 합계
-
-| 항목 | LUNA 채택 | 기존 모델 유지 |
+| Item | Estimate at full output limits | Actual |
 | --- | ---: | ---: |
-| 두 모델 비교 16회 | $0.1125969 | $0.1125969 |
-| 프런트엔드 확인 2회 | $0.0065838 | $0.0241395 |
-| 소계 | $0.1191807 | $0.1367364 |
-| 입력 비용 10% 오차 여유 | $0.00116607 | $0.00138564 |
-| 전체 견적 | $0.12034677 | $0.13812204 |
+| Initial comparison, 16 calls | $0.1125969 before input allowance | $0.0298906 |
+| Approved LUNA recheck, 4 answers | $0.01954551 including input allowance | $0.0058075 |
+| Remaining LUNA frontend pair | Below $0.00675 including input allowance | Awaiting user submission |
+| Actual spent, 20 calls | | $0.0356981 |
+| Current projected total after frontend acceptance | Below $0.04245 | Pending |
 
-두 경우 모두 승인한 약 $0.14 범위 안이다. 이 금액은 18회 정상 호출의 견적이며 API 청구 시스템에 설정된 강제 지출 상한은 아니다. 표준 오류 재시도 등으로 범위 밖의 추가 호출이 필요하면 재실행 전에 사용 내역을 확인하고 승인을 받는다.
+The original 18-call estimate including the frontend pair and input allowance was $0.12034677 if LUNA was selected, or $0.13812204 if gpt-5-mini was retained. The approved four-call recheck adds at most $0.020. Including that recheck and the slightly longer final prompt, the prospective full-output estimate for the selected LUNA plan is approximately $0.140; the current projection is lower because completed calls used much less output than their limits.
 
-## 실적과 판정 기록
+These are estimates for the stated calls, not an API-enforced spending cap. No intentional extra calls or token-limit increases are included.
 
-비교 16회를 완료했다. 실제 사용량은 `artifacts/api_usage.csv`에 단계·모델·입력·캐시 입력·출력·추론 토큰·USD로 기록했다. 비교 원문과 호출별 결과는 `artifacts/quantity_filter/model_comparison/`에 보관한다. 동일한 프롬프트와 컨텍스트를 사용한 최초 비교의 코드 기준은 `d96a372`다.
+## Actual usage and initial paired results
 
-| 모델 | 호출 수 | 입력 | 캐시 입력 | 출력(추론 포함) | 추론 | 호출 시간 합계 | 실제 비용 |
+Usage is recorded in `artifacts/api_usage.csv`, including stage, model, input, cached input, output, reasoning tokens and USD. Individual comparison calls and outputs are in `artifacts/quantity_filter/model_comparison/`. The initial paired comparison used code commit `d96a372`.
+
+| Model | Calls | Input | Cached input | Output including reasoning | Reasoning | Summed call time | Actual cost |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| gpt-5-mini | 8 | 29,066 | 0 | 8,391 | 2,624 | 68.01초 | $0.0240485 |
-| GPT-6 LUNA | 8 | 29,066 | 0 | 5,871 | 874 | 43.63초 | $0.0058421 |
-| 합계 | 16 | 58,132 | 0 | 14,262 | 3,498 | 111.64초 | $0.0298906 |
+| gpt-5-mini | 8 | 29,066 | 0 | 8,391 | 2,624 | 68.01 s | $0.0240485 |
+| GPT-6 LUNA | 8 | 29,066 | 0 | 5,871 | 874 | 43.63 s | $0.0058421 |
+| Initial total | 16 | 58,132 | 0 | 14,262 | 3,498 | 111.64 s | $0.0298906 |
+| LUNA answer recheck | 4 | 28,705 | 0 | 5,874 | 365 | 39.66 s | $0.0058075 |
+| All completed calls | 20 | 86,837 | 0 | 20,136 | 3,863 | 151.30 s | $0.0356981 |
 
-LUNA는 이 표본에서 비용이 75.7% 낮았고 호출 시간 합계는 35.8% 짧았다. 각 호출을 한 번씩 실행한 결과이며, 다른 질문 전체에 대한 동등 성능이나 일반적인 속도 우위를 증명하지 않는다. 출력량 차이도 비용·시간 차이에 포함된다.
+In the initial paired sample, LUNA cost 75.7% less and summed call time was 35.8% shorter. Output length differed, and every call ran only once; this does not establish equal quality or general latency superiority beyond these four questions.
 
-| 질문 | gpt-5-mini 최초 결과 | LUNA 최초 결과 |
+| Question | Initial gpt-5-mini output | Initial LUNA output |
 | --- | --- | --- |
-| 예산 1억원 이상 | 42개 중 37개 나열, 표 아님, 제외 40개 표기 | 42개 모두 표로 작성, 값·개요·인용·제외 40개 포함 |
-| 기간 6개월 이상 | 20개 모두 목록으로 작성, 개요 열 없음 | 20개 모두 표로 작성, 값·인용·제외 62개 포함, 개요 열 없음 |
-| 예산 1억~5억 | 29개 모두 표로 작성, 개요 열 없음 | 29개 모두 표로 작성, 개요·개별 인용 없음 |
-| 최대 예산 | 올바른 사업·값을 문장으로 작성, 제외 수 없음 | 올바른 사업·값·개요·인용·제외 수를 표로 작성 |
+| Budget ≥100 million won | Listed 37 of 42 projects without a table; stated 40 exclusions | All 42 projects in a table, with values, overviews, citations and 40 exclusions |
+| Duration ≥6 months | All 20 in a list; no overview column | All 20 in a table; values, citations and 62 exclusions; no overview column |
+| Budget 100–500 million won | All 29 in a table; no overview column | All 29 in a table; no overview column or individual citations |
+| Largest budget | Correct project and value in prose; no exclusion count | Correct project, value, overview, citation and exclusions in a table |
 
-LUNA의 첫 질문 개요 42행을 제공 본문과 대조했다. 일부는 사업명 수준의 짧은 요약이며, 본문에 없는 세부사항을 보완한 설명은 아니다. 따라서 모델 채택을 아직 확정하지 않는다. 최초 비교에서 드러난 형식 누락을 줄이도록 기존 수량 필터 규칙 한 문장을 구체화했고, `1억 원` 재작성의 띄어쓰기 처리도 로컬 파서에서 보완했다.
+A network-blocked replay of stored rewrites found that, after the local parser correction for `1억 원`, all four LUNA rewrites retained the original project order and exclusion counts. gpt-5-mini added `공공기관 RFP(제안요청서)` to the range question, changing field similarity and returning zero instead of 29 projects. Its largest-budget rewrite retained the winning project but changed exclusions from 40 to 49. Fixed-context generation comparisons do not include these retrieval differences.
 
-저장 재작성의 실제 검색 결과를 네트워크를 차단하고 재실행한 결과, 보완 후 LUNA 4문항 모두 원질문과 같은 사업·정렬·제외 수를 유지했다. gpt-5-mini는 범위 질문에 `공공기관 RFP(제안요청서)`를 추가해 필드 유사도가 달라졌고, 원래 29개였던 일치 문서가 0개가 되었다. 최대 질문은 같은 사업을 골랐지만 제외 수가 40개에서 49개로 달라졌다. 고정 컨텍스트 비교는 이런 재작성에 따른 검색 차이를 포함하지 않으므로, 이 로컬 재실행 결과를 함께 보아야 한다.
+## Approved recheck and model selection
 
-## 추가 검증 제안 — 미승인
+The person approved the recommended four LUNA answer rechecks, estimated below $0.020. No second set of gpt-5-mini answers was purchased. Recheck evidence is in `artifacts/quantity_filter/luna_recheck/`, including a manifest with the prompt, settings, input estimates and context hashes.
 
-최초 16회 외의 의도적인 호출이므로 기존 약 $0.14 견적의 미사용분과 관계없이 승인이 필요하다. 재작성 결과는 저장본을 재사용하고, 새 답변 규칙으로 답변만 생성한다. 각 옵션의 견적에는 출력 8,192토큰 한도와 입력 비용 10% 여유를 포함한다.
+| Case | Expected projects | Table rows | Original values and citations | Overview column | Excluded count |
+| --- | ---: | ---: | --- | --- | ---: |
+| Budget ≥100 million won | 42 | 42 | All present | Present | 40 |
+| Duration ≥6 months | 20 | 20 | All present | Present | 62 |
+| Budget 100–500 million won | 29 | 29 | All present | Present | 40 |
+| Largest budget | 1 | 1 | All present | Present | 40 |
 
-| 선택 | 추가 호출 | 추가 견적 | 현재 실적 + 추가 검증 + 프런트엔드 확인 예상 총액 |
-| --- | ---: | ---: | ---: |
-| LUNA 4문항 재검증 | 답변 4회 | $0.020 이하 | $0.057 이하 |
-| 두 모델 4문항 재비교 | 답변 8회 | $0.094 이하 | LUNA 채택 시 $0.131 이하, 기존 모델 유지 시 $0.151 이하 |
+The reported question's 42 overview rows were checked against their provided excerpts; some are brief descriptions based on the project name. Longer claims about data use, system functions and project purpose are supported by the cited excerpts. Other cases exposed a retrieval limitation: generic condition tails could rank contract forms, so some frozen-context summaries described those forms or said information was absent. The local fallback was corrected after the paid recheck. The frozen outputs remain unchanged as evidence. Network-blocked verification of final contexts changed 19 duration excerpts and all 29 range excerpts while preserving their project order and values; the reported-question and largest-budget contexts are byte-identical to the paid recheck inputs. All 60 stored dev context ID sequences remain unchanged. The changed duration and range contexts have no additional paid generation evidence.
 
-첫 옵션은 필수 출력 형식의 회귀를 적은 비용으로 확인한다. 둘째 옵션은 수정한 동일 프롬프트로 두 모델의 결과를 다시 비교할 수 있다. 두 옵션 모두 프런트엔드에서 사용자가 확인하는 최종 재작성·답변 2회를 대신하지 않는다.
+Select `gpt-6-luna` for rewriting and answering because it preserved the four stored query conditions and final required output structure at lower measured cost. Judge and OCR settings are unchanged. This is a narrow four-question decision, not a claim of equal performance on all questions. The user's separate frontend confirmation remains required.

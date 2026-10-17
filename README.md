@@ -1,6 +1,6 @@
-# RFP RAG — 공공기관 제안요청서 질의응답 (PDF · HWP · 하이브리드 검색 · gpt-5-mini · RAGAS)
+# RFP RAG — Public institution RFP Q&A (PDF · HWP · Hybrid Search · GPT-6 LUNA · RAGAS)
 
-RFP 문서(PDF · HWP · HWPX)를 파싱해 청크로 나누고, BM25 + 임베딩(FAISS) 하이브리드 검색으로 찾은 청크를 근거로 `gpt-5-mini` 가 답합니다.
+RFP documents (PDF, HWP and HWPX) are parsed into chunks. BM25 and embedding-based FAISS search retrieve evidence for answers from `gpt-6-luna`.
 답은 네 가지(Retrieval · Generation · Grounding · End-to-End)로 나눠 채점합니다. 검색은 결정적 IR 지표, 핵심 사실은 문자열 일치, 근거 충실도와 최종 정답은 RAGAS 심판으로 확인해 나쁜 답이 어디서 왔는지 가립니다.
 
 작업은 다섯 파이프라인으로 나뉘고, 파이프라인마다 담당자 한 명 · 노트북 하나 · `rag/` 아래 폴더 하나가 있습니다.
@@ -193,7 +193,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
 기존 색인이 있어도 이번 변경 후에는 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 청킹 크기를 바꾸면 01부터 다시 실행합니다. 검색 설정 조절은 저장 rewrite가 있는 dev에서 아래 검색 전용 재실행으로 비교할 수 있습니다. 새 설정의 답변·심판 결과가 필요하면 04도 다시 실행합니다.
 모델을 바꾸면 같은 설정 셀의 `*_PRICES`도 해당 모델의 입력 · 캐시 입력 · 출력 단가(USD / 100만 토큰)로 맞추세요.
-기본 단가는 [OpenAI 공식 gpt-5-mini 문서](https://developers.openai.com/api/docs/models/gpt-5-mini)의 Standard 요금입니다. 비용은 설정한 단가에 따른 추정값이며 실제 청구서와는 다를 수 있습니다.
+Rewrite and answer defaults use [GPT-6 LUNA Standard rates](https://developers.openai.com/api/docs/models/gpt-6-luna); evaluation judges retain [gpt-5-mini rates](https://developers.openai.com/api/docs/models/gpt-5-mini). Configured rates estimate cost and can differ from the invoice. The [full quantity-filter estimate and four-question comparison](docs/quantity_filter_estimate.md) records the scope, actual usage and limits of the model selection.
 
 02 검색 예제와 04 답변 생성은 검색 전에 `rag/retrieval/rewrite.py`로 질문을 재작성합니다.
 `config.yaml`의 `rewrite.model`, `rewrite.max_tokens`, `rewrite.reasoning_effort`가 이 API 호출에 적용됩니다.
@@ -551,7 +551,7 @@ CRAFT는 사진·로고·표의 의미를 판단하는 분류기가 아닙니다
 - `langchain-community` 는 **0.3.31 로 고정**합니다. ragas 0.4.3 이 community 0.4 에서 사라진 모듈을 import 하기 때문입니다.
 - langchain-community 0.3.31 의 `PyMuPDFParser` 는 그림을 저장하기 전에 빈 버퍼를 검사하는 버그로 모든 그림을 건너뜁니다. `parsing.py` 가 OCR 을 켤 때만 이 부분을 패치합니다.
 - `hwp-hwpx-parser` 의 하이퍼링크 컨트롤 무한 루프 버그도 `parsing.py` 가 패치합니다.
-- `gpt-5-mini` 는 추론 모델이라 `max_tokens`(= `max_completion_tokens`)에 추론 토큰이 포함됩니다. 답이 비면 값을 늘리거나 `reasoning_effort` 를 낮추세요.
+- GPT-6 LUNA and gpt-5-mini include reasoning tokens in `max_tokens` (`max_completion_tokens`). If an answer is empty, inspect token usage before changing the limit or reasoning effort.
 - 배포용(암호화) HWP 는 본문을 읽을 수 없어 건너뜁니다. 한글에서 일반 `.hwp` · `.hwpx` · PDF 로 저장해 넣으세요.
 - HWP 는 쪽 번호가 없어 HWP 청크의 출처는 섹션 경로로 표시됩니다.
 

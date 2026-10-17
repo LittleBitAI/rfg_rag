@@ -164,12 +164,16 @@ def test_original_value_is_preserved_when_overview_tokenizer_normalizes_spaces(i
     assert original in hits[0]["body"]
 
 
-def test_overview_prefers_actual_value_source_over_high_ranked_blank_proposal_form(index):
+@pytest.mark.parametrize("question", [
+    "예산 1억원 이하인 사업의 개요", "예산 1억원 이하인 사업",
+    "예산이 1억~2억인 사업", "예산 1억~2억 원 규모의 사업",
+])
+def test_overview_prefers_actual_value_source_over_high_ranked_blank_proposal_form(index, question):
     index.chunks[0]["body"] += "\n사업개요: 시민에게 교통정보를 제공하기 위한 시스템을 구축하는 사업이다."
     index.chunks.append(chunk("a", "[서식2] 제안 요약서\n사업추진목적 사업추진배경 사업추진전략을 작성하여 제출하는 양식", "-form"))
     index._rank.side_effect = None
     index._rank.return_value = [{"index": 9, "score": 1}]
-    hits, candidates = index.search_with_candidates("예산 1억원 이하인 사업의 개요")
+    hits, candidates = index.search_with_candidates(question)
     assert hits[0]["chunk_id"] == candidates[0]["chunk_id"] == "a"
     assert "시민에게 교통정보" in hits[0]["body"] and "제안 요약서" not in hits[0]["body"]
 
