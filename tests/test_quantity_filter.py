@@ -354,9 +354,14 @@ def test_currency_unit_headers_and_per_case_fines_are_not_budget_values():
     assert next(r for r in rows if r["doc_id"] == "c")["value"] == 1000
 
 
-def test_overview_uses_real_introduction_before_unrelated_value_source(index):
+@pytest.mark.parametrize("distractor", [
+    "요구사항 고유번호 | PMR-001\n세부내용 | 사업자는 사업내용과 사업목적을 작성해 산출물을 제출해야 한다.",
+    "3. 사업목적\n4. 사업범위\n1. 사 업 명\n◎ 작성요령 : 계약서상의 사업명을 기입\n"
+    "3. 사업목적\n◎ 작성요령 : 제안요청서상의 과제의 추진배경 및 목적을 기입",
+])
+def test_overview_uses_real_introduction_before_unrelated_value_source(index, distractor):
     index.chunks[0]["body"] = "국가 일반개황: 수도·면적·기후·인구와 경제현황에 관한 일반 정보를 제공한다."
-    index.chunks.append(chunk("a", "요구사항 고유번호 | PMR-001\n세부내용 | 사업자는 사업내용과 사업목적을 작성해 산출물을 제출해야 한다.", "-requirements"))
+    index.chunks.append(chunk("a", distractor, "-requirements"))
     index.chunks.append(chunk("a", "사업 목적: 스마트 관개시스템을 구축하여 취약 지역의 기후 및 재해 회복력을 강화한다.", "-purpose"))
     index._rank.side_effect = None
     index._rank.return_value = [{"index": 9, "score": 1}, {"index": 10, "score": .9}]

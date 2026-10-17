@@ -23,7 +23,7 @@ def substantive(text):
         return False
     if re.search(r"목\s*차", text[:80]):
         return False
-    if re.match(r"\s*[\[【]?\s*(?:서식|별지)", text):
+    if re.match(r"\s*[\[【]?\s*(?:서식|별지)", text) or re.search(r"◎\s*작성요령\s*[:：]", text):
         return False
     if all(HEADING_LINE.fullmatch(line) for line in lines):
         return False

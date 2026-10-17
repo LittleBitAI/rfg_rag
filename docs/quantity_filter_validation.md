@@ -1,5 +1,33 @@
 # Corrected-index paid validation
 
+## 4개 답변 재검증 결과와 후속 수정
+
+2026-10-17 사용자가 `전체 4개 재검증 (Recommended)`를 승인하여, `b51bd7f`의 저장된 재작성과 최종 컨텍스트로 LUNA 답변만 4회 호출했다. 실제 비용은 $0.0088986으로 견적 $0.02130892보다 58.2% 낮았다. 재작성·심판·OCR·임베딩 API와 평가 test split은 실행하지 않았다. 이번 실행 전체는 인수 통과가 아니다.
+
+| 질문 | 표 행 / 기대 사업 | 제외 수 | 답변 비용 | 호출 시간 | 판정 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 예산 1억원 이상과 개요 | 61 / 61 | 10 | $0.0037121 | 26.395초 | 실패: 개요 2개 누락과 잘못된 안내 |
+| 사업기간 6개월 이상 | 30 / 30 | 45 | $0.0020247 | 14.090초 | 이번 표·값·개요·출처 검사 통과 |
+| 예산 1억~5억원 | 44 / 44 | 10 | $0.0029464 | 17.482초 | 이번 표·값·개요·출처 검사 통과 |
+| 최대 예산 | 1 / 1 | 10 | $0.0002154 | 3.156초 | 실패: 극값 검색 결과를 비교 불가로 설명 |
+| 합계 | 136 / 136 | | $0.0088986 | 61.123초 | 2개 질문 통과, 2개 질문 실패 |
+
+입력 44,736토큰, 캐시 입력 0토큰, 출력 8,850토큰이며 출력에는 추론 736토큰이 포함된다. `api_usage.csv`는 499행에서 503행으로 정확히 4개 답변 행만 증가했다. 시간은 유료 호출의 합계다. 기록 비용은 실제 응답 토큰과 설정 단가로 계산하며 청구서 대사는 아니다.
+
+모든 사업의 출처 번호와 선택 금액 문자열, 제외 수가 표시되었고 이전 통화기호 치환은 재발하지 않았다. 다만 첫 답변의 값 열 14개는 첫 줄의 선택 값에 다른 줄의 부가세·한글 금액·범위 문구 등을 덧붙였다. 숫자가 바뀐 것은 아니지만 선택 문자열만 복사하라는 조건에는 실패했다. 행은 7·9·22·28·30·34·38·41·45·46·49·50·54·55번이다.
+
+첫 답변은 도입부에 `예산이 1억원 미만인 사업도 포함되어 있습니다`라고 썼다. 실제 61개는 모두 조건을 만족하므로 잘못된 설명이다. 6번 국립중앙의료원과 13번 봉화군의 개요는 `문서에 없음`이었다. 6번에는 제목 표식 없이 시작하는 작성 서식이 선택되었고, 13번에는 재난 피해에 관한 추진배경이 있었지만 답변이 이를 요약하지 않았다. 최대 예산 답변의 사업·금액은 맞지만, 마지막에 전체 사업 중 최대인지 비교할 수 없다고 덧붙여 이미 수행한 극값 필터를 부정했다.
+
+136개 표 행을 각각 제공된 본문과 대조했다. 위 두 누락 외의 개요는 제공된 본문 또는 사업명 범위의 요약이며, 일부는 사업명을 간단히 풀어쓴 수준이다. 기간과 범위 답변에서도 기능·목적·배경 설명을 본문과 확인했다. 이는 해당 출력에 대한 수동 검사이며 정식 faithfulness 점수나 일반적인 모델 품질 동등성의 근거는 아니다. 원본 유료 출력은 보존한다.
+
+후속 수정은 기존 범위 안에서 유료 호출 없이 했다. `◎ 작성요령:`이 포함된 서식은 개요 후보에서 제외하고, 기존 회귀 테스트에 제목 없는 서식 사례를 합쳤다. 필터용 단일 프롬프트 규칙에는 전체 문서의 확인 가능한 값에 조건 적용과 극값 비교가 이미 끝났음을 명시했다. 값 열은 첫 줄 문자열만 복사하고, 개요는 본문의 목적·배경·내용을 요약하도록 명확히 했다. 추가 API 경로·설정·토큰 한도는 만들지 않았다.
+
+네트워크를 막은 수정 후 재검색은 선택 값·사업 순서·제외 수를 모두 보존했다. 첫 질문의 6번만 서식에서 실제 사업명·기간·예산이 적힌 본문으로 바뀌었으며, 나머지 질문 컨텍스트는 같다. 국립중앙의료원은 이 본문이 제공하는 차세대 응급의료 상황관리시스템 구축 수준까지만 요약할 수 있다. 관련 개요 테스트 13개가 통과했고, 테스트 정리 감사 후 전체 게이트는 1,183개 통과·경고 12개로 끝났다(126.57초, `artifacts/quantity_post_recheck_gate.log`). 새 서식 사례는 기존 개요 회귀 테스트에 합쳤으며 삭제할 중복·폐기 경로·만료된 skip/xfail은 없었다. 수정된 프롬프트와 컨텍스트의 새 유료 검증 및 사용자 화면 확인은 아직 남아 있다.
+
+실행 증거는 `artifacts/quantity_filter/post_paid_luna_recheck/`의 `manifest.json`, `calls.jsonl`, `usage_summary.json`, 답변 4개, `audit.json`, `overview_review_pairs.json`, `manual_review.json`에 있다. 수정 후 오프라인 컨텍스트·변경 비교·견적은 `artifacts/quantity_filter/post_recheck_fix/`에 있으며, [전체 견적서](quantity_filter_estimate.md)에 새 승인이 필요한 범위와 기존 화면 확인 예약분을 구분했다.
+
+## 이전 8회 검증 기록
+
 On 2026-10-17 the person approved four questions through GPT-6 LUNA rewriting and answering, plus a separate final frontend pair. The eight agent calls completed for $0.0090984 against an estimate of $0.02568245. They exposed defects, so this run is not an acceptance pass.
 
 ## Execution and usage
@@ -43,7 +71,7 @@ These corrections add no API calls. They require fresh offline verification and 
 
 The final network-blocked replay passes with 61/30/44/1 projects and 10/45/10/10 exclusions. All four stored rewrites preserve the selected project order and exclusions. All 30 recovered amounts and all 88 previously chosen budget values are unchanged. The seven observed wrong period rows are absent or replaced, including the 24-month implementation period replacing the 12-month warranty. Introductions are recognized at section headings, with purpose/background preferred and mixed TOC prefixes trimmed; incidental mentions of project contents in requirement paragraphs do not qualify as introductions. The earlier 60 stored dev reruns retain every context ID sequence; subsequent excerpt-only changes do not enter their agency/document-prefixed route.
 
-Final inputs and checks are in `artifacts/quantity_filter/post_paid_final/` and `artifacts/quantity_post_paid_final2.log`. Fresh paid generation evidence for these final contexts is still pending approval under the [updated complete estimate](quantity_filter_estimate.md).
+Final inputs and checks for that revision are in `artifacts/quantity_filter/post_paid_final/` and `artifacts/quantity_post_paid_final2.log`. The subsequent approved four-answer run and its findings are recorded above.
 
 Final local checks: 92 quantity-filter tests passed; the full gate passed with 1,182 tests and 12 warnings in 407.29 seconds (`artifacts/quantity_validation_repair_gate5.log`); `ruff check .` passed; `CLAUDE.md` and `AGENTS.md` are byte-identical. The test cleanup audit retained the current regressions and found no obsolete cases, superseded duplicates, or expired skips/xfails. The frontend was restarted with the final metadata, and both its page and backend OpenAPI endpoint returned HTTP 200 without an answer call.
 

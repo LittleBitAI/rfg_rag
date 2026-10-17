@@ -1,10 +1,45 @@
 # 수량 필터 검증 전체 견적서
 
-Updated 2026-10-17, USD. The approved eight-call validation recorded $0.0090984 against $0.02568245 estimated, bringing observed task spending to $0.05077889 across 42 calls, including 14 user frontend calls. A proposed four-answer recheck costs $0.02130892; with the already reserved frontend pair estimated at $0.00707173, the remaining six calls are estimated at $0.02838065 and the full projected total at $0.07915954. The four additional calls are not approved or executed. [Validation findings](quantity_filter_validation.md) explain why the first run is not an acceptance pass. Historical approved quotes follow the new proposal.
+2026-10-17 갱신, USD 기준. 승인된 4개 답변 재검증은 실제 $0.0088986으로 끝났다. 관측 누계는 사용자 화면 호출 14회를 포함해 46회, $0.05967749다. 사업 누락은 없지만 첫 질문과 최대 예산 답변에서 결함이 남아 무상으로 보정했다. 아래 추가 유료 견적은 아직 승인되거나 실행되지 않았으며, [검증 결과](quantity_filter_validation.md)에 실패와 후속 수정을 기록했다.
 
-## Proposed answer recheck after local repairs
+## 최신 제안: 출력 설명과 서식 보정 후 확인
 
-Approval is pending for four additional LUNA answer calls. Reuse the four saved paid rewrites; no new rewrite calls are proposed for the agent. A network-blocked replay preserved project order and exclusions for all four stored rewrites. Final contexts match 61 budget projects, 30 duration projects, 44 range projects and one maximum; exclusions are 10, 45, 10 and 10. All 30 recovered amounts and all 88 previously chosen budget values remain unchanged. The seven observed warranty or historical-period rows are omitted or replaced by actual project-period rows. Selected introductions now replace the country background, reference PDM, generic requirement paragraph and blank form identified in the paid run.
+저장된 유료 재작성 4개를 그대로 재사용한다. 후보는 답변 4개 전체 재검증 또는 실패한 첫 질문·최대 예산 답변 2개 재검증이다. 이미 승인된 최종 사용자 화면의 재작성·답변 2회는 두 선택지 모두 별도로 남긴다. 최신 프롬프트는 네 질문에 공통으로 적용되므로 전체 4개 확인을 권장한다. 두 개만 실행하면 기간·범위 답변의 새 프롬프트 결과는 검증되지 않는다.
+
+단가는 2026-10-17 확인한 LUNA Standard 입력 $0.10·캐시 입력 $0.01·출력 $0.50/100만 토큰이며 아래 공식 출처와 같다. 답변 한도 8,192토큰에는 추론을 포함하고 강도는 `low`다. 빈 이력, 캐시 할인 없음, 실제 프롬프트·수정 컨텍스트의 `o200k_base` 입력 수에 메시지 부대분 20토큰과 입력 비용 여유분 10%를 적용한다. 출력 비용은 최대 한도로 산정한다. 화면 확인에는 재작성 한도 2,048토큰을 추가한다.
+
+| 추가 답변 후보 | 사업 | 예상 입력 | 최대 출력 | 입력 여유 포함 견적 |
+| --- | ---: | ---: | ---: | ---: |
+| 예산 1억원 이상과 개요 | 61 | 17,456 | 8,192 | $0.00601616 |
+| 사업기간 6개월 이상 | 30 | 10,928 | 8,192 | $0.00529808 |
+| 예산 1억~5억원 | 44 | 15,615 | 8,192 | $0.00581365 |
+| 최대 예산 | 1 | 910 | 8,192 | $0.00419610 |
+| 전체 4개 답변 | | 44,909 | 32,768 | $0.02132399 |
+| 실패한 2개 답변만 | | 18,366 | 16,384 | $0.01021226 |
+
+화면 예약분은 재작성 예상 입력 178토큰·최대 출력 2,048토큰의 $0.00104358과 첫 답변 $0.00601616을 합친 $0.00705974다. 이전 승인분 $0.00707173보다 낮으며, 중복 승인이나 에이전트의 화면 제출은 필요하지 않다. 사용자가 `새 스레드`에서 제출하는 최종 확인으로 남긴다.
+
+| 전체 작업 정산 | 호출 | 기록 비용 또는 견적 |
+| --- | ---: | ---: |
+| 최초 비교와 초기 LUNA 재확인 | 20 | 실제 $0.03569810 |
+| 사용자 화면 호출 스냅샷 | 14 | 실제 $0.00598239 |
+| 수정 색인의 재작성·답변 검증 | 8 | 실제 $0.00909840 |
+| 이번 4개 답변 재검증 | 4 | 실제 $0.00889860 |
+| 현재 관측 누계 | 46 | 실제 $0.05967749 |
+| 전체 4개 추가 + 예약 화면 확인 | 6 | 예상 $0.02838373 |
+| 전체 4개 선택 시 총계 | 52 | 실제 + 예상 $0.08806122 |
+| 실패 2개 추가 + 예약 화면 확인 | 4 | 예상 $0.01727200 |
+| 실패 2개 선택 시 총계 | 50 | 실제 + 예상 $0.07694949 |
+
+이번 실행은 입력 44,736·캐시 0·출력 8,850·추론 736토큰, 호출 합계 61.123초다. 실제 응답 토큰과 설정 단가에 따른 기록액이며 청구서 대사는 아니다. 사용자의 별도 추가 실행은 이 스냅샷에 포함되지 않는다. 견적은 API 강제 상한이 아니다.
+
+로컬 보정·추출·색인·임베딩·검색·테스트·저장 dev 재검색의 API 비용은 $0다. 유료 심판·OCR·임베딩 API·평가 test split·새 재작성·추가 질문·의도적 추가 재시도·토큰 한도 인상은 제외한다. 세금·환율·수수료·인건비·전기료도 제외한다. 견적 입력은 `artifacts/quantity_filter/post_recheck_fix/recheck_estimate.json`, 실제 사용량은 `artifacts/quantity_filter/post_paid_luna_recheck/usage_summary.json`에 저장했다. 다음 유료 호출 전에 이 두 선택지 중 하나의 승인을 받는다.
+
+## 직전 승인 견적과 실행 이력
+
+### 직전 4개 답변 재검증 견적
+
+The person approved the following four-answer quote with `전체 4개 재검증 (Recommended)`. It completed for $0.0088986; the newer quote above covers the subsequent repair. The four saved paid rewrites were reused without new rewriting. A network-blocked replay preserved project order and exclusions for all four stored rewrites. Contexts matched 61 budget projects, 30 duration projects, 44 range projects and one maximum; exclusions were 10, 45, 10 and 10. All 30 recovered amounts and all 88 previously chosen budget values remained unchanged. The seven observed warranty or historical-period rows were omitted or replaced by actual project-period rows. Selected introductions replaced the country background, reference PDM, generic requirement paragraph and blank form identified in the earlier paid run.
 
 The rates and assumptions remain LUNA Standard input $0.10, cached input $0.01 and output $0.50 per million tokens, `low` reasoning, empty history, no cache discount, a 10% input-cost allowance and maximum output including reasoning. Answer output remains 8,192 tokens. Input estimates include the final prompt and 20 message-overhead tokens. The frontend pair additionally includes a 2,048-token rewrite output limit. Prices were checked on 2026-10-17 against the official sources linked below.
 
@@ -31,7 +66,7 @@ The revised frontend pair separates into $0.00104358 for rewriting (178 estimate
 
 A narrower main-question-only answer recheck would add one agent call at $0.00602815. Including the reserved frontend pair, remaining work would be $0.01309988 and the projected full total $0.06387877 across 45 calls; the other three repaired contexts would have no fresh paid answer evidence. This alternative changes recheck coverage and is not assumed approved.
 
-No additional calls have run under this proposal. Local repairs, index rebuilding, unit tests and dev reruns add no API charge. Paid judges, OCR, embedding APIs, the evaluation test split, extra questions, intentional additional runs, output-limit increases, taxes, exchange rates, fees, labor and electricity remain excluded. These amounts are estimates, not an API-enforced cap. Recorded USD uses actual response tokens and configured rates rather than invoice reconciliation. Recheck inputs and calculations are saved in `artifacts/quantity_filter/post_paid_final/recheck_estimate.json`.
+Exactly four answer calls ran under this approved proposal. Local repairs, index rebuilding, unit tests and dev reruns add no API charge. Paid judges, OCR, embedding APIs, the evaluation test split, extra questions, intentional additional runs, output-limit increases, taxes, exchange rates, fees, labor and electricity remain excluded. These amounts are estimates, not an API-enforced cap. Recorded USD uses actual response tokens and configured rates rather than invoice reconciliation. The historical recheck inputs and calculations are saved in `artifacts/quantity_filter/post_paid_final/recheck_estimate.json`.
 
 ## 수정 후 검증과 전체 추가 견적
 
