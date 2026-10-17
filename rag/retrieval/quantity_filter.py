@@ -6,15 +6,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .quantities import SCALES, SUBJECT_TAGS, facts, tokens
+from .quantities import SCALES, facts, subject_phrase, tokens
 
 COMPARISON = re.compile(r"\s*(이상|이하|초과|미만|이내|까지)")
 EXTREME = re.compile(r"(?:가장|최대|최소)\s*(큰|많은|높은|긴|작은|적은|낮은|짧은)")
 HEADING_LINE = re.compile(r"^[\s|#]*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩIVX\d]+[.\s|)]+[^:：]{1,60}$")
-
-
-def subject_phrase(text):
-    return " ".join(t.form for t in tokens(text) if t.tag in SUBJECT_TAGS and t.tag != "SN")
 
 
 def substantive(text):
@@ -40,31 +36,6 @@ def _question_subject(question, prefix):
     if "사업" in subject_phrase(question).split() and "사업" not in phrase.split():
         phrase = "사업 " + phrase
     return phrase.strip()
-
-
-def _row_facts(line):
-    for (value, unit), subject, (start, end) in facts(line):
-        attached = re.search(r"(이상|이하|초과|미만|이내|까지)$", unit)
-        if attached:
-            unit, end = unit[:attached.start()], end - len(attached[0])
-        yield value, unit, subject, start, end, bool(attached or COMPARISON.match(line[end:]))
-
-
-def quantity_rows(chunks):
-    rows = []
-    for chunk in chunks:
-        offset = 0
-        for line in unicodedata.normalize("NFC", chunk["body"]).splitlines(keepends=True):
-            for value, unit, subject, start, end, bound in _row_facts(line):
-                phrase = " ".join(dict.fromkeys(t.form for t in tokens(line[:start]) if t.form in subject))
-                rows.append({"doc_id": chunk["doc_id"], "chunk_id": chunk["chunk_id"],
-                             "value": float(value.replace("±", "").replace("△", "-").replace("▲", "-")),
-                             "unit": unit, "subject": sorted(subject),
-                             "phrase": phrase,
-                             "span": [offset + start, offset + end], "original": line[start:end],
-                             "bound": bound or value.startswith("±")})
-            offset += len(line)
-    return rows
 
 
 @dataclass(frozen=True)
@@ -113,20 +84,8 @@ def _range(question):
     return None
 
 
-def _join_scale_unit(question):
-    parsed = tokens(question)
-    gaps = [(left.end, right.start) for left, right in zip(parsed, parsed[1:])
-            if left.tag == "NR" and set(left.form) <= set(SCALES) and right.tag in ("NNB", "SL", "SW", "XSN")
-            and question[left.end:right.start].isspace()]
-    # 배율 뒤의 의존명사·기호 단위는 잇되 '5억 사업'의 일반명사는 뒷질문으로 남긴다.
-    for start, end in reversed(gaps):
-        question = question[:start] + question[end:]
-    return question
-
-
 def parse_condition(question):
     question = unicodedata.normalize("NFC", question)
-    question = _join_scale_unit(question)
     question = re.sub(rf"(?<=[{''.join(SCALES)}])인(?=\s|$)", " 인", question)
     question = re.sub(r"(이상|이하|초과|미만)", r" \1", question)
     ranged = _range(question)
@@ -146,21 +105,34 @@ def parse_condition(question):
     return None
 
 
+def _usable(row):
+    return ((not row["bound"] or row["declared_cap"]) and not row["illustrative"]
+            and not row["estimated_price"]
+            and row["unit"] and row["phrase"] and (row["unit"] != "원" or row["value"] > 1))
+
+
+def _document_values(rows, unit=""):
+    chosen = {}
+    for row in rows:
+        if unit and row["unit"] != unit:
+            continue
+        if row["doc_id"] not in chosen or row["similarity"] > chosen[row["doc_id"]]["similarity"]:
+            chosen[row["doc_id"]] = row
+    return chosen
+
+
 def choose_values(rows, phrases, vectors, embedder, condition, cutoff):
     if not phrases:
         return [], {}
     query = np.asarray(embedder.embed_query(condition.subject))
     similarities = dict(zip(phrases, vectors @ query))
     eligible = [{**r, "similarity": float(similarities[r["phrase"]])} for r in rows
-                if not r["bound"] and r["unit"] and r["phrase"] and similarities[r["phrase"]] >= cutoff]
+                if _usable(r) and similarities[r["phrase"]] >= cutoff]
     unit = condition.unit
     if not unit and eligible:
-        unit = Counter(r["unit"] for r in eligible).most_common(1)[0][0]
-    chosen = {}
-    for row in eligible:
-        if row["unit"] == unit and (row["doc_id"] not in chosen
-                                   or row["similarity"] > chosen[row["doc_id"]]["similarity"]):
-            chosen[row["doc_id"]] = row
+        # 반복 서식의 수량이 실제 사업 항목보다 많아도 문서당 한 표만 센다.
+        unit = Counter(r["unit"] for r in _document_values(eligible).values()).most_common(1)[0][0]
+    chosen = _document_values(eligible, unit)
     matched = [r for r in chosen.values() if condition.accepts(r["value"])]
     matched.sort(key=lambda r: r["value"], reverse=condition.mode not in ("min", "이하", "미만"))
     if matched and condition.mode in ("max", "min"):

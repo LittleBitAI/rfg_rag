@@ -8,7 +8,8 @@ from rag.config import read_jsonl
 from rag.generation.generation import format_context
 from rag.retrieval import indexing
 from rag.retrieval.quantities import facts
-from rag.retrieval.quantity_filter import parse_condition, quantity_rows
+from rag.retrieval.quantity_filter import parse_condition
+from rag.retrieval.quantity_metadata import quantity_rows
 from rag.retrieval.retrieval import DocRouter, HybridIndex
 
 
@@ -116,7 +117,7 @@ def test_filter_selection_context_and_contract(index, question, docs):
     hits, candidates = index.search_with_candidates(question)
     assert [h["doc_id"] for h in hits] == docs
     assert [c["fused_rank"] for c in candidates] == list(range(1, len(docs) + 1))
-    assert "없어 제외" in format_context(hits)
+    assert "미표기·매칭 불가로 제외" in format_context(hits)
     for hit, candidate, value in zip(hits, candidates, hits.values):
         assert set(hit) == set(index.chunks[0]) | {"score"}
         assert value["original"] in hit["body"]
@@ -231,7 +232,93 @@ def test_build_index_persists_quantities_and_embeds_distinct_phrases_once(monkey
     phrases = json.loads((tmp_path / "quantity_phrases.json").read_text(encoding="utf-8"))
     assert len(rows) == 3 and rows[-1]["bound"] is True
     assert rows[-1]["original"] == "2천만원"
-    assert phrases == ["예산", "추정 가격"]
+    assert phrases == ["사업 예산", "사업 추정 가격"]
     assert embedder.encode.call_args_list[1].args[0] == phrases
     assert np.load(tmp_path / "quantity_vectors.npy").shape == (2, 2)
     assert rows[1]["span"] == [10, 13]
+
+
+@pytest.mark.parametrize("text,value", [
+    ("사 업 비 : 금470백만원", 470000000),
+    ("사업예산: 1억 5천만 원(부가세 포함)", 150000000),
+    ("사업예산: 400,000,000원원(부가세포함)", 400000000),
+    ("사업금액: 일금 일억구천오백삼만원정(￦195,030,000, VAT포함)", 195030000),
+    ("사업예산: ￦493,270,440 부가세포함", 493270440),
+    ("사업예산: 50,000,000(금 오천만원/VAT포함)", 50000000),
+    ("사업예산: 일금 육천만원정", 60000000),
+    ("과업비/과업기간 : 100,000천원 / 착수일로부터 5개월", 100000000),
+])
+def test_audited_quantity_formats_preserve_original_spans(text, value):
+    rows = quantity_rows([chunk("a", text)])
+    money = [r for r in rows if r["unit"] == "원"]
+    assert money and all(r["value"] == value for r in money)
+    assert all(text[r["span"][0]:r["span"][1]] == r["original"] for r in rows)
+
+
+def test_label_cleanup_and_table_header_inheritance():
+    chunks = [chunk("a", "사 업 명: NCIC ❍ 사업기간: 2024.11.15.(금) ❍ 사업금액: 50,000,000원"),
+              chunk("b", "사업구분 | 사업예산\n계 | 금 773,801천원\n개발 | 금 153,000천원"),
+              chunk("c", "사 업 비 : 금470백만원")]
+    money = [r for r in quantity_rows(chunks) if r["unit"] == "원"]
+    assert [(r["value"], r["phrase"]) for r in money] == [
+        (50000000, "사업 금액"), (773801000, "사업 예산"), (153000000, "사업 예산"), (470000000, "사업비")]
+
+
+@pytest.mark.parametrize("comparison", ["이내", "이하", "까지"])
+def test_declared_budget_caps_are_usable_but_eligibility_clauses_are_not(index, comparison):
+    rows = quantity_rows([chunk("a", f"사업예산: 230,000천원 {comparison} (부가세 포함)"),
+                          chunk("b", f"사업예산: 20억원 {comparison}인 사업은 중소기업만 참여")])
+    assert [r["bound"] for r in rows] == [True, True]
+    assert [r["declared_cap"] for r in rows] == [True, False]
+    index.quantity_rows = rows
+    index.quantity_phrases = list(dict.fromkeys(r["phrase"] for r in rows))
+    index.quantity_vectors = index.embedder.encode(index.quantity_phrases)
+    hits, _ = index.search_with_candidates("예산 1억원 이상인 사업")
+    assert [h["doc_id"] for h in hits] == ["a"]
+
+
+@pytest.mark.parametrize("value", [-1, 0, 1, 2])
+def test_won_placeholders_are_unstated_without_suppressing_one_month(index, value):
+    rows = quantity_rows([chunk("a", f"예산: {value}원\n사업기간: 1개월\n수량: 1개")])
+    index.quantity_rows = rows
+    index.quantity_phrases = list(dict.fromkeys(r["phrase"] for r in rows))
+    index.quantity_vectors = index.embedder.encode(index.quantity_phrases)
+    money, _ = index.search_with_candidates("예산 2원 이하 사업")
+    duration, _ = index.search_with_candidates("사업기간 1개월 이상 사업")
+    items, _ = index.search_with_candidates("수량 1개 이상 사업")
+    assert [h["doc_id"] for h in money] == (["a"] if value > 1 else [])
+    assert [h["doc_id"] for h in duration] == ["a"]
+    assert [h["doc_id"] for h in items] == ["a"]
+
+
+def test_estimated_prices_and_example_amounts_remain_unusable_at_high_similarity(index):
+    rows = quantity_rows([chunk("a", "추정가격: 140,000,000원"), chunk("b", "예시) 사업예산: 1.5억원")])
+    index.quantity_rows = rows
+    index.quantity_phrases = list(dict.fromkeys(r["phrase"] for r in rows))
+    index.quantity_vectors = np.ones((len(index.quantity_phrases), 2))
+    hits, _ = index.search_with_candidates("예산 1억원 이상 사업")
+    assert hits == []
+
+
+def test_employee_word_is_not_a_korean_written_money_amount():
+    assert quantity_rows([chunk("a", "사원 정보 관리")]) == []
+
+
+def test_comparison_particles_and_numeric_table_cells_are_not_budget_fields():
+    rows = quantity_rows([chunk("a", "자재 품목당 합계액이 1억원을 초과하는 경우"),
+                          chunk("b", "건당 500만원 | 300만원 | 100만원")])
+    assert rows[0]["bound"] and not rows[0]["declared_cap"]
+    assert not rows[2]["phrase"] and not rows[3]["phrase"]
+
+
+@pytest.mark.parametrize("question,docs", [("예산이 1억~2억인 사업", ["a"]),
+                                          ("예산이 가장 큰 사업", ["b", "c"])])
+def test_table_separators_and_repeated_forms_cannot_dominate_inferred_units(index, question, docs):
+    rows = quantity_rows([chunk("a", "예산 | 123 | 금액\n" * 20)])
+    assert rows == []
+    assert facts("수량 | 1조 | 보안모듈")[0][0] == ("1000000000000", "")
+    index.quantity_rows.extend([{**index.quantity_rows[0], "phrase": "other", "unit": "호", "value": 123}] * 20)
+    index.quantity_phrases.append("other")
+    index.quantity_vectors = np.vstack([index.quantity_vectors, [0.85, 0]])
+    hits, _ = index.search_with_candidates(question)
+    assert [hit["doc_id"] for hit in hits] == docs

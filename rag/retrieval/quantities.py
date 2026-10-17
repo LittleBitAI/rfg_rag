@@ -34,15 +34,18 @@ def _sign(tokens, i):
 
 
 def _unit(tokens, i):
-    """수 뒤의 단위. 붙어 이어지는 단위 형태소를 끝까지 잇는다 (가장 긴 일치, 더 짧은 단위로 물러나지 않음).
+    """품사로 단위를 읽고 개월간·MB/s 같은 접미 표현을 보존한다.
 
-    그래서 12개월간 은 개월간, 5%p 는 %p, 5MB/s 는 MB/s 로 읽혀 개 · % · MB 와 같지 않다.
-    단위의 첫 형태소만 수와 띄어 쓸 수 있다 (6 개월).
+    첫 단위 앞이나 수 배율과 단위 사이는 띄어 쓸 수 있다.
+    '5억 사업'의 일반명사는 그 공백을 넘어 붙이지 않는다.
     """
     unit, end = "", tokens[i].end
     for token in tokens[i + 1:]:
+        if token.form == "|":
+            break
         joins = token.tag in UNIT_TAGS or (bool(unit) and token.form == "/")
-        if not joins or (unit and token.start != end):
+        spaced_scale = unit and set(unit) <= set(SCALES) and token.tag in ("NNB", "SL", "SW", "XSN")
+        if not joins or (unit and token.start != end and not spaced_scale):
             break
         unit, end = unit + token.form, token.end
     return unit
@@ -112,3 +115,7 @@ def _unit_end(tokens, end, unit):
     while len(written) < len(unit):
         written, end = written + tokens[end].form, end + 1
     return end
+
+
+def subject_phrase(text):
+    return " ".join(t.form for t in tokens(text) if t.tag in SUBJECT_TAGS and t.tag != "SN")

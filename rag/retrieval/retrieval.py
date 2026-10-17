@@ -102,7 +102,7 @@ class HybridIndex:
         matched, chosen = choose_values(self.quantity_rows, self.quantity_phrases, self.quantity_vectors,
                                         self.embedder, condition, float(self.rcfg["field_similarity"]))
         excluded = len(set(self.doc_ids) - chosen.keys())
-        summary = f"[수량 필터] 조건 일치 {len(matched)}개 문서; 일치하는 값이 없어 제외 {excluded}개 문서."
+        summary = f"[수량 필터] 조건 일치 {len(matched)}개 문서; 값 미표기·매칭 불가로 제외 {excluded}개 문서."
         share = int(self.rcfg["filter_token_budget"]) // max(1, len(matched))
         hits, ranked = [], []
         for row in matched:

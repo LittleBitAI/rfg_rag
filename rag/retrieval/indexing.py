@@ -15,7 +15,7 @@ from langchain_core.embeddings import Embeddings
 from sentence_transformers import SentenceTransformer
 
 from ..config import write_jsonl
-from .quantity_filter import quantity_rows
+from .quantity_metadata import quantity_rows
 
 
 class Embedder(Embeddings):
