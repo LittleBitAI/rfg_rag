@@ -61,6 +61,8 @@ Missing or textual data values leave the active column labels and units intact. 
 
 A Markdown delimiter row also identifies a declared-unit header as a whole. For example, `구분 | 2024년 | 예산(천원)` above `--- | --- | ---` installs the budget column's thousand-won scale even though the year occupies a separate cell. Header numbers are not emitted as data. Without that structural marker, the existing cell-level checks remain in force; a numbered data row cannot install a sibling declaration merely because it contains parentheses.
 
+Each delimiter cell must contain at least three hyphens, optionally surrounded by alignment colons. Single-hyphen missing-value rows and other shorter cells cannot install column units or suppress quantities in the preceding data row.
+
 02 builds FAISS, BM25 tokens, quantity rows, phrase names and phrase vectors in a private sibling directory. It publishes the completed directory only after quantity embedding and summary calculation succeed, restoring the previous directory if the publication rename raises. This rollback covers the five index artifacts; preprocessing chunk files are unchanged. It is not a concurrent-reader or process-crash transaction.
 
 Filtered hit metadata, candidate IDs and `context_chunk_ids` identify the selected value's source chunk. When the overview comes from another chunk, its filename, page or section, and chunk ID appear beside that excerpt in the body. Each project still contributes one hit with the existing schema; the overview's ID is recorded in that body rather than added to `context_chunk_ids`.

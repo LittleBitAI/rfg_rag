@@ -1,5 +1,19 @@
 # Corrected-index paid validation
 
+## Review round 6: missing-value rows are not header delimiters
+
+At parent `c063bad`, the exact reported input suppressed the `2024년` data quantity and fabricated 100,000 won from the later bare `100`. The existing negative data-row regression was expanded before the production edit: eight short/mixed separator cases failed while two ordinary-data controls passed (`artifacts/quantity_review6_red.log`). The cases cover one and two hyphens, alignment colons, a single short cell among valid cells, explicit units and unscaled bare values.
+
+The shared delimiter predicate now requires three or more hyphens in every cell. Existing three-hyphen header tests remain; the multi-unit header regression also covers longer left-, right- and center-aligned cells. Data-row checks retain the year, verify original spans, reject invented inherited units and confirm that no fabricated budget enters the project filter. The previous ordinary-data assertion is folded into the expanded fixture rather than duplicated.
+
+The code applicability count is one delimiter predicate with one schema caller. Its two downstream effects are header-quantity suppression and installation of declarations for implicit numeric cells. No other retrieval module implements delimiter recognition; the corpus census below counts actual affected rows separately from these code sites.
+
+Separately, two preprocessing helpers inspect hyphen-only rows: `_table_cells` omits them from table-content comparisons, and `repair_md_tables` preserves them without updating its previous-row alignment state. Neither installs quantity units or suppresses a preceding quantity row; their different behaviors were inspected and left unchanged.
+
+The separate corpus audit examined 18,989 chunks and rebuilt all 13,627 table-bearing chunks, including 6,968 matching declaration syntax. It found zero changed rows, chunks or documents against round 5; all 29,358 quantity rows and their numeric/declaration spans were retained (`artifacts/quantity_review6_scope.log`). The isolated verification rebuilt 11,934 local phrase embeddings and retained the four query results: 61/30/44/1 projects, 10/45/10/10 exclusions, identical selected values and whole-project contexts. Both upper-bound aliases, ten non-project routes and all 60 stored dev context-ID sequences were preserved. Socket connections were blocked and the usage CSV remained byte-identical (`artifacts/quantity_review6_offline.log`). No active-index replacement or new paid/browser acceptance is claimed.
+
+After the final code change, test cleanup audited the changed quantity tests and their indexing, retrieval, record-export, IR, rewrite, server, notebook, usage and smoke consumers. The existing negative test was expanded; no current regression, skip or xfail was removed. The full gate passed 1,330 tests with 12 warnings in 244.03 seconds (`artifacts/quantity_review6_cleanup_gate.log`), and ruff passed. The cleanup record is `artifacts/quantity_filter/review6/test_cleanup.json`.
+
 ## Review round 5: separate numbered header columns
 
 At parent `f82129f`, the reported input `구분 | 2024년 | 예산(천원)\n--- | --- | ---\nA | 완료 | 100` emitted only the year row and omitted 100,000 won. Eight regression variants failed before production edits (`artifacts/quantity_review5_red.log`): year and ordinal headers, reordered budget columns, multiple numbered columns, boundary pipes and CRLF. This is a reproduced omission, not an inference from the previous round.

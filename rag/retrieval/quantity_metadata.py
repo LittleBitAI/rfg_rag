@@ -234,7 +234,7 @@ def _header_modifiers(cell, declaration, offset, quantities):
 def _marked_header(cells, declarations, following):
     delimiter = _cells(following)
     return (any(declarations) and len(delimiter) == len(cells)
-            and all(re.fullmatch(r":?-+:?", cell[0].strip()) for cell in delimiter))
+            and all(re.fullmatch(r":?-{3,}:?", cell[0].strip()) for cell in delimiter))
 
 
 def _table_schema(line, following, offset, headers, declarations, quantities):

@@ -473,15 +473,27 @@ def test_separate_numbered_header_cells_keep_sibling_units(index, heading, value
     assert [(r["doc_id"], r["value"]) for r in hits.values] == [("a", 100000)]
 
 
-def test_numbered_data_with_sibling_declaration_is_not_a_marked_header():
-    text = "구분 | 연도 | 사업금액(원)\n--- | --- | ---\nA | 2024년 | 예산(천원)\nB | 완료 | 100원"
+@pytest.mark.parametrize("missing", ["", "- | - | -\n", "-- | -- | --\n", ":- | --- | ---\n", "--- | --: | ---\n"])
+@pytest.mark.parametrize("heading,number,expected", [
+    ("설명", "100", [(2024, "년")]),
+    ("사업금액(원)", "100원", [(2024, "년"), (100, "원")]),
+])
+def test_numbered_data_with_sibling_declaration_is_not_a_marked_header(index, missing, heading, number, expected):
+    text = f"구분 | 연도 | {heading}\n--- | --- | ---\nA | 2024년 | 예산(천원)\n{missing}B | 완료 | {number}"
     rows = quantity_rows([chunk("a", text)])
-    assert [(r["value"], r["unit"]) for r in rows] == [(2024, "년"), (100, "원")]
+    assert [(r["value"], r["unit"]) for r in rows] == expected
     assert all(not r.get("unit_declaration") for r in rows)
+    assert all(text[slice(*r["span"])] == r["original"] for r in rows)
+    index.chunks[0] = chunk("a", text)
+    index.quantity_rows = rows
+    index.quantity_phrases = list(dict.fromkeys(r["phrase"] for r in rows))
+    index.quantity_vectors = index.embedder.encode(index.quantity_phrases)
+    hits, _ = index.search_with_candidates("예산 100000원 이상인 사업")
+    assert hits == [] and "조건 일치 0개" in hits.summary
 
 
 def test_marked_header_installs_each_unit_beside_a_numbered_column():
-    text = ("구분 | 2024년 | 예산(천원) | 사업기간(개월)\n--- | --- | --- | ---\n"
+    text = ("구분 | 2024년 | 예산(천원) | 사업기간(개월)\n--- | :---- | ----: | :----:\n"
             "A | 완료 | 100 | 6\nB | 완료 | 200원 | 8개월\n"
             "다음 본문\nC | 완료 | 300 | 9")
     rows = quantity_rows([chunk("a", text)])
