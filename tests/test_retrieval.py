@@ -53,15 +53,19 @@ def test_token_counts_uses_untruncated_model_tokenizer():
     embedder._st.tokenizer.assert_called_once_with(["긴 본문", "짧은 본문"])
 
 
-def test_kiwi_batch_and_query_keep_alias_user_words_negation_and_codes():
+def test_kiwi_batch_and_query_keep_dictionary_aliases_negation_and_codes_without_noise():
     tokenizer = KiwiTokenizer()
     texts = ["지체 상금과 부가세 SFR-001은 제출하지 않는다", "부가 가치세는 대상이 아니다",
-             "SFR-001A와 SFR-001B의 응답시간"]
+             "SFR-001A와 SFR-001B의 응답시간",
+             "경기도사회서비스원 개인정보처리시스템 구축 및 운영을 하며 지원할 수 있다. 대상 등이 된다."]
     tokens = tokenizer.batch(texts)
     assert tokens == [tokenizer(text) for text in texts]
     assert {"지체상금", "부가가치세", "sfr-001", "않"} <= set(tokens[0])
     assert {"부가가치세", "아니"} <= set(tokens[1])
     assert "sfr-001" not in tokens[2]
+    assert {"경기도사회서비스원", "개인정보처리시스템", "구축", "운영", "지원"} <= set(tokens[3])
+    assert not {"및", "하", "되", "등", "수"} & set(tokens[3])
+    assert "있" in tokens[3]
 
 
 @pytest.mark.parametrize("question,query", [("SFR-001A 요구사항", None), ("원본 질문", "SFR-001A 요구사항"),

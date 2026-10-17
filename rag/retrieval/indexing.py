@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from hashlib import sha256
+from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -75,20 +77,30 @@ def _canonical(text: str) -> str:
 
 _KIWI_KEEP = ("NNG", "NNP", "NNB", "NR", "NP", "VV", "VA", "XR", "SL", "SH", "SN", "MAG")
 _NEGATION = {("않", "VX"), ("아니", "VCN")}
+_NOISE = {("및", "MAG"), ("하", "VV"), ("되", "VV"), ("있", "VV"), ("등", "NNB"), ("수", "NNB")}
 
 
 def _is_kept(tok) -> bool:
-    return tok.tag.startswith(_KIWI_KEEP) or (tok.form, tok.tag) in _NEGATION
+    return (tok.form, tok.tag) not in _NOISE and (
+        tok.tag.startswith(_KIWI_KEEP) or (tok.form, tok.tag) in _NEGATION)
 
 
 class KiwiTokenizer:
     """한국어 형태소 기반 BM25 토크나이저. 한자 독음과 요구사항 코드도 색인하며 부정어를 남긴다."""
 
     def __init__(self):
+        dictionary = Path(__file__).with_name("kiwi_user_words.json").read_bytes()
+        # 규칙 변경 누락을 막으려고 이 모듈 전체를 지문에 넣는다. 줄바꿈 방식은 무시한다.
+        source = Path(__file__).read_text(encoding="utf-8").encode("utf-8")
+        self.fingerprint = {"source_sha256": sha256(source).hexdigest(),
+                            "dictionary_sha256": sha256(dictionary).hexdigest(),
+                            **{name: version(name) for name in ("kiwipiepy", "kiwipiepy_model", "hanja")}}
         # num_workers=-1: 모든 CPU 코어 사용 (batch 에서 여러 청크를 병렬 분석). 단일 문장(질문)은 그대로 1스레드
         self.kiwi = Kiwi(num_workers=-1)
         for word in _USER_WORDS:
             self.kiwi.add_user_word(word.replace(" ", ""), "NNP", 1.0)
+        for word in json.loads(dictionary):
+            self.kiwi.add_user_word(word, "NNP", 1.0)
 
     def _keep(self, toks, text: str) -> list[str]:
         out = []
@@ -139,8 +151,10 @@ def _build_index(chunks, cfg, out_dir):
     index = faiss.IndexFlatIP(vectors.shape[1])
     index.add(vectors)
     faiss.write_index(index, str(out_dir / "faiss.index"))
-    tokens = KiwiTokenizer().batch(texts)
-    (out_dir / "bm25_tokens.json").write_text(json.dumps(tokens, ensure_ascii=False), encoding="utf-8")
+    tokenizer = KiwiTokenizer()
+    tokens = tokenizer.batch(texts)
+    payload = {"tokenizer": tokenizer.fingerprint, "tokens": tokens}
+    (out_dir / "bm25_tokens.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     build_quantity_index(chunks, embedder, out_dir)
     max_len = int(cfg["embedding"]["max_seq_length"])
     return {"청크": len(chunks), "벡터 차원": int(vectors.shape[1]), "BM25 토큰": sum(map(len, tokens)),
