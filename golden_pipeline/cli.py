@@ -13,7 +13,7 @@ from pathlib import Path
 import openai
 from dotenv import load_dotenv
 
-from golden_pipeline import adoption, evidence, experiment, generation, improvement, plan, report, split, storage, validation
+from golden_pipeline import adoption, comparison, evidence, experiment, generation, improvement, plan, report, split, storage, validation
 from golden_pipeline.schema import TOPICS
 
 
@@ -193,6 +193,14 @@ def _prepare_commands(commands):
     command.add_argument("experiment_id")
     command.add_argument("--price", nargs=2, type=float, required=True, metavar=("IN", "OUT"), help="단가 (USD / 100만 토큰)")
     command.set_defaults(handler=lambda args: _json(experiment.estimate(args.experiment_id, *args.price)))
+
+    command = commands.add_parser("review-packets", help="방식 · 주제마다 첫 시도 출력 둘을 고른 눈가림 검토지 (API 호출 없음)")
+    command.add_argument("experiment_id")
+    command.set_defaults(handler=lambda args: comparison.review_packets(args.experiment_id))
+
+    command = commands.add_parser("compare", help="비교 실험의 지표 · 비용 · 장부 대조 · 사람 판정 (API 호출 없음)")
+    command.add_argument("experiment_id")
+    command.set_defaults(handler=lambda args: comparison.write(args.experiment_id))
 
     command = commands.add_parser("pro-packets", help="주제마다 Pro 채팅에 붙여 넣을 C 프롬프트와 빈 sidecar (API 호출 없음)")
     command.add_argument("experiment_id")

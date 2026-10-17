@@ -123,3 +123,29 @@ unanswerable 검증 호출 수는 고정한 묶음의 대상 문서를 실제로
 6. 주제마다 걸린 시간(분)은 `pro/returned/handling_minutes.json` 에 `{"numeric": 4, ...}` 로 따로 적습니다.
 
 가져오기는 5절의 `import` 이고, 묶음이 빠졌거나 계획에 없는 줄은 그대로 거절 행으로 남습니다.
+
+## 8. 사람 검토와 결과
+
+```
+golden_pipeline\golden.cmd review-packets abc7
+golden_pipeline\golden.cmd compare abc7
+```
+
+- `review-packets` 는 주제 · 방식(A round 1 · B · C)마다 첫 시도 출력 둘을 고릅니다. 표본 규칙: 판정 층을
+  `auto_validated` → `rejected` → `candidate`(pending) 차례로 하나씩, 층 안에서는 고정 시드(20261018)로 무작위.
+  거절이 있으면 반드시 하나 들어가므로 표본은 거절이 많게 치우친 것이고, 전체 품질의 추정이 아닙니다.
+  항목이 되지 못한 출력(JSON 아님 등)은 질문 · 답이 없어 표본에 넣지 않습니다.
+- `review/packet.md` 에는 주제 · 질문 · 답 · 인용 근거만 보이고, 방식 · run · 판정 · 층은 `review/key.json` 에만 있습니다.
+  `review/judgments.csv` 에 출력마다 `evidence_support` · `answer_correct` · `topic_fit` · `useful` 을 Y · N 으로 적습니다.
+- `compare` 는 `comparison.json` 에 주제마다와 전체의 지표를 분자 · 분모와 함께 씁니다.
+
+| 지표 | 분자 | 분모 |
+|---|---|---|
+| 쓸 수 있는 묶음 커버리지 | `auto_validated` 질문이 하나라도 있는 배정 묶음 | 배정한 비교 묶음 (train 6) |
+| 출력 수용률 | `auto_validated` 질문 | 돌아온 모든 출력 (JSON 아님 · 필드 오류 포함) |
+| 전달 완결성 | 출력이 하나라도 돌아온 배정 묶음 | 배정한 묶음 |
+| 사람이 확인한 품질 | 네 검사를 모두 통과한 표본 출력 | 사람이 검토한 출력 (방식 · 주제 · 층별) |
+| 유일한 유효 질문당 API 비용 | 생성 · 검증 · 판정 · 채택 · held-out · 다시 보낸 호출까지 그 방식의 비용 | 공백 · 쉼표만 다른 것을 하나로 센 `auto_validated` 질문. 0 이면 값 없음 |
+
+거절 이유(실패 코드)와 pending 수, A 의 held-out 통과 차이(%p), 장부 정산 비용과 run 기록 비용의 차이도 함께 남깁니다.
+C 의 생성 토큰 · 비용 · 총비용 · 유효 질문당 총비용은 웹이라 `unobserved` 이고, C 는 검증 비용과 사용자 처리 시간을 따로 보고합니다.

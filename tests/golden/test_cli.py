@@ -177,6 +177,49 @@ def test_b_with_part_train_calls_only_the_bundles_a_round_one_calls(planned, api
                *GENERATOR, *LIMITS, *A_ONLY)
 
 
+def test_experiment_comparison_counts_missing_and_malformed_outputs_and_samples_blinded_strata(planned, api, tmp_path):
+    x = ("--experiment", "x1")
+    golden(*x, "run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
+    golden(*x, "audit", "--topic", "numeric", "--method", "B", "--id", "b1", *VALIDATOR, *LIMITS)
+    golden(*x, "run", "--topic", "numeric", "--method", "A", "--plan", "p3", "--id", "a1", *GENERATOR, *LIMITS, *A_ONLY)
+    # C 는 표 묶음을 내지 않았고, JSON 이 아닌 줄을 하나 냈다.
+    export, sidecar = export_c(tmp_path, [(planned["budget"], BUDGET), (planned["bond"], BOND), "JSON 아님"])
+    golden(*x, "import", "--topic", "numeric", "--plan", "p3", "--id", "c1", "--export", export, "--sidecar", sidecar)
+    golden(*x, "audit", "--topic", "numeric", "--method", "C", "--id", "c1", *VALIDATOR, *LIMITS)
+    root = storage.OUTPUTS / "experiments/x1"
+    (root / "freeze.json").write_text(json.dumps({"plan": {"plan_id": "p3"}, "parts": {"numeric": {"train": list(planned.values())}}}), encoding="utf-8")
+    (storage.CONFIGS / "experiments/x1.json").write_text(json.dumps({"ceiling_usd": 3, "max_output_tokens": 9, "prices": {}}),
+                                                         encoding="utf-8")
+
+    golden("review-packets", "x1")
+    review = (root / "review/judgments.csv").read_text(encoding="utf-8-sig").splitlines()
+    filled = [review[0]] + [f"{line.split(',')[0]},Y,{'N' if n == 1 else 'Y'},Y,Y," for n, line in enumerate(review[1:], 1)]
+    (root / "review/judgments.csv").write_text("\n".join(filled) + "\n", encoding="utf-8-sig")
+    golden("compare", "x1")
+
+    result = json.loads((root / "comparison.json").read_text(encoding="utf-8"))
+    first = result["topics"]["numeric"]["first_attempt"]
+    # 받아들인 비율의 분모는 JSON 이 아닌 출력까지 모든 출력이고, 전달 완결성은 출력이 하나라도 온 묶음이다.
+    assert (first["B"]["output_acceptance"], first["B"]["delivery_completeness"]) == (ratio(1, 3), ratio(3, 3))
+    assert first["B"]["rejections"] == {"answer_mismatch": 1, "output_format": 1}
+    assert (first["C"]["output_acceptance"], first["C"]["delivery_completeness"]) == (ratio(2, 3), ratio(2, 3))
+    assert first["A"]["usable_bundle_coverage"] == ratio(1, 3)
+    assert result["topics"]["numeric"]["a_full"]["usable_bundle_coverage"] == ratio(2, 3)
+    costs = result["topics"]["numeric"]["costs"]
+    assert costs["C"]["total_usd"] == costs["C"]["per_unique_valid_question"]["value"] == "unobserved"
+    assert costs["B"]["per_unique_valid_question"]["value"] == pytest.approx(costs["B"]["total_usd"])
+    # 검토 표본: A · B 는 통과 하나 · 거절 하나, C 는 거절이 없어 통과 둘. 검토지에는 방식 · run 이 보이지 않는다.
+    key = json.loads((root / "review/key.json").read_text(encoding="utf-8"))["entries"]
+    strata = {method: sorted(e["stratum"] for e in key if e["method"] == method) for method in "ABC"}
+    assert strata == {"A": ["auto_validated", "rejected"], "B": ["auto_validated", "rejected"],
+                      "C": ["auto_validated", "auto_validated"]}
+    packet = (root / "review/packet.md").read_text(encoding="utf-8")
+    assert not any(run_id in packet for run_id in ("a1-r1", "b1", "c1"))
+    human = result["human"]
+    assert sum(cell["denominator"] for name, cell in human["cells"].items() if name.endswith("· all")) == 6
+    assert sum(cell["numerator"] for name, cell in human["cells"].items() if name.endswith("· all")) == 5
+
+
 def test_c_unobserved_cost_and_tokens_are_reported_as_unobserved_not_zero(planned, api, tmp_path, capsys):
     # 웹에서 만든 C 의 생성 비용을 0 으로 채우면 C 가 공짜처럼 보이고 유효 문항당 비용이 왜곡된다.
     import_c(tmp_path, [(planned["bond"], BOND)])
