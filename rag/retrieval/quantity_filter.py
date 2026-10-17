@@ -10,6 +10,7 @@ from .quantities import SCALES, facts, subject_phrase, tokens
 
 COMPARISON = re.compile(r"\s*(이상|이하|초과|미만|이내|까지)")
 EXTREME = re.compile(r"(?:가장|최대|최소)\s*(큰|많은|높은|긴|작은|적은|낮은|짧은)")
+PROJECT_FILLERS = {"인", "규모", "전체"}
 HEADING_LINE = re.compile(r"^[\s|#]*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩIVX\d]+[.\s|)]+[^:：]{1,60}$")
 INTRO_HEADING = re.compile(
     r"(?m)^[ \t]*(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩIVX\d.]+\s*[|)]?\s*)?(?:[가-하][.)]\s*)?"
@@ -41,7 +42,7 @@ def introduction(text):
 
 def content_query(remainder):
     words = subject_phrase(remainder).split()
-    if "개요" in words or not set(words) - {"사업", "인", "규모"}:
+    if "개요" in words or not set(words) - ({"사업"} | PROJECT_FILLERS):
         return "사업 개요와 목적, 추진배경 및 주요 사업내용"
     return remainder
 
@@ -128,7 +129,7 @@ def project_condition(question):
     if condition is None:
         return None
     target = next((t.form for t in tokens(condition.remainder)
-                   if t.tag in ("NNG", "NNP") and t.form not in ("인", "규모")), None)
+                   if t.tag in ("NNG", "NNP") and t.form not in PROJECT_FILLERS), None)
     return condition if target == "사업" else None
 
 

@@ -8,7 +8,7 @@ from rag.config import read_jsonl
 from rag.generation.generation import format_context
 from rag.retrieval import indexing
 from rag.retrieval.quantities import facts
-from rag.retrieval.quantity_filter import parse_condition
+from rag.retrieval.quantity_filter import parse_condition, project_condition
 from rag.retrieval.quantity_metadata import quantity_rows
 from rag.retrieval.retrieval import DocRouter, HybridIndex, retrieval_fields
 
@@ -232,7 +232,8 @@ def test_bounds_are_not_document_values(index, comparison, space):
     assert hits == [] and "제외 6개" in format_context(hits)
 
 
-@pytest.mark.parametrize("question", ["한국정보공사 예산 1억원 이상 사업", "「문서명」 사업에서 예산 1억원 이상 사업"])
+@pytest.mark.parametrize("question", ["한국정보공사 예산 1억원 이상 사업", "「문서명」 사업에서 예산 1억원 이상 사업",
+                                      "한국정보공사 예산 1억원 이상인 전체 사업", "「문서명」 사업에서 예산 1억원 이상인 전체 사업"])
 def test_agency_and_document_prefix_keep_current_route(index, question):
     index.router.org_docs = {"한국정보공사": {"a"}}
     index._rank.side_effect = None
@@ -401,6 +402,68 @@ def test_table_units_are_column_specific_and_end_with_the_table():
     assert quantity_rows([chunk("c", "사업예산(부가세포함) | 부문\n10 | 운영")]) == []
 
 
+@pytest.mark.parametrize("missing", ["-", "", "미정"])
+@pytest.mark.parametrize("after_valid", [False, True])
+@pytest.mark.parametrize("mode", ["column", "default", "explicit"])
+def test_quantity_free_data_rows_preserve_schema_and_later_values(index, missing, after_valid, mode):
+    prefix = {"column": "사업명 | 사업예산(천원)\n", "default": "(단위: 천원)\n사업명 | 사업예산\n",
+              "explicit": "사업명 | 사업예산\n"}[mode] + "--- | ---\n"
+    first = "C 사업 | " + ("80000원\n" if mode == "explicit" else "80\n") if after_valid else ""
+    last = "B 사업 | " + ("100000원" if mode == "explicit" else "100")
+    baseline = prefix + first + last
+    inserted = "A 사업 | " + missing + "\n"
+    text = prefix + first + inserted + last
+    expected = quantity_rows([chunk("a", baseline)])
+    rows = quantity_rows([chunk("a", text)])
+    assert len(rows) == len(expected) == 1 + after_valid
+    for key in ("value", "unit", "phrase", "original", "unit_declaration"):
+        assert rows[-1].get(key) == expected[-1].get(key)
+    assert rows[-1]["span"] == [offset + len(inserted) for offset in expected[-1]["span"]]
+    for row in rows:
+        assert text[slice(*row["span"])] == row["original"]
+        if row.get("unit_declaration"):
+            assert text[slice(*row["unit_declaration"]["span"])] == "천원"
+    if not after_valid:
+        index.chunks[0] = chunk("a", text)
+        index.quantity_rows = rows
+        index.quantity_phrases = [rows[0]["phrase"]]
+        index.quantity_vectors = np.array([[1, 0]])
+        hits, _ = index.search_with_candidates("예산 100000원 이상인 사업")
+        assert [(hit["doc_id"], value["value"]) for hit, value in zip(hits, hits.values)] == [("a", 100000)]
+
+
+def test_schema_changes_need_a_declaration_or_table_boundary_and_explicit_units_win():
+    text = ("사업명 | 사업예산(천원)\nA 사업 | -\nB 사업 | 100원\n"
+            "사업명 | 사업기간(개월)\nC 사업 | -\nD 사업 | 6\n"
+            "다음 본문\n사업명 | 수량(개)\nE 사업 | -\nF 사업 | 2\n"
+            "다음 본문\n사업명 | 사업예산\nG 사업 | 100")
+    rows = quantity_rows([chunk("a", text)])
+    assert [(row["value"], row["unit"], row["phrase"]) for row in rows] == [
+        (100, "원", "사업 예산"), (6, "개월", "사업 기간 D 사업"), (2, "개", "수량 F 사업")]
+    assert rows[0].get("unit_declaration") is None
+    assert all(text[slice(*row["span"])] == row["original"] for row in rows)
+    assert [text[slice(*row["unit_declaration"]["span"])] for row in rows[1:]] == ["개월", "개"]
+
+
+@pytest.mark.parametrize("label", ["사업금액", "사업금액(원)"])
+def test_numeric_key_value_rows_are_not_headers(label):
+    text = f"{label} | 717,285,200원"
+    rows = quantity_rows([chunk("a", text)])
+    assert [(row["value"], row["phrase"]) for row in rows] == [(717285200, "사업 금액")]
+    assert text[slice(*rows[0]["span"])] == "717,285,200원"
+
+
+def test_declared_headers_do_not_require_every_label_to_have_noun_only_pos_tags():
+    text = ("구분 | 품목(용도) | OS 종류 | 미들웨어 라이센스 종류(수) | 수량(EA) | 비고\n"
+            "클라우드 | UICC WAS | RHEL | LENA WEB(4) | 1\n"
+            "클라우드 | 미정 | 미정 | 미정 | -\n"
+            "클라우드 | UICC WEB | RHEL | LENA WAS(4) | 2")
+    rows = [row for row in quantity_rows([chunk("a", text)]) if row["unit"] == "EA"]
+    assert [(row["value"], row["phrase"]) for row in rows] == [(1, "수량 클라우드"), (2, "수량 클라우드")]
+    assert all(text[slice(*row["span"])] == row["original"] for row in rows)
+    assert all(text[slice(*row["unit_declaration"]["span"])] == "EA" for row in rows)
+
+
 def test_filter_displays_the_inherited_unit_with_the_original_numeric_cell(index):
     index.chunks[0] = chunk("a", "사업예산(천원) | 부문\n10 | 운영")
     index.quantity_rows = quantity_rows([index.chunks[0]])
@@ -440,6 +503,8 @@ def test_declared_table_units_preserve_component_labels_and_collapsed_total_cell
     "응답시간 3초 이하인 요구사항을 알려줘", "사업 응답시간 3초 이하인 요구사항을 알려줘",
     "응답시간 1초~3초 사이 요구사항", "응답시간이 가장 짧은 요구사항",
     "예산 1억원 이상인 업체의 자격을 알려줘",
+    "응답시간 3초 이하인 전체 요구사항을 알려줘", "예산 1억원 이상인 전체 업체의 자격을 알려줘",
+    "응답시간 3초 이하인 전체 요구사항과 해당 사업을 알려줘",
 ])
 @pytest.mark.parametrize("rewritten", [False, True])
 def test_non_project_quantity_questions_keep_hybrid_retrieval(index, question, rewritten):
@@ -453,6 +518,32 @@ def test_non_project_quantity_questions_keep_hybrid_retrieval(index, question, r
     index._rank.assert_called_once_with(question, set(), None)
     assert hits == [index.chunks[0]] and not hasattr(hits, "summary")
     assert candidates[0]["dense_score"] == .9 and candidates[0]["bm25_rank"] == 1
+
+
+@pytest.mark.parametrize("question", ["예산 1억원 이상인 사업", "예산 1억~2억 사업",
+                                      "예산이 가장 큰 사업", "예산 9억원 이상인 사업"])
+@pytest.mark.parametrize("rewritten", [False, True])
+@pytest.mark.parametrize("entrypoint", ["search", "search_with_candidates"])
+def test_whole_project_modifier_preserves_condition_results_and_default_context(index, question, rewritten, entrypoint):
+    modified = question.replace("사업", "전체 사업")
+    baseline_condition, condition = project_condition(question), project_condition(modified)
+    assert condition is not None
+    assert (condition.subject, condition.unit, condition.mode, condition.values) == (
+        baseline_condition.subject, baseline_condition.unit, baseline_condition.mode, baseline_condition.values)
+    method = getattr(index, entrypoint)
+    baseline = method("앞 질문" if rewritten else question, query=question if rewritten else None)
+    base_queries = [call.args[0] for call in index._rank.call_args_list]
+    index._rank.reset_mock()
+    actual = method("앞 질문" if rewritten else modified, query=modified if rewritten else None)
+    if entrypoint == "search_with_candidates":
+        assert baseline[1] == actual[1]
+        baseline, actual = baseline[0], actual[0]
+    assert actual == baseline and actual.values == baseline.values and actual.summary == baseline.summary
+    assert format_context(actual) == format_context(baseline)
+    assert "[수량 필터]" in format_context(actual)
+    assert [call.args[0] for call in index._rank.call_args_list] == base_queries
+    if "9억" in question:
+        assert actual == [] and "조건 일치 0개" in actual.summary
 
 
 def test_interior_empty_cells_keep_positions_between_different_declared_units():

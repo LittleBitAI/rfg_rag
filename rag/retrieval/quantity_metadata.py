@@ -207,6 +207,18 @@ def _row(chunk, line, quantity, offset, headers, context, declaration=None):
             "estimated_price": "추정가격" in phrase.replace(" ", "")}
 
 
+def _table_schema(line, offset, headers, declarations, quantities):
+    if quantities or not re.search(r"[가-힣]", line):
+        return headers, declarations
+    cells = _cells(line)
+    if any(NUMBER_CELL.fullmatch(cell[0]) for cell in cells):
+        return headers, declarations
+    declared = [_declared_unit(cell[0], offset + cell.start()) for cell in cells]
+    if headers and not any(declared):
+        return headers, declarations
+    return [cell[0].strip() for cell in cells], declared
+
+
 def _chunk_rows(chunk):
     rows = []
     offset, headers, declarations, default = 0, [], [], None
@@ -214,11 +226,8 @@ def _chunk_rows(chunk):
     for line in body.splitlines(keepends=True):
         quantities = [(quantity, None) for quantity in _read(line)]
         if "|" in line:
+            headers, declarations = _table_schema(line, offset, headers, declarations, quantities)
             quantities.extend(_implicit_cells(line, headers, declarations, default))
-            if not quantities and re.search(r"[가-힣]", line):
-                cells = _cells(line)
-                headers = [cell[0].strip() for cell in cells]
-                declarations = [_declared_unit(cell[0], offset + cell.start()) for cell in cells]
         else:
             declared = _declared_unit(line, offset) if "단위" in line else None
             default = declared if headers or declared else default
