@@ -141,13 +141,14 @@
   "docs/research/review-feature-golden-data-self-improvement-f2-1.md",
   "docs/research/review-feature-golden-data-validation-f1-1.md",
   "docs/research/review-feature-golden-data-validation-f1-2.md",
-  "docs/research/review-golden-abc-seven-topic-comparison-f1-1.md"
+  "docs/research/review-golden-abc-seven-topic-comparison-f1-1.md",
+  "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md"
  ],
  "counts": {
-  "docs": 26,
+  "docs": 27,
   "linked": 14,
   "read": 0,
-  "orphans": 12,
+  "orphans": 13,
   "pages": 1,
   "decisions": 55,
   "injectable_decisions": 12
