@@ -45,6 +45,11 @@
   },
   {
    "a": "README.md",
+   "b": "docs/index_rollback.md",
+   "kind": "link"
+  },
+  {
+   "a": "README.md",
    "b": "docs/ocr_benchmark.md",
    "kind": "link"
   },
@@ -61,6 +66,26 @@
   {
    "a": "docs/craft_ocr_selection.md",
    "b": "README.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/kiwi_bm25_review.md",
+   "b": "AGENTS.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/kiwi_bm25_review.md",
+   "b": "CLAUDE.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/kiwi_bm25_review.md",
+   "b": "docs/index_rollback.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/kiwi_bm25_review.md",
+   "b": "docs/research/review-review-kiwi-bm25-tokenizer-f1-1.md",
    "kind": "link"
   },
   {
@@ -118,8 +143,8 @@
   "docs/research/review-feature-golden-data-validation-f1-2.md"
  ],
  "counts": {
-  "docs": 23,
-  "linked": 12,
+  "docs": 25,
+  "linked": 14,
   "read": 0,
   "orphans": 11,
   "pages": 1,

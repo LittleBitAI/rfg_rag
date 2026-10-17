@@ -138,23 +138,3 @@ def test_incompatible_bm25_index_is_rejected_before_loading_dense_model(setup_in
         retrieval.HybridIndex(directory.parent, cfg)
     dense.assert_not_called()
     assert snapshot(directory) == before
-
-
-def test_legacy_bm25_index_requires_rebuild_then_finds_dictionary_compound(setup_index):
-    directory, _, cfg = setup_index
-    rows = chunks(3)
-    for row, text in zip(rows, ["개인정보처리시스템", "네트워크 보안", "계약 기간"]):
-        row.update(text=text, body=text)
-    cfg["retrieval"]["dense_weight"] = 0
-    write_jsonl(rows, directory.parent / "chunks.jsonl")
-    legacy = [["개인", "정보", "처리", "시스템"], ["네트워크", "보안"], ["계약", "기간"]]
-    (directory / "bm25_tokens.json").write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
-    before = snapshot(directory)
-    with pytest.raises(ValueError, match="BM25 tokenizer.*Rebuild"):
-        retrieval.HybridIndex(directory.parent, cfg)
-    assert snapshot(directory) == before
-    indexing.build_index(rows, cfg, directory)
-    loaded = retrieval.HybridIndex(directory.parent, cfg)
-    hits, candidates = loaded.search_with_candidates("개인정보처리시스템")
-    assert [row["chunk_id"] for row in hits] == ["0"]
-    assert [row["chunk_id"] for row in candidates] == ["0"]

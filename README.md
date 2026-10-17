@@ -197,6 +197,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
 기존 색인을 재사용할 때도 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 단, 토크나이저 지문이 없거나 현재 코드·사전·패키지와 다르면 검색 시 오류로 중단합니다. 이번 Kiwi 변경 전 색인은 재사용할 수 없으므로 02의 불러오기·설정 셀과 `1. 색인 만들기`의 `build_index` 셀을 실행한 뒤 04나 질문 화면을 실행하세요. 이 색인 재구축은 로컬 작업이며 유료 질문 재작성 예제 셀을 실행할 필요가 없습니다.
 `bm25_tokens.json`은 토큰과 지문을 함께 저장합니다. 지문은 줄바꿈을 정규화한 `indexing.py` 전체 코드, 생성 사전, `kiwipiepy`·모델 데이터·`hanja` 버전을 포함합니다. 따라서 이 모듈의 토큰 규칙 외 변경도 보수적으로 재구축을 요구합니다. 청킹 크기를 바꾸면 01부터 다시 실행합니다. 검색 설정 조절은 저장 rewrite가 있는 dev에서 아래 검색 전용 재실행으로 비교할 수 있습니다. 새 설정의 답변·심판 결과가 필요하면 04도 다시 실행합니다.
+Rolling back code after rebuilding also requires a coordinated index downgrade. Follow [the stopped-reader rollback procedure](docs/index_rollback.md): quarantine the newer index, rebuild and verify with the exact rollback revision/environment, then publish the complete directory before restarting any reader. A code-only rollback or extracting the new payload's token array is unsupported.
 모델을 바꾸면 같은 설정 셀의 `*_PRICES`도 해당 모델의 입력 · 캐시 입력 · 출력 단가(USD / 100만 토큰)로 맞추세요.
 재작성·답변 기본값은 [GPT-6 LUNA Standard 단가](https://developers.openai.com/api/docs/models/gpt-6-luna)를 사용하며 평가 심판은 [gpt-5-mini 단가](https://developers.openai.com/api/docs/models/gpt-5-mini)를 유지합니다. 설정 단가는 비용 추정용으로 실제 청구와 다를 수 있습니다. [수량 필터 전체 견적과 네 질문 비교](docs/quantity_filter_estimate.md)에 범위·실사용량·모델 선택의 한계를 기록합니다.
 

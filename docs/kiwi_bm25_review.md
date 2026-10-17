@@ -368,3 +368,50 @@ FAISS, 수량 색인의 모든 파일, 활성 청크, eval 입력, 두 규칙 �
 `1336 passed, 12 warnings in 130.56s (0:02:10)`으로 통과했다.
 `.venv\Scripts\ruff check .`는 `All checks passed!`,
 `git diff --no-index CLAUDE.md AGENTS.md`는 출력 없이 통과했다.
+
+## Review 2 — coordinated index downgrade (F1)
+
+The research draft [F1, cycle 1](research/review-review-kiwi-bm25-tokenizer-f1-1.md) was read before
+the experiment. It remains a draft, not a verified rule. Before editing the migration guidance,
+`artifacts/kiwi_round2_experiment.py` ran the actual base `2f746f3` and candidate `5b2773f` code
+in separate fresh Python processes. Connections were blocked and embeddings used a local substitute.
+The three chunks were `개인정보처리시스템`, `네트워크 보안` and `계약 기간`.
+
+| Transition | Observed result |
+| --- | --- |
+| Base build and search | Three corpus entries and three scores; split query tokens; BM25 IDs `[0]`, hybrid IDs `[0, 1, 2]` |
+| Candidate loading base artifacts | Fingerprint rejection; all five index files unchanged |
+| Candidate rebuild and search | Three entries/scores; whole compound query token; BM25 IDs `[0]` |
+| Base loading candidate artifacts | Two entries/scores; search failed with `operands could not be broadcast together with shapes (3,) (2,) ()` |
+| Downgrade build failure after quarantine | Active index absent; a fresh base reader failed to load `faiss.index`; quarantined candidate files unchanged |
+| Isolated base rebuild, fresh verification and publication | All five files byte-identical to the original base build; original tokens, BM25 and hybrid results restored in a fresh base process |
+
+The first repair only protected the newer reader. A plain JSON array would fix parsing while
+leaving old query tokenization incompatible with the new corpus. The corrective path is therefore
+the [stopped-reader downgrade procedure](index_rollback.md): quarantine the newer bundle, build
+and verify using the exact rollback code/environment, then rename the complete verified directory
+into the absent active path. Any failure leaves readers stopped and the active path absent.
+Production writer, loader and tokenizer code remain unchanged in this repair.
+
+The separate applicability census is one product writer, one product loader, five application
+constructor sites (two in 02, one each in 04, 05 and the frontend), and one README execution example.
+There are zero additional product loaders. All five coupled index artifacts must move together;
+no caller-specific fallback or conversion was added.
+
+The persisted regression is `tests/test_index_migration.py` with a fresh-process worker in
+`tests/index_migration_worker.py`. It extracts the actual frozen base from Git and uses current
+candidate code. The synthetic forward-only migration test was folded into this stronger lifecycle
+test. Existing publication rollback and source/dictionary/package fingerprint regressions remain.
+The initial experiment is recorded in `artifacts/kiwi_review/round2/result.json` and
+`round2_experiment.log`; the committed regression also checks a distinct fresh staging directory
+after the injected failure, following the documented retry procedure.
+
+This rehearses code and artifacts in Python 3.10.11 with Kiwi/model 0.24.0, Hanja 0.15.1,
+rank-bm25 0.2.2, NumPy 2.2.6 and FAISS 1.15.1. It does not reproduce every historical dependency
+environment, downgrade the active 18,989-chunk corpus, switch live readers or establish crash safety.
+Code, environment, config and frozen inputs must still be selected together during a real rollback.
+
+After test cleanup, `.venv\Scripts\python -m pytest -q tests/test_index_migration.py tests/test_indexing.py tests/test_retrieval.py`
+reported `61 passed in 139.91s`. Ruff and the repository debt check passed; `CLAUDE.md` and
+`AGENTS.md` remain byte-identical and unchanged. The earlier full-suite result is historical;
+this repair ran the affected scope rather than repeating the whole suite during review.
