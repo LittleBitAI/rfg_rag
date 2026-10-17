@@ -1,6 +1,6 @@
-# RFP RAG — 공공기관 제안요청서 질의응답 (PDF · HWP · 하이브리드 검색 · gpt-5-mini · RAGAS)
+# RFP RAG — Public institution RFP Q&A (PDF · HWP · Hybrid Search · GPT-6 LUNA · RAGAS)
 
-RFP 문서(PDF · HWP · HWPX)를 파싱해 청크로 나누고, BM25 + 임베딩(FAISS) 하이브리드 검색으로 찾은 청크를 근거로 `gpt-5-mini` 가 답합니다.
+RFP documents (PDF, HWP and HWPX) are parsed into chunks. BM25 and embedding-based FAISS search retrieve evidence for answers from `gpt-6-luna`.
 답은 네 가지(Retrieval · Generation · Grounding · End-to-End)로 나눠 채점합니다. 검색은 결정적 IR 지표, 핵심 사실은 문자열 일치, 근거 충실도와 최종 정답은 RAGAS 심판으로 확인해 나쁜 답이 어디서 왔는지 가립니다.
 
 작업은 다섯 파이프라인으로 나뉘고, 파이프라인마다 담당자 한 명 · 노트북 하나 · `rag/` 아래 폴더 하나가 있습니다.
@@ -38,6 +38,45 @@ UTF-8 CSV에 `파일명`, `발주기관` 열이 있어야 합니다. Excel이 �
 파일이 없으면 02 색인·검색과 질문 화면을 실행하기 전에 담당자에게 요청하세요.
 검색은 요구사항 코드 일치 청크를 먼저 담고, 거의 같은 본문을 제외하며,
 `retrieval.token_budget`(기본 2500)으로 본문 토큰 합을 제한합니다. 첫 청크는 예산을 넘어도 유지합니다.
+
+### 전체 사업의 수량 조건 검색
+
+Quantity conditions targeting projects (`사업`), without an agency or document-name prefix, filter the whole collection using indexed per-document values. Thresholds, ranges and max/min are supported, retaining ties. Examples: `사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘.`, `사업기간 6개월 이상인 사업`, `예산이 1억~5억인 사업`, `예산이 가장 큰 사업`. Numeric comparisons targeting requirements or vendor qualifications use the existing hybrid search; mentioning a project in the field name alone does not select the project filter. Routing uses the stored rewrite, or the original question when it is empty.
+
+The scope modifier `전체` is supported before the project target: `예산 1억원 이상인 전체 사업` has the same filter and default overview context as its unmodified form. The same modifier before requirements or vendors keeps hybrid retrieval, including questions mentioning a project later. This bounded rule does not interpret arbitrary restrictive modifiers.
+
+`이내`와 단독 `까지`는 `이하`와 같은 포함 상한입니다. `사업기간 6개월 이내인 사업`과 `사업기간 6개월까지인 사업`은 6개월을 포함하여 오름차순으로 모든 일치 사업을 반환합니다. `부터…까지`는 기존의 양 끝값 포함 범위를 유지합니다.
+
+수량 추출을 바꾸면 02에서 색인을 다시 만드세요. `artifacts/index/quantities.jsonl`은 수량마다 문서·청크·값·단위·정리한 항목명·원문 범위를 저장합니다. 서로 다른 항목명은 기존 로컬 Embedder로 한 번씩 임베딩합니다. 띄어 쓴 항목명과 표 머리글을 복원하고, 단위는 Kiwi 품사로 읽습니다. 한글 금액, 앞쪽 통화 기호, 확인된 단위 중복 오타는 로컬에서 정규화합니다. 색인·라우팅·필터에 LLM이나 API 호출을 추가하지 않습니다.
+
+Comparison expressions remain marked as bounds. Explicit labelled quantity ceilings, such as `사업예산: 230,000천원 이내` and `사업기간: 계약일로부터 24개월 이내`, can supply the document value; eligibility clauses, examples and explicit reference blocks cannot. Estimated prices (`추정가격`) remain excluded. Won values of 1 or less are unstated; valid one-month and one-item quantities remain usable. Parenthesized currency scales declare units, and counter-only labels such as `건당` cannot supply a budget field. Table-cell subjects take precedence over generic headers, and artificial project context is added only to monetary labels so unrelated periods retain their actual subjects.
+
+Declared column units and a preceding `(단위: 천원)` apply to numeric table cells: `사업예산(천원) | 부문` followed by `10 | 운영` yields 10,000 won. The metadata preserves both the numeric cell and its unit declaration spans; the context displays `10 (천원)`. Explicit cell units take precedence, and inherited units end with the table or chunk. Component row labels remain distinct from a shortened total row. Slash-separated parallel fields such as `과업비/과업기간: 100,000천원/5개월` assign each value to its corresponding field; unit-internal slashes such as `MB/s` remain intact.
+
+Optional boundary pipes, exterior whitespace and LF/CRLF endings do not add table columns. Interior empty cells retain their positions. A shortened total still uses the existing unique-declared-column recovery; this does not infer arbitrary merged cells or prefer totals over fields with higher similarity.
+
+Missing or textual data values leave the active column labels and units intact. A table schema starts with a label-only row, changes on another label-only unit declaration, and resets at the existing non-pipe table boundary or chunk end. Numeric key/value rows remain data. Adjacent unmarked header changes in delimiter-free text remain ambiguous; they require a declaration or a supported boundary.
+
+선언 단위 머리글에는 `1차 예산(천원)`이나 `2026년 1차 예산(천원)`처럼 숫자 수식어가 있어도 됩니다. 수식어 뒤의 항목명과 끝의 단위 선언을 확인하여 열 단위를 설치하며, 머리글의 차수·연도는 데이터 수량으로 내보내지 않습니다. 숫자 셀, 명시 단위 값, 괄호 약어가 섞인 본문은 데이터로 유지합니다.
+
+A Markdown delimiter row also identifies a declared-unit header as a whole. For example, `구분 | 2024년 | 예산(천원)` above `--- | --- | ---` installs the budget column's thousand-won scale even though the year occupies a separate cell. Header numbers are not emitted as data. Without that structural marker, the existing cell-level checks remain in force; a numbered data row cannot install a sibling declaration merely because it contains parentheses.
+
+Each delimiter cell must contain at least three hyphens, optionally surrounded by alignment colons. Single-hyphen missing-value rows and other shorter cells cannot install column units or suppress quantities in the preceding data row.
+
+02 builds FAISS, BM25 tokens, quantity rows, phrase names and phrase vectors in a private sibling directory. It publishes the completed directory only after quantity embedding and summary calculation succeed, restoring the previous directory if the publication rename raises. This rollback covers the five index artifacts; preprocessing chunk files are unchanged. It is not a concurrent-reader or process-crash transaction.
+
+Filtered hit metadata, candidate IDs and `context_chunk_ids` identify the selected value's source chunk. When the overview comes from another chunk, its filename, page or section, and chunk ID appear beside that excerpt in the body. Each project still contributes one hit with the existing schema; the overview's ID is recorded in that body rather than added to `context_chunk_ids`.
+
+| 설정 | 의미 |
+| --- | --- |
+| `retrieval.field_similarity` | 질문 항목명과 색인 항목명의 최소 코사인 유사도. 필요한 단위의 사용 가능한 행 중 유사도가 가장 높은 행을 문서 값으로 선택합니다. |
+| `retrieval.filter_token_budget` | 일치한 전체 문서의 본문 토큰 예산. 문서마다 균등하게 나누고 선택한 값의 원문과 실제 본문 발췌를 담습니다. |
+
+항목명 정리와 사업 문맥 보정 후 측정한 기준값은 0.66입니다. `과업비`는 약 .668, `집행한도액`은 .710, `보상한도액`은 .650이며 추정가격은 별도 정책으로 제외합니다. 숫자 없는 최대·최소와 단위 없는 배율 범위는 문서별로 가장 잘 맞는 사용 가능한 행 하나씩을 뽑아 가장 흔한 단위를 추론합니다. 같은 문서의 서식이 반복되어도 단위 집계를 늘리지 않습니다.
+
+Overview/default requests prefer substantive introduction, purpose and main-work excerpts, including a value-source chunk when it contains an introduction. Headings, TOCs and blank forms are skipped. Missing content is explicit. Context reports matching documents and `값 미표기·매칭 불가로 제외` counts separately from known values below the threshold. Values without an accepted matching field can still be omitted, and conflicting values within one document are not semantically reconciled. The 02 local-check cell prints values, fields and similarities without API calls. The [paid validation report](docs/quantity_filter_validation.md) records defects found in real answers and subsequent local corrections; it does not claim acceptance from table formatting alone.
+
+답변 모델은 승인된 출력 한도 8,192토큰에 추론을 포함합니다. 제공된 모든 사업을 원문 값·개요·출처가 있는 표로 나열합니다. [전체 견적서](docs/quantity_filter_estimate.md)에 모델 비교, 유료 검증 및 한계를 기록합니다.
 노트북은 VS Code · PyCharm · Jupyter 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.
 처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)을 내려받습니다.
 
@@ -158,7 +197,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
 기존 색인이 있어도 이번 변경 후에는 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 청킹 크기를 바꾸면 01부터 다시 실행합니다. 검색 설정 조절은 저장 rewrite가 있는 dev에서 아래 검색 전용 재실행으로 비교할 수 있습니다. 새 설정의 답변·심판 결과가 필요하면 04도 다시 실행합니다.
 모델을 바꾸면 같은 설정 셀의 `*_PRICES`도 해당 모델의 입력 · 캐시 입력 · 출력 단가(USD / 100만 토큰)로 맞추세요.
-기본 단가는 [OpenAI 공식 gpt-5-mini 문서](https://developers.openai.com/api/docs/models/gpt-5-mini)의 Standard 요금입니다. 비용은 설정한 단가에 따른 추정값이며 실제 청구서와는 다를 수 있습니다.
+재작성·답변 기본값은 [GPT-6 LUNA Standard 단가](https://developers.openai.com/api/docs/models/gpt-6-luna)를 사용하며 평가 심판은 [gpt-5-mini 단가](https://developers.openai.com/api/docs/models/gpt-5-mini)를 유지합니다. 설정 단가는 비용 추정용으로 실제 청구와 다를 수 있습니다. [수량 필터 전체 견적과 네 질문 비교](docs/quantity_filter_estimate.md)에 범위·실사용량·모델 선택의 한계를 기록합니다.
 
 02 검색 예제와 04 답변 생성은 검색 전에 `rag/retrieval/rewrite.py`로 질문을 재작성합니다.
 `config.yaml`의 `rewrite.model`, `rewrite.max_tokens`, `rewrite.reasoning_effort`가 이 API 호출에 적용됩니다.
@@ -516,7 +555,7 @@ CRAFT는 사진·로고·표의 의미를 판단하는 분류기가 아닙니다
 - `langchain-community` 는 **0.3.31 로 고정**합니다. ragas 0.4.3 이 community 0.4 에서 사라진 모듈을 import 하기 때문입니다.
 - langchain-community 0.3.31 의 `PyMuPDFParser` 는 그림을 저장하기 전에 빈 버퍼를 검사하는 버그로 모든 그림을 건너뜁니다. `parsing.py` 가 OCR 을 켤 때만 이 부분을 패치합니다.
 - `hwp-hwpx-parser` 의 하이퍼링크 컨트롤 무한 루프 버그도 `parsing.py` 가 패치합니다.
-- `gpt-5-mini` 는 추론 모델이라 `max_tokens`(= `max_completion_tokens`)에 추론 토큰이 포함됩니다. 답이 비면 값을 늘리거나 `reasoning_effort` 를 낮추세요.
+- GPT-6 LUNA and gpt-5-mini include reasoning tokens in `max_tokens` (`max_completion_tokens`). If an answer is empty, inspect token usage before changing the limit or reasoning effort.
 - 배포용(암호화) HWP 는 본문을 읽을 수 없어 건너뜁니다. 한글에서 일반 `.hwp` · `.hwpx` · PDF 로 저장해 넣으세요.
 - HWP 는 쪽 번호가 없어 HWP 청크의 출처는 섹션 경로로 표시됩니다.
 

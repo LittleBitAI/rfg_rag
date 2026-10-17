@@ -173,12 +173,13 @@ def test_answer_saves_actual_model_usage_and_recent_history(monkeypatch, tmp_pat
     monkeypatch.setattr(generation.openai, "OpenAI", MagicMock(return_value=client))
 
     history = [{"question": f"이전 질문 {i}", "answer": f"이전 답변 {i}"} for i in range(turns)]
-    result = generation.generate("질문", [], load_config()["llm"], history=history or None)
+    llm_cfg = {**load_config()["llm"], "usd_per_1m_tokens": [0.10, 0.01, 0.50]}
+    result = generation.generate("질문", [], llm_cfg, history=history or None)
 
     assert result["model"] == "actual-model-snapshot"
     assert result["cached_input_tokens"] == 40
     assert result["reasoning_tokens"] == 20
-    assert result["cost_usd"] == pytest.approx(0.000076)
+    assert result["cost_usd"] == pytest.approx(0.0000214)
     row, = _usage_rows(tmp_path)
     assert row["stage"] == "answer" and row["subject"] == "질문"
     messages = client.chat.completions.create.call_args.kwargs["messages"]

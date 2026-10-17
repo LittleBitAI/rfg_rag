@@ -53,15 +53,17 @@ bm25:
   b: 0.75
 
 retrieval:
+  field_similarity: 0.66        # Clean money fields: 과업비 .668, 집행한도액 .710; 보상한도액 .650 excluded. 추정가격 is excluded by policy.
+  filter_token_budget: 16000    # 수량 필터의 모든 일치 문서에 균등 배분
   token_budget: 2500           # 검색 결과 본문 토큰 예산 (임베딩 토크나이저 기준)
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
 
 rewrite:
-  model: gpt-5-mini
+  model: gpt-6-luna
   max_tokens: 2048              # 질문 재작성의 출력·추론 토큰 한도
   reasoning_effort: low
-  usd_per_1m_tokens: [0.25, 0.025, 2.00]
+  usd_per_1m_tokens: [0.10, 0.01, 0.50]
 
 # ── ③ 검증 (03_validation) ──
 validation:
@@ -70,10 +72,10 @@ validation:
 
 # ── ④ 생성 (04_generation) ──
 llm:
-  model: gpt-5-mini
-  max_tokens: 2048              # max_completion_tokens (reasoning 토큰 포함!)
+  model: gpt-6-luna
+  max_tokens: 8192              # 전체 사업 표와 추론 토큰을 함께 담는 max_completion_tokens
   reasoning_effort: low         # minimal | low | medium | high
-  usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
+  usd_per_1m_tokens: [0.10, 0.01, 0.50]  # Input, cached input, output: USD per million tokens.
 
 # ── ⑤ 평가 (05_evaluation) ──
 evaluation:
