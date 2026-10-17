@@ -18,9 +18,18 @@ from rank_bm25 import BM25Okapi
 
 from ..config import ROOT, read_jsonl
 from .indexing import Embedder, KiwiTokenizer, find_codes
+from .quantity_filter import choose_values, parse_condition
 
 
 _DUP_RATIO = 0.8
+
+
+class FilterHits(list):
+    def __init__(self, hits, summary, values, chosen):
+        super().__init__(hits)
+        self.summary = summary
+        self.values = values
+        self.chosen = chosen
 
 
 def retrieval_fields(index, question: str, query: str, *, reused: bool) -> tuple:
@@ -65,6 +74,9 @@ class HybridIndex:
         self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"), read_csv_orgs(ROOT / cfg["paths"]["org_csv"]))
         self.rcfg = cfg["retrieval"]
         self.chunk_file = str((artifacts / "chunks.jsonl").resolve())
+        self.quantity_rows = read_jsonl(artifacts / "index" / "quantities.jsonl")
+        self.quantity_phrases = json.loads((artifacts / "index" / "quantity_phrases.json").read_text(encoding="utf-8"))
+        self.quantity_vectors = np.load(artifacts / "index" / "quantity_vectors.npy")
 
     @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str, *, query: str | None = None) -> list[dict]:
@@ -77,11 +89,31 @@ class HybridIndex:
         """기존 검색 결과와 패킹 전 후보의 읽기 전용 스냅샷을 함께 반환한다."""
         query = query or question
         route = self.router.route(query)
+        condition = parse_condition(query) if not route and not re.match(r"^.*?」 사업에서 ", query) else None
+        if condition:
+            return self._filter(condition)
         codes = find_codes(question) | find_codes(query)
         groups = [self._rank(query, codes, doc_ids) for doc_ids in (list(route.values()) or [None])]
         ranked = [hit for hit in chain.from_iterable(zip_longest(*groups)) if hit is not None]
         candidates = self._candidate_snapshot(groups, ranked)
         return self._pack([(c["index"], c["score"]) for c in ranked]), candidates
+
+    def _filter(self, condition):
+        matched, chosen = choose_values(self.quantity_rows, self.quantity_phrases, self.quantity_vectors,
+                                        self.embedder, condition, float(self.rcfg["field_similarity"]))
+        excluded = len(set(self.doc_ids) - chosen.keys())
+        summary = f"[수량 필터] 조건 일치 {len(matched)}개 문서; 일치하는 값이 없어 제외 {excluded}개 문서."
+        share = int(self.rcfg["filter_token_budget"]) // max(1, len(matched))
+        hits, ranked = [], []
+        for row in matched:
+            top = self._rank(condition.remainder or "사업 개요", set(), {row["doc_id"]})[0]
+            chunk = self.chunks[top["index"]]
+            value = f"{row['phrase']}: {row['original']}\n"
+            body = self.embedder.truncate(value + chunk["body"], max(0, share - 2))
+            hits.append({**chunk, "body": body, "score": round(row["similarity"], 4)})
+            ranked.append({**top, "dense_score": None, "dense_rank": None, "bm25_score": None,
+                           "bm25_rank": None, "exact_code_match": False})
+        return FilterHits(hits, summary, matched, chosen), self._candidate_snapshot([ranked], ranked)
 
     def _candidate_snapshot(self, groups: list, ranked: list) -> tuple:
         for component in ("dense", "bm25"):

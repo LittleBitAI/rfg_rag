@@ -14,6 +14,9 @@ from kiwipiepy import Kiwi
 from langchain_core.embeddings import Embeddings
 from sentence_transformers import SentenceTransformer
 
+from ..config import write_jsonl
+from .quantity_filter import quantity_rows
+
 
 class Embedder(Embeddings):
     """SentenceTransformer 를 LangChain Embeddings 로 감싼다.
@@ -41,6 +44,10 @@ class Embedder(Embeddings):
     def token_counts(self, texts: list[str]) -> list[int]:
         """임베딩 모델 토크나이저 기준 토큰 수 (특수 토큰 포함 — max_seq_length 와 같은 기준)"""
         return [len(ids) for ids in self._st.tokenizer(texts)["input_ids"]]
+
+    def truncate(self, text: str, budget: int) -> str:
+        ids = self._st.tokenizer.encode(text, add_special_tokens=False)
+        return self._st.tokenizer.decode(ids[:max(0, budget)], skip_special_tokens=True)
 
 
 # 형태소 분석으로 쪼개지는 요구사항 코드를 한 토큰으로도 색인한다
@@ -112,7 +119,17 @@ def build_index(chunks: list[dict], cfg: dict, out_dir: Path) -> dict:
     faiss.write_index(index, str(out_dir / "faiss.index"))
     tokens = KiwiTokenizer().batch(texts)
     (out_dir / "bm25_tokens.json").write_text(json.dumps(tokens, ensure_ascii=False), encoding="utf-8")
+    build_quantity_index(chunks, embedder, out_dir)
     max_len = int(cfg["embedding"]["max_seq_length"])
     return {"청크": len(chunks), "벡터 차원": int(vectors.shape[1]), "BM25 토큰": sum(map(len, tokens)),
             "BM25 어휘": len({w for t in tokens for w in t}),
             f"임베딩에서 잘린 청크(>{max_len} 토큰)": sum(n > max_len for n in embedder.token_counts(texts))}
+
+
+def build_quantity_index(chunks: list[dict], embedder: Embedder, out_dir: Path):
+    rows = quantity_rows(chunks)
+    phrases = list(dict.fromkeys(r["phrase"] for r in rows))
+    vectors = embedder.encode(phrases, progress=True) if phrases else np.empty((0, 0), dtype=np.float32)
+    write_jsonl(rows, out_dir / "quantities.jsonl")
+    (out_dir / "quantity_phrases.json").write_text(json.dumps(phrases, ensure_ascii=False), encoding="utf-8")
+    np.save(out_dir / "quantity_vectors.npy", vectors)

@@ -53,6 +53,8 @@ bm25:
   b: 0.75
 
 retrieval:
+  field_similarity: 0.72        # 로컬 사업 예산 유사도: 사업비 .756·사업금액 .816·소요예산 .787 포함, 추정가격 .534는 예산에서 제외
+  filter_token_budget: 16000    # 수량 필터의 모든 일치 문서에 균등 배분
   token_budget: 2500           # 검색 결과 본문 토큰 예산 (임베딩 토크나이저 기준)
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수

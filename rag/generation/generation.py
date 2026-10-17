@@ -23,6 +23,7 @@ SYSTEM_PROMPT = (
     "- 질문에 사실과 다른 전제가 있으면(예: 잘못된 비율·기한) 먼저 '정정:'으로 바로잡은 뒤 올바른 내용을 답하세요.\n"
     "- 두 사업/기관 비교 질문은 항목별 Markdown 표로 정리하고, 한쪽 문서에 없는 항목은 '문서에 없음'으로 표시하세요.\n"
     "- 요구사항 정리 질문은 요구사항 ID·명칭·핵심 내용을 목록으로 정리하세요.\n"
+    "- [수량 필터] 컨텍스트는 제공된 모든 사업을 값·개요 표로 빠짐없이 나열하고 제외 문서 수도 밝히세요.\n"
     "- 질문이 영어로만 되어 있으면 영어로, 그 외에는 한국어로 답하세요.\n"
     "- 검색 컨텍스트에 답이 없으면 '제공된 문서에서 확인할 수 없습니다.'라고 답하세요."
 )
@@ -35,7 +36,8 @@ def format_context(hits: list[dict]) -> str:
         kind = {"table": "표", "image_caption": "그림"}.get(h["kind"], "본문")
         loc = f"p.{h['page']}" if h["page"] else h["section"][:40]
         parts.append(f"[{i}] ({h['source']} {loc}, {kind})\n{h['body']}")
-    return "\n\n".join(parts) or "(검색된 문서 청크가 없습니다.)"
+    context = "\n\n".join(parts) or "(검색된 문서 청크가 없습니다.)"
+    return f"{hits.summary}\n\n{context}" if hasattr(hits, "summary") else context
 
 
 def format_history(history: list[dict]) -> str:
