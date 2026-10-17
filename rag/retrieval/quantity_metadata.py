@@ -29,6 +29,14 @@ def _declared_unit(text, offset=0):
     return None
 
 
+def _cells(line):
+    start, end = len(line) - len(line.lstrip()), len(line.rstrip())
+    start += line[start:start + 1] == "|"
+    end -= line[end - 1:end] == "|"
+    # Exterior pipes are syntax; interior empty cells still occupy a column.
+    return list(re.compile(r"[^|]+|(?<=\|)(?=\|)").finditer(line, start, end))
+
+
 def _cell_column(column, count, declarations):
     if count < len(declarations):
         remaining = [i for i in range(column, len(declarations)) if declarations[i] is not None]
@@ -38,7 +46,7 @@ def _cell_column(column, count, declarations):
 
 def _implicit_cells(line, headers, declarations, default):
     result = []
-    cells = list(re.finditer(r"[^|]+", line))
+    cells = _cells(line)
     for column, cell in enumerate(cells):
         target = _cell_column(column, len(cells), declarations)
         declaration = declarations[target] if target is not None and target < len(declarations) else None
@@ -133,7 +141,7 @@ def _read_cell(line):
 
 
 def _read(line):
-    return [(value, unit, a + cell.start(), b + cell.start()) for cell in re.finditer(r"[^|]+", line)
+    return [(value, unit, a + cell.start(), b + cell.start()) for cell in _cells(line)
             for value, unit, a, b in _read_cell(cell[0])]
 
 
@@ -156,7 +164,7 @@ def _clean_label(label, unit):
 
 
 def _field(line, start, headers):
-    cells = list(re.finditer(r"[^|]+", line))
+    cells = _cells(line)
     if "|" in line:
         column = next(i for i, cell in enumerate(cells) if cell.start() <= start < cell.end())
         local = line[cells[column].start():start]
@@ -208,9 +216,9 @@ def _chunk_rows(chunk):
         if "|" in line:
             quantities.extend(_implicit_cells(line, headers, declarations, default))
             if not quantities and re.search(r"[가-힣]", line):
-                cells = list(re.finditer(r"[^|]+", line.strip().strip("|")))
+                cells = _cells(line)
                 headers = [cell[0].strip() for cell in cells]
-                declarations = [_declared_unit(cell[0], offset + line.index(cell[0])) for cell in cells]
+                declarations = [_declared_unit(cell[0], offset + cell.start()) for cell in cells]
         else:
             declared = _declared_unit(line, offset) if "단위" in line else None
             default = declared if headers or declared else default

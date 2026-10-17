@@ -41,13 +41,17 @@ UTF-8 CSV에 `파일명`, `발주기관` 열이 있어야 합니다. Excel이 �
 
 ### 전체 사업의 수량 조건 검색
 
-기관이나 문서명 접두사가 없는 수량 조건 질문은 색인에 저장한 문서별 값으로 전체 사업을 거릅니다. 이상·이하·초과·미만, 같은 단위의 범위, 최대·최소를 지원하며 최댓값·최솟값이 같은 사업은 모두 유지합니다. 예: `사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘.`, `사업기간 6개월 이상인 사업`, `예산이 1억~5억인 사업`, `예산이 가장 큰 사업`.
+Quantity conditions targeting projects (`사업`), without an agency or document-name prefix, filter the whole collection using indexed per-document values. Thresholds, ranges and max/min are supported, retaining ties. Examples: `사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘.`, `사업기간 6개월 이상인 사업`, `예산이 1억~5억인 사업`, `예산이 가장 큰 사업`. Numeric comparisons targeting requirements or vendor qualifications use the existing hybrid search; mentioning a project in the field name alone does not select the project filter. Routing uses the stored rewrite, or the original question when it is empty.
 
 수량 추출을 바꾸면 02에서 색인을 다시 만드세요. `artifacts/index/quantities.jsonl`은 수량마다 문서·청크·값·단위·정리한 항목명·원문 범위를 저장합니다. 서로 다른 항목명은 기존 로컬 Embedder로 한 번씩 임베딩합니다. 띄어 쓴 항목명과 표 머리글을 복원하고, 단위는 Kiwi 품사로 읽습니다. 한글 금액, 앞쪽 통화 기호, 확인된 단위 중복 오타는 로컬에서 정규화합니다. 색인·라우팅·필터에 LLM이나 API 호출을 추가하지 않습니다.
 
 Comparison expressions remain marked as bounds. Explicit labelled quantity ceilings, such as `사업예산: 230,000천원 이내` and `사업기간: 계약일로부터 24개월 이내`, can supply the document value; eligibility clauses, examples and explicit reference blocks cannot. Estimated prices (`추정가격`) remain excluded. Won values of 1 or less are unstated; valid one-month and one-item quantities remain usable. Parenthesized currency scales declare units, and counter-only labels such as `건당` cannot supply a budget field. Table-cell subjects take precedence over generic headers, and artificial project context is added only to monetary labels so unrelated periods retain their actual subjects.
 
 Declared column units and a preceding `(단위: 천원)` apply to numeric table cells: `사업예산(천원) | 부문` followed by `10 | 운영` yields 10,000 won. The metadata preserves both the numeric cell and its unit declaration spans; the context displays `10 (천원)`. Explicit cell units take precedence, and inherited units end with the table or chunk. Component row labels remain distinct from a shortened total row. Slash-separated parallel fields such as `과업비/과업기간: 100,000천원/5개월` assign each value to its corresponding field; unit-internal slashes such as `MB/s` remain intact.
+
+Optional boundary pipes, exterior whitespace and LF/CRLF endings do not add table columns. Interior empty cells retain their positions. A shortened total still uses the existing unique-declared-column recovery; this does not infer arbitrary merged cells or prefer totals over fields with higher similarity.
+
+02 builds FAISS, BM25 tokens, quantity rows, phrase names and phrase vectors in a private sibling directory. It publishes the completed directory only after quantity embedding and summary calculation succeed, restoring the previous directory if the publication rename raises. This rollback covers the five index artifacts; preprocessing chunk files are unchanged. It is not a concurrent-reader or process-crash transaction.
 
 Filtered hit metadata, candidate IDs and `context_chunk_ids` identify the selected value's source chunk. When the overview comes from another chunk, its filename, page or section, and chunk ID appear beside that excerpt in the body. Each project still contributes one hit with the existing schema; the overview's ID is recorded in that body rather than added to `context_chunk_ids`.
 

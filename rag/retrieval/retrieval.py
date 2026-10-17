@@ -18,7 +18,7 @@ from rank_bm25 import BM25Okapi
 
 from ..config import ROOT, read_jsonl
 from .indexing import Embedder, KiwiTokenizer, find_codes
-from .quantity_filter import choose_values, content_query, introduction, parse_condition, substantive
+from .quantity_filter import choose_values, content_query, introduction, project_condition, substantive
 
 
 _DUP_RATIO = 0.8
@@ -89,7 +89,7 @@ class HybridIndex:
         """기존 검색 결과와 패킹 전 후보의 읽기 전용 스냅샷을 함께 반환한다."""
         query = query or question
         route = self.router.route(query)
-        condition = parse_condition(query) if not route and not re.match(r"^.*?」 사업에서 ", query) else None
+        condition = project_condition(query) if not route and not re.match(r"^.*?」 사업에서 ", query) else None
         if condition:
             return self._filter(condition)
         codes = find_codes(question) | find_codes(query)

@@ -123,6 +123,15 @@ def parse_condition(question):
     return None
 
 
+def project_condition(question):
+    condition = parse_condition(question)
+    if condition is None:
+        return None
+    target = next((t.form for t in tokens(condition.remainder)
+                   if t.tag in ("NNG", "NNP") and t.form not in ("인", "규모")), None)
+    return condition if target == "사업" else None
+
+
 def _usable(row):
     return ((not row["bound"] or row["declared_cap"]) and not row["illustrative"]
             and not row["estimated_price"]

@@ -411,13 +411,56 @@ def test_filter_displays_the_inherited_unit_with_the_original_numeric_cell(index
     assert hits[0]["body"].splitlines()[0] == "사업 예산: 10 (천원)"
 
 
-def test_declared_table_units_preserve_component_labels_and_collapsed_total_cells():
-    text = ("예산과목 | 주요 내용 | 예산(천원)\n"
-            "전산개발비 | 시스템 구축 | 140,000\n장비비 | 장비 구입 | 60,000\n계 | 200,000")
+@pytest.mark.parametrize("boundary,ending,following", [
+    (False, "\n", False), (True, "\n", True), (True, "\r\n", True),
+    (True, "\n", False), (True, " \t\n", True),
+])
+@pytest.mark.parametrize("total", ["계 | 200,000", "계 || 200,000"])
+def test_declared_table_units_preserve_component_labels_and_collapsed_total_cells(index, boundary, ending, following, total):
+    lines = ["예산과목 | 주요 내용 | 예산(천원)",
+             "전산개발비 | 시스템 구축 | 140,000", "장비비 | 장비 구입 | 60,000", total]
+    if boundary:
+        lines.insert(1, "--- | --- | ---")
+    lines = ["  | " + line + " |" if boundary else line for line in lines]
+    text = ending.join(lines) + (ending + "다음 본문" if following else "")
     rows = quantity_rows([chunk("a", text)])
     assert [(row["value"], row["phrase"]) for row in rows] == [
         (140000000, "사업 예산 전산 개발비"), (60000000, "사업 예산 장비 비"), (200000000, "사업 예산 계")]
     assert all(text[slice(*row["span"])] == row["original"] for row in rows)
+    assert all(text[slice(*row["unit_declaration"]["span"])] == "천원" for row in rows)
+    index.chunks[0] = chunk("a", text)
+    index.quantity_rows = rows
+    index.quantity_phrases = [row["phrase"] for row in rows]
+    index.quantity_vectors = np.array([[.85, 0], [.8, 0], [1, 0]])
+    hits, _ = index.search_with_candidates("예산 1억5천만원 이상인 사업")
+    assert [(row["value"], row["original"]) for row in hits.values] == [(200000000, "200,000")]
+
+
+@pytest.mark.parametrize("question", [
+    "응답시간 3초 이하인 요구사항을 알려줘", "사업 응답시간 3초 이하인 요구사항을 알려줘",
+    "응답시간 1초~3초 사이 요구사항", "응답시간이 가장 짧은 요구사항",
+    "예산 1억원 이상인 업체의 자격을 알려줘",
+])
+@pytest.mark.parametrize("rewritten", [False, True])
+def test_non_project_quantity_questions_keep_hybrid_retrieval(index, question, rewritten):
+    index._rank.side_effect = None
+    index._rank.return_value = [{"index": 0, "score": 1, "dense_score": .9, "dense_rank": 1,
+                                 "bm25_score": 2, "bm25_rank": 1, "exact_code_match": False}]
+    index._pack = MagicMock(return_value=[index.chunks[0]])
+    index._filter = MagicMock(side_effect=AssertionError("Non-project question entered filter"))
+    hits, candidates = index.search_with_candidates("앞 질문" if rewritten else question,
+                                                   query=question if rewritten else None)
+    index._rank.assert_called_once_with(question, set(), None)
+    assert hits == [index.chunks[0]] and not hasattr(hits, "summary")
+    assert candidates[0]["dense_score"] == .9 and candidates[0]["bm25_rank"] == 1
+
+
+def test_interior_empty_cells_keep_positions_between_different_declared_units():
+    text = "| 사업기간(개월) | 부문 | 예산(천원) |\n||운영|200,000|\n다음 본문"
+    rows = quantity_rows([chunk("a", text)])
+    assert [(row["value"], row["unit"], row["phrase"]) for row in rows] == [(200000000, "원", "사업 예산")]
+    assert text[slice(*rows[0]["span"])] == "200,000"
+    assert text[slice(*rows[0]["unit_declaration"]["span"])] == "천원"
 
 
 @pytest.mark.parametrize("text", [

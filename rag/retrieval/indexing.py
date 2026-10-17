@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import faiss
 import hanja
@@ -109,8 +110,29 @@ class KiwiTokenizer:
 
 
 def build_index(chunks: list[dict], cfg: dict, out_dir: Path) -> dict:
-    """청크 → out_dir/faiss.index (정확 검색 IndexFlatIP) + out_dir/bm25_tokens.json (청크별 형태소)"""
-    out_dir.mkdir(parents=True, exist_ok=True)
+    """Build coupled artifacts privately and restore the old directory if publication fails."""
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=f".{out_dir.name}-", dir=out_dir.parent) as folder:
+        workspace = Path(folder)
+        staged = workspace / "next"
+        staged.mkdir()
+        result = _build_index(chunks, cfg, staged)
+        _publish_index(staged, out_dir, workspace / "previous")
+    return result
+
+
+def _publish_index(staged, out_dir, previous):
+    if out_dir.exists():
+        out_dir.rename(previous)
+    try:
+        staged.rename(out_dir)
+    except BaseException:
+        if previous.exists():
+            previous.rename(out_dir)
+        raise
+
+
+def _build_index(chunks, cfg, out_dir):
     texts = [c["text"] for c in chunks]
     embedder = Embedder(cfg["embedding"])
     vectors = embedder.encode(texts, progress=True)
