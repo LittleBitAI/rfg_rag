@@ -1,4 +1,4 @@
-"""Index-time quantity rows and deterministic question conditions."""
+"""색인 시 수량 메타데이터와 결정적인 질문 조건 판별."""
 import re
 import unicodedata
 from collections import Counter
@@ -84,7 +84,7 @@ class Condition:
 
 
 def _range_parts(question):
-    # Split before reading: the copied reader deliberately rejects range endpoints.
+    # 복사한 수량 파서는 범위 끝값을 제외하므로 먼저 양쪽을 나눈다.
     parts = re.split(r"[~∼〜]|부터|이상|(?:과|와)\s*(?=\d)|에서\s*(?=\d)", question, maxsplit=1)
     if len(parts) == 2:
         return parts
@@ -113,8 +113,20 @@ def _range(question):
     return None
 
 
+def _join_scale_unit(question):
+    parsed = tokens(question)
+    gaps = [(left.end, right.start) for left, right in zip(parsed, parsed[1:])
+            if left.tag == "NR" and set(left.form) <= set(SCALES) and right.tag in ("NNB", "SL", "SW", "XSN")
+            and question[left.end:right.start].isspace()]
+    # 배율 뒤의 의존명사·기호 단위는 잇되 '5억 사업'의 일반명사는 뒷질문으로 남긴다.
+    for start, end in reversed(gaps):
+        question = question[:start] + question[end:]
+    return question
+
+
 def parse_condition(question):
     question = unicodedata.normalize("NFC", question)
+    question = _join_scale_unit(question)
     question = re.sub(rf"(?<=[{''.join(SCALES)}])인(?=\s|$)", " 인", question)
     question = re.sub(r"(이상|이하|초과|미만)", r" \1", question)
     ranged = _range(question)

@@ -1,4 +1,4 @@
-"""Kiwi quantity reader copied from golden_pipeline; retrieval owns this copy."""
+"""golden_pipeline에서 복사한 Kiwi 수량 파서. 이 사본은 검색 파이프라인이 관리한다."""
 import re
 import threading
 import unicodedata
