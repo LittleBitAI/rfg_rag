@@ -231,13 +231,21 @@ def _header_modifiers(cell, declaration, offset, quantities):
     return _header_label(cell, declaration, offset, spans)
 
 
-def _table_schema(line, offset, headers, declarations, quantities):
+def _marked_header(cells, declarations, following):
+    delimiter = _cells(following)
+    return (any(declarations) and len(delimiter) == len(cells)
+            and all(re.fullmatch(r":?-+:?", cell[0].strip()) for cell in delimiter))
+
+
+def _table_schema(line, following, offset, headers, declarations, quantities):
     if not re.search(r"[가-힣]", line):
         return headers, declarations, False
     cells = _cells(line)
+    declared = [_declared_unit(cell[0], offset + cell.start()) for cell in cells]
+    if _marked_header(cells, declared, following):
+        return [cell[0].strip() for cell in cells], declared, True
     if any(NUMBER_CELL.fullmatch(cell[0]) for cell in cells):
         return headers, declarations, False
-    declared = [_declared_unit(cell[0], offset + cell.start()) for cell in cells]
     if not all(_header_modifiers(cell, declaration, offset, quantities) for cell, declaration in zip(cells, declared)):
         return headers, declarations, False
     if headers and not any(declared):
@@ -249,10 +257,11 @@ def _chunk_rows(chunk):
     rows = []
     offset, headers, declarations, default = 0, [], [], None
     body = unicodedata.normalize("NFC", chunk["body"])
-    for line in body.splitlines(keepends=True):
+    lines = body.splitlines(keepends=True)
+    for line, following in zip(lines, [*lines[1:], ""]):
         quantities = [(quantity, None) for quantity in _read(line)]
         if "|" in line:
-            headers, declarations, is_header = _table_schema(line, offset, headers, declarations, quantities)
+            headers, declarations, is_header = _table_schema(line, following, offset, headers, declarations, quantities)
             if is_header:
                 quantities = []
             quantities.extend(_implicit_cells(line, headers, declarations, default))

@@ -1,5 +1,17 @@
 # Corrected-index paid validation
 
+## Review round 5: separate numbered header columns
+
+At parent `f82129f`, the reported input `구분 | 2024년 | 예산(천원)\n--- | --- | ---\nA | 완료 | 100` emitted only the year row and omitted 100,000 won. Eight regression variants failed before production edits (`artifacts/quantity_review5_red.log`): year and ordinal headers, reordered budget columns, multiple numbered columns, boundary pipes and CRLF. This is a reproduced omission, not an inference from the previous round.
+
+Schema detection now examines the following line. A same-width Markdown delimiter row and at least one unit declaration positively identify the header as a whole, before cell-level quantity guards run. The existing header flag suppresses header quantities and installs all sibling column declarations together. Unmarked rows retain the previous checks, avoiding a unit-list heuristic to distinguish years, ordinals and monetary data. A further regression covers simultaneous budget and period declarations, explicit-unit precedence and the existing table boundary.
+
+The applicability count is separate from the reported example. One shared schema decision is called by one chunk-line loop; header suppression and implicit-cell extraction are the two existing downstream consumers. No other schema parser implements this rule. Rebuilding all 13,627 table-bearing chunks among 18,989 chunks, including 6,968 declaration-bearing chunks, changed zero rows, chunks or documents from the round-4 baseline. All 29,358 quantities and their numeric/declaration source spans were retained (`artifacts/quantity_review5_scope.log`, `artifacts/quantity_filter/review5/scope.json`). The supplied mixed-column fixture demonstrates a supported format that is absent from this saved corpus's changed rows.
+
+After the production change, the isolated index rebuilt all 11,934 phrase embeddings locally. The four saved searches retained 61/30/44/1 projects, 10/45/10/10 exclusions and every chosen value; their whole-project modifier pairs retained identical candidates and contexts. Both upper-bound aliases retained their round-4 results, ten non-project questions used hybrid retrieval, and all 60 stored dev context-ID sequences were unchanged at weights .6/.5. Socket connections were blocked and the usage CSV remained byte-identical (`artifacts/quantity_review5_offline.log`). The active index was not replaced; earlier paid/browser acceptance remains historical.
+
+The final test cleanup audited the quantity tests and indexing, retrieval, saved-record, IR, rewrite, server, notebook, usage and smoke consumers. All current regressions remain; no obsolete tests, skips or xfails were removed. The ten new cases passed, followed by the full repository gate: 1,321 passed, 12 warnings in 204.94 seconds (`artifacts/quantity_review5_cleanup_gate.log`). Ruff passed. The cleanup record is `artifacts/quantity_filter/review5/test_cleanup.json`.
+
 ## 검토 4차: 번호가 있는 선언 단위 머리글과 포함 상한
 
 수정 전 `artifacts/reproduce_quantity_review4.py`에서 두 결함을 재현했습니다. `구분 | 1차 예산(천원)\n--- | ---\nA | 100`은 `1차`만 내보내고 100,000원을 누락했습니다. `사업기간 6개월 이내인 사업`과 `사업기간 6개월까지인 사업`은 조건 파싱 결과가 None이어서 일반 검색으로 진행했습니다. 수동으로 만든 두 상한 조건도 7개월을 허용했습니다. 기록은 `artifacts/quantity_review4_before.log`와 `artifacts/quantity_review4_before_lightweight.log`에 있습니다.

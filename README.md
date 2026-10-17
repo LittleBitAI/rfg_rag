@@ -59,6 +59,8 @@ Missing or textual data values leave the active column labels and units intact. 
 
 선언 단위 머리글에는 `1차 예산(천원)`이나 `2026년 1차 예산(천원)`처럼 숫자 수식어가 있어도 됩니다. 수식어 뒤의 항목명과 끝의 단위 선언을 확인하여 열 단위를 설치하며, 머리글의 차수·연도는 데이터 수량으로 내보내지 않습니다. 숫자 셀, 명시 단위 값, 괄호 약어가 섞인 본문은 데이터로 유지합니다.
 
+A Markdown delimiter row also identifies a declared-unit header as a whole. For example, `구분 | 2024년 | 예산(천원)` above `--- | --- | ---` installs the budget column's thousand-won scale even though the year occupies a separate cell. Header numbers are not emitted as data. Without that structural marker, the existing cell-level checks remain in force; a numbered data row cannot install a sibling declaration merely because it contains parentheses.
+
 02 builds FAISS, BM25 tokens, quantity rows, phrase names and phrase vectors in a private sibling directory. It publishes the completed directory only after quantity embedding and summary calculation succeed, restoring the previous directory if the publication rename raises. This rollback covers the five index artifacts; preprocessing chunk files are unchanged. It is not a concurrent-reader or process-crash transaction.
 
 Filtered hit metadata, candidate IDs and `context_chunk_ids` identify the selected value's source chunk. When the overview comes from another chunk, its filename, page or section, and chunk ID appear beside that excerpt in the body. Each project still contributes one hit with the existing schema; the overview's ID is recorded in that body rather than added to `context_chunk_ids`.

@@ -445,6 +445,52 @@ def test_numbered_declared_headers_install_schema_without_emitting_label_quantit
         assert [(r["doc_id"], r["value"]) for r in hits.values] == [("a", value)]
 
 
+@pytest.mark.parametrize("heading,values", [
+    ("구분 | 2024년 | 예산(천원)", "A | 완료 | 100"),
+    ("구분 | 1차 | 예산(천원)", "A | 완료 | 100"),
+    ("예산(천원) | 2024년 | 구분", "100 | 완료 | A"),
+    ("구분 | 2024년 | 1차 | 예산(천원)", "A | 완료 | 완료 | 100"),
+])
+@pytest.mark.parametrize("boundary,newline", [(False, "\n"), (True, "\r\n")])
+def test_separate_numbered_header_cells_keep_sibling_units(index, heading, values, boundary, newline):
+    delimiter = " | ".join(":---:" for _ in heading.split("|"))
+    lines = [heading, delimiter, values]
+    if boundary:
+        lines = [f"| {line} |" for line in lines]
+    text = newline.join(lines) + newline
+    rows = quantity_rows([chunk("a", text)])
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["value"], row["unit"]) == (100000, "원")
+    assert {"사업", "예산"} <= set(row["subject"])
+    assert text[slice(*row["span"])] == row["original"] == "100"
+    assert text[slice(*row["unit_declaration"]["span"])] == "천원"
+    index.chunks[0] = chunk("a", text)
+    index.quantity_rows = rows
+    index.quantity_phrases = [row["phrase"]]
+    index.quantity_vectors = np.array([[1, 0]])
+    hits, _ = index.search_with_candidates("예산 100000원 이상인 사업")
+    assert [(r["doc_id"], r["value"]) for r in hits.values] == [("a", 100000)]
+
+
+def test_numbered_data_with_sibling_declaration_is_not_a_marked_header():
+    text = "구분 | 연도 | 사업금액(원)\n--- | --- | ---\nA | 2024년 | 예산(천원)\nB | 완료 | 100원"
+    rows = quantity_rows([chunk("a", text)])
+    assert [(r["value"], r["unit"]) for r in rows] == [(2024, "년"), (100, "원")]
+    assert all(not r.get("unit_declaration") for r in rows)
+
+
+def test_marked_header_installs_each_unit_beside_a_numbered_column():
+    text = ("구분 | 2024년 | 예산(천원) | 사업기간(개월)\n--- | --- | --- | ---\n"
+            "A | 완료 | 100 | 6\nB | 완료 | 200원 | 8개월\n"
+            "다음 본문\nC | 완료 | 300 | 9")
+    rows = quantity_rows([chunk("a", text)])
+    assert [(r["value"], r["unit"]) for r in rows] == [(100000, "원"), (6, "개월"), (200, "원"), (8, "개월")]
+    assert [text[slice(*r["unit_declaration"]["span"])] for r in rows[:2]] == ["천원", "개월"]
+    assert all(text[slice(*r["span"])] == r["original"] for r in rows)
+    assert all(not r.get("unit_declaration") for r in rows[2:])
+
+
 def test_parallel_numbered_columns_keep_declarations_and_numeric_data_is_not_a_header():
     text = ("구분 | 1차 예산(천원) | 2차 예산(백만원)\nA | 100 | 2\n"
             "다음 본문\n사업금액(원) | 717,285,200원\n"
