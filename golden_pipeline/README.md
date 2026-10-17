@@ -25,6 +25,7 @@ A 만의 자기 개선(실패 기록과 round), 이 모두를 부르는 CLI 와 
 | `improvement.py` | A 의 자기 개선: round 반복 (`improve`), 실패 기록 (`record_failures`), 관련 실패 찾기 (`related_failures`) |
 | `adoption.py` | 자기 개선의 채택 하한과 held-out: 묶음 나눔 (`split`), 짝지은 부트스트랩 하한 (`paired_gain`) |
 | `report.py` | A · B · C 비교 보고서 (`compare`, `write_report`, `render`) |
+| `experiment.py` | 비교 실험: 층화 계획 고정 (`freeze`), 실험 장부 (`ledger`), 비용 어림 (`estimate`), Pro 프롬프트 (`pro_packets`). 실험 abc7 은 `experiment_abc7.md` |
 | `cli.py` | 하나뿐인 CLI (`python -m golden_pipeline.cli`)와 OpenAI 호출 (`api_client`) |
 | `golden.cmd` · `golden.command` | Windows · macOS 실행기. 둘 다 받은 인자를 그대로 `cli.py` 에 넘깁니다 |
 | `configs/` | 설정 파일. `topics/{topic}.json` 은 주제 명세입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
@@ -50,6 +51,11 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `rename` | 출시본들을 합쳐 질문 앞 문서 이름만 지금 `data/data_list.csv` 의 이름으로 바꾼 새 출시본으로. 쓸모 판정은 다시 하지 않습니다 | 없음 |
 | `split` | 주제들의 출시본을 문서 단위 dev 30% · test 70% 로, 또는 앞 분할(`--base`)을 그대로 두고 새 주제를 더함 (아래 dev · test 나누기) | 없음 |
 | `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
+| `freeze` · `estimate` · `pro-packets` | 비교 실험의 계획 고정, 비용 어림, Pro 프롬프트 (`experiment_abc7.md`) | 없음 |
+
+- 맨 앞의 `--experiment <id>` 는 카탈로그 · run · 실패 기록 · loop 를 `outputs/experiments/<id>/` 에 따로 두고,
+  모든 API 호출을 그 실험의 장부(지출 상한)로 보냅니다. 자세한 것은 `experiment_abc7.md` 2 · 3절입니다.
+- `run --method B --part train` 은 계획에서 그 몫(`adoption.split`)의 묶음만 부릅니다.
 
 ```
 golden_pipeline\golden.cmd evidence v11-20261014 "<내려받은 압축>\RFP_Preprocessing_Final_v11_Team\RFP_Preprocessing_Final_v11_Team"

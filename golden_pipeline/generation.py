@@ -15,6 +15,7 @@ from string import Template
 
 from kiwipiepy import Kiwi
 
+from golden_pipeline import adoption
 from golden_pipeline import plan as plans
 from golden_pipeline import storage
 from golden_pipeline.schema import SchemaError, validate_item
@@ -37,7 +38,7 @@ WORKERS = 8
 _KIWI_LOCK = threading.Lock()
 
 
-def generate(method, topic, plan_id, run_id, config_path, client, revision=None):
+def generate(method, topic, plan_id, run_id, config_path, client, revision=None, part=None):
     """A 또는 B 로 계획의 근거 묶음마다 한 번 호출해 후보를 만든다.
 
     client(model=..., reasoning_effort=..., messages=[...]) 는 {"model", "text", "input_tokens", "output_tokens"} 를 돌려준다.
@@ -45,6 +46,7 @@ def generate(method, topic, plan_id, run_id, config_path, client, revision=None)
     revision 은 A 의 자기 개선 round 가 준다: {"parents": {묶음 id: 이전 거절 후보 id 또는 None}, "prevention", "notes", "policy"}.
     그 묶음만 다시 부르고, 프롬프트 뒤에 예방 규칙 글(prevention)을, 묶음의 컨텍스트 뒤에 그 묶음의 지난 실패(notes)를 붙이며,
     policy 를 매니페스트에 남긴다.
+    part 를 주면 그 몫(adoption.split)의 묶음만 부른다. B 를 A 의 round 1 과 같은 train 묶음으로 견줄 때 쓴다.
     """
     if method not in ("A", "B"):
         raise ValueError(f"generate 는 A · B 만 받습니다. C 는 import_c 를 씁니다: {method!r}")
@@ -61,6 +63,8 @@ def generate(method, topic, plan_id, run_id, config_path, client, revision=None)
     )
     prompt_sha = storage._sha256(prompt_path)
     bundles, parents, notes = _bundles(plan, topic), {}, {}
+    if part is not None:
+        bundles = [bundle for bundle in bundles if adoption.split(bundle["bundle_id"]) == part]
     if revision is not None:
         instructions += revision["prevention"]
         parents, notes = revision["parents"], revision["notes"]

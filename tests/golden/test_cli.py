@@ -166,6 +166,17 @@ def test_a_b_and_c_run_through_audit_release_and_report(planned, api, tmp_path, 
     assert "| 유효 문항률 | 2/6 = 33.3% | 1/5 = 20.0% | 2/4 = 50.0% |" in table
 
 
+def test_b_with_part_train_calls_only_the_bundles_a_round_one_calls(planned, api):
+    # B 가 validation · held-out 묶음까지 부르면 A 의 round 1 과 다른 묶음을 견주게 된다.
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
+
+    sent = json.loads((storage.OUTPUTS / "goldens/numeric/runs/B/b1/manifest.json").read_text(encoding="utf-8"))
+    assert sorted(sent["generation"]["bundle_ids"]) == sorted(planned.values())
+    with pytest.raises(SystemExit, match="B 만"):
+        golden("run", "--topic", "numeric", "--method", "A", "--plan", "p3", "--id", "l1", "--part", "train",
+               *GENERATOR, *LIMITS, *A_ONLY)
+
+
 def test_c_unobserved_cost_and_tokens_are_reported_as_unobserved_not_zero(planned, api, tmp_path, capsys):
     # 웹에서 만든 C 의 생성 비용을 0 으로 채우면 C 가 공짜처럼 보이고 유효 문항당 비용이 왜곡된다.
     import_c(tmp_path, [(planned["bond"], BOND)])
