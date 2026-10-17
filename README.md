@@ -45,7 +45,7 @@ UTF-8 CSV에 `파일명`, `발주기관` 열이 있어야 합니다. Excel이 �
 
 수량 추출을 바꾸면 02에서 색인을 다시 만드세요. `artifacts/index/quantities.jsonl`은 수량마다 문서·청크·값·단위·정리한 항목명·원문 범위를 저장합니다. 서로 다른 항목명은 기존 로컬 Embedder로 한 번씩 임베딩합니다. 띄어 쓴 항목명과 표 머리글을 복원하고, 단위는 Kiwi 품사로 읽습니다. 한글 금액, 앞쪽 통화 기호, 확인된 단위 중복 오타는 로컬에서 정규화합니다. 색인·라우팅·필터에 LLM이나 API 호출을 추가하지 않습니다.
 
-비교 표현은 경계값으로 기록합니다. `사업예산: 230,000천원 이내`처럼 명시된 실제 예산 상한은 사업 값으로 쓰되, 참가 자격 조건과 예시 금액은 제외합니다. `추정가격`은 선택한 정책에 따라 제외합니다. 1원 이하의 금액은 금액 미표기로 처리하고 정상적인 1개월·1개는 유지합니다.
+Comparison expressions remain marked as bounds. Explicit labelled quantity ceilings, such as `사업예산: 230,000천원 이내` and `사업기간: 계약일로부터 24개월 이내`, can supply the document value; eligibility clauses, examples and explicit reference blocks cannot. Estimated prices (`추정가격`) remain excluded. Won values of 1 or less are unstated; valid one-month and one-item quantities remain usable. Parenthesized currency scales declare units, and counter-only labels such as `건당` cannot supply a budget field. Table-cell subjects take precedence over generic headers, and artificial project context is added only to monetary labels so unrelated periods retain their actual subjects.
 
 | 설정 | 의미 |
 | --- | --- |
@@ -54,7 +54,7 @@ UTF-8 CSV에 `파일명`, `발주기관` 열이 있어야 합니다. Excel이 �
 
 항목명 정리와 사업 문맥 보정 후 측정한 기준값은 0.66입니다. `과업비`는 약 .668, `집행한도액`은 .710, `보상한도액`은 .650이며 추정가격은 별도 정책으로 제외합니다. 숫자 없는 최대·최소와 단위 없는 배율 범위는 문서별로 가장 잘 맞는 사용 가능한 행 하나씩을 뽑아 가장 흔한 단위를 추론합니다. 같은 문서의 서식이 반복되어도 단위 집계를 늘리지 않습니다.
 
-개요나 기본 요청은 각 문서에서 개요·목적·주요 내용을 찾습니다. 값이 나온 실제 본문을 우선하고 제목·목차는 건너뛰며, 본문이 없으면 명시합니다. 컨텍스트는 일치 문서 수와 `값 미표기·매칭 불가로 제외`한 수를 구분합니다. 값이 확인됐지만 조건에 못 미친 문서는 이 제외 수에 넣지 않습니다. 금액이 있어도 대응하는 항목명이 없으면 누락될 수 있고, 한 문서 안의 상충하는 금액을 의미적으로 조정하지는 않습니다. 02의 로컬 점검 셀에서 API 호출 없이 선택 값·항목·유사도를 확인합니다.
+Overview/default requests prefer substantive introduction, purpose and main-work excerpts, including a value-source chunk when it contains an introduction. Headings, TOCs and blank forms are skipped. Missing content is explicit. Context reports matching documents and `값 미표기·매칭 불가로 제외` counts separately from known values below the threshold. Values without an accepted matching field can still be omitted, and conflicting values within one document are not semantically reconciled. The 02 local-check cell prints values, fields and similarities without API calls. The [paid validation report](docs/quantity_filter_validation.md) records defects found in real answers and subsequent local corrections; it does not claim acceptance from table formatting alone.
 
 답변 모델은 승인된 출력 한도 8,192토큰에 추론을 포함합니다. 제공된 모든 사업을 원문 값·개요·출처가 있는 표로 나열합니다. [전체 견적서](docs/quantity_filter_estimate.md)에 모델 비교, 유료 검증 및 한계를 기록합니다.
 노트북은 VS Code · PyCharm · Jupyter 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.

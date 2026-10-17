@@ -1,4 +1,4 @@
-"""RFP 배치에서 수량 항목을 복원하고 원문 범위를 보존한다."""
+"""Recover quantity fields from RFP layout while preserving source spans."""
 import re
 import unicodedata
 
@@ -24,6 +24,13 @@ def _korean_number(text):
     return total + section + digit
 
 
+def _written_amount(line, match, number_starts):
+    # A parenthesized scale or '단위: 천원' declares a unit, not an amount.
+    if set(match[1]) <= set(SCALES) and re.search(r"(?:단위\s*[:：]|\()\s*$", line[:match.start()]):
+        return False
+    return match.start(1) in number_starts or match[0].startswith(("금", "일금"))
+
+
 def _read(line):
     prefixed = [(float(m[1].replace(",", "")), "원", m.start(), m.end()) for m in WON_PREFIX.finditer(line)]
     result = []
@@ -36,16 +43,18 @@ def _read(line):
     number_starts = {t.start for t in tokens(line) if t.tag == "NR"}
     result.extend((_korean_number(m[1]), "원", m.start(), m.end())
                   for m in KOREAN_MONEY.finditer(line)
-                  if m.start(1) in number_starts or m[0].startswith(("금", "일금")))
+                  if _written_amount(line, m, number_starts))
     return sorted(result, key=lambda r: r[2])
 
 
-def _clean_label(label):
+def _clean_label(label, unit):
     label = re.sub(r"\[IMAGE[^\]]*\]", "", label).strip()
     label = re.sub(r"(?<![가-힣])(?:[가-힣]\s+)+[가-힣](?![가-힣])", lambda m: re.sub(r"\s", "", m[0]), label)
     label = re.sub(r"(?:일금|금)\s*$", "", label).split("/")[0]
+    if not any(t.tag in ("NNG", "NNP", "SL") for t in tokens(label)):
+        return ""
     phrase = subject_phrase(label)
-    if phrase and "사업" not in phrase.replace(" ", ""):
+    if phrase and unit == "원" and "사업" not in phrase.replace(" ", ""):
         phrase = "사업 " + phrase
     return phrase
 
@@ -54,6 +63,9 @@ def _field(line, start, headers):
     cells = list(re.finditer(r"[^|]+", line))
     if "|" in line:
         column = next(i for i, cell in enumerate(cells) if cell.start() <= start < cell.end())
+        local = line[cells[column].start():start]
+        if _clean_label(local, ""):
+            return local, ":" in local or "：" in local
         if column < len(headers):
             return headers[column], True
         if column and not re.search(r"\d", cells[column - 1][0]):
@@ -74,9 +86,9 @@ def _row(chunk, line, quantity, offset, headers, context):
     comparison = COMPARISON.match(line[end:])
     unit = "원" if unit in ("원원", "원정") else unit
     label, declared = _field(line, start, headers)
-    phrase = _clean_label(label)
-    illustrative = "예시" in context
-    cap = (declared and unit == "원" and comparison is not None and comparison[1] in ("이하", "이내", "까지")
+    phrase = _clean_label(label, unit)
+    illustrative = "예시" in context or bool(re.search(r"\[\s*참고[.\s][^\]]*\]", context))
+    cap = (declared and comparison is not None and comparison[1] in ("이하", "이내", "까지")
            and not re.match(r"\s*(?:인|의|사업|용역)", line[end + comparison.end():]))
     return {"doc_id": chunk["doc_id"], "chunk_id": chunk["chunk_id"], "value": value, "unit": unit,
             "subject": phrase.split(), "phrase": phrase, "span": [offset + start, offset + end],

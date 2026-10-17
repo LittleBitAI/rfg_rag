@@ -18,7 +18,7 @@ from rank_bm25 import BM25Okapi
 
 from ..config import ROOT, read_jsonl
 from .indexing import Embedder, KiwiTokenizer, find_codes
-from .quantity_filter import choose_values, content_query, parse_condition, substantive
+from .quantity_filter import choose_values, content_query, introduction, parse_condition, substantive
 
 
 _DUP_RATIO = 0.8
@@ -122,6 +122,10 @@ class HybridIndex:
         results = self._rank(query, set(), {row["doc_id"]})
         if query != remainder:
             results.insert(0, {"index": value_index, "score": 0})
+            for candidate in results:
+                excerpt = introduction(self.chunks[candidate["index"]]["body"])
+                if excerpt:
+                    return candidate, excerpt
         top = next((c for c in results if substantive(self.chunks[c["index"]]["body"])), None)
         if top:
             return top, self.chunks[top["index"]]["body"]

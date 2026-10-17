@@ -11,6 +11,10 @@ from .quantities import SCALES, facts, subject_phrase, tokens
 COMPARISON = re.compile(r"\s*(이상|이하|초과|미만|이내|까지)")
 EXTREME = re.compile(r"(?:가장|최대|최소)\s*(큰|많은|높은|긴|작은|적은|낮은|짧은)")
 HEADING_LINE = re.compile(r"^[\s|#]*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩIVX\d]+[.\s|)]+[^:：]{1,60}$")
+INTRO_HEADING = re.compile(
+    r"(?m)^[ \t]*(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩIVX\d.]+\s*[|)]?\s*)?(?:[가-하][.)]\s*)?"
+    r"[□■○◦❍ㅇᄋ#* \t]*(?:(?:사업|과업|용역)\s*(?P<kind>개요|목적|내용|배경|일반|범위|소개)"
+    r"|추진\s*배경|배경\s*및\s*필요성)(?=\s|[:：|]|$)")
 
 
 def substantive(text):
@@ -19,9 +23,20 @@ def substantive(text):
         return False
     if re.search(r"목\s*차", text[:80]):
         return False
-    if sum(bool(HEADING_LINE.fullmatch(line)) for line in lines) >= len(lines) / 2:
+    if re.match(r"\s*[\[【]?\s*(?:서식|별지)", text):
+        return False
+    if all(HEADING_LINE.fullmatch(line) for line in lines):
         return False
     return len(re.findall(r"\S+\s+\d+(?=\s|$)", text)) < 5
+
+
+def introduction(text):
+    matches = sorted(INTRO_HEADING.finditer(text), key=lambda m: m["kind"] in ("개요", "일반", "소개"))
+    for match in matches:
+        excerpt = text[match.start():]
+        if substantive(excerpt):
+            return excerpt
+    return ""
 
 
 def content_query(remainder):
@@ -32,7 +47,10 @@ def content_query(remainder):
 
 
 def _question_subject(question, prefix):
-    phrase = subject_phrase(prefix)
+    words = subject_phrase(prefix).split()
+    if set(words) - {"사업", "규모"}:
+        words = [word for word in words if word != "규모"]
+    phrase = " ".join(words)
     if "사업" in subject_phrase(question).split() and "사업" not in phrase.split():
         phrase = "사업 " + phrase
     return phrase.strip()

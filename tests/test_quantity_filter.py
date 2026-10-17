@@ -45,6 +45,7 @@ def test_corpus_tolerance_is_kept_as_a_bound_quantity():
     ("예산 1억원부터 5억원까지 사업", "range", "원", (1e8, 5e8)),
     ("예산 1억원 이상 5억원 이하 사업", "range", "원", (1e8, 5e8)),
     ("예산이 가장 큰 사업", "max", "", ()),
+    ("예산 규모가 가장 큰 사업은 무엇인가요?", "max", "", ()),
     ("사업기간이 최대 긴 사업", "max", "", ()),
     ("예산이 최소 작은 사업", "min", "", ()),
 ])
@@ -59,8 +60,9 @@ def test_non_conditions(text):
 
 
 def test_project_subject_is_shared_by_threshold_range_and_extreme():
-    questions = ["사업 예산 1억원 이상 사업", "예산이 1억~5억인 사업", "예산이 가장 큰 사업"]
+    questions = ["사업 예산 1억원 이상 사업", "예산이 1억~5억인 사업", "예산이 가장 큰 사업", "예산 규모가 가장 큰 사업"]
     assert {parse_condition(q).subject for q in questions} == {"사업 예산"}
+    assert parse_condition("규모가 가장 큰 사업").subject == "사업 규모"
 
 
 class StubEmbedder:
@@ -322,3 +324,51 @@ def test_table_separators_and_repeated_forms_cannot_dominate_inferred_units(inde
     index.quantity_vectors = np.vstack([index.quantity_vectors, [0.85, 0]])
     hits, _ = index.search_with_candidates(question)
     assert [hit["doc_id"] for hit in hits] == docs
+
+
+def test_actual_period_cap_and_warranty_labels_remain_distinct(index):
+    rows = quantity_rows([chunk("a", "사업기간: 계약일로부터 24개월 이내\n무상유지보수기간: 사업종료일로부터 12개월")])
+    assert rows[0]["declared_cap"] and rows[0]["phrase"] == "사업 기간"
+    assert rows[1]["phrase"] == "무상 유지 보수 기간"
+    index.quantity_rows = rows
+    index.quantity_phrases = [r["phrase"] for r in rows]
+    index.quantity_vectors = index.embedder.encode(index.quantity_phrases)
+    hits, _ = index.search_with_candidates("사업기간 6개월 이상인 사업")
+    assert hits.values[0]["value"] == 24
+
+
+def test_table_cell_subject_overrides_generic_header_and_reference_is_not_own_value():
+    rows = quantity_rows([chunk("a", "항목 | 세부 내용\n내용 | 무상 하자보수 기간은 검수완료일로부터 12개월"),
+                          chunk("b", "[ 참고. 사업 PDM 안 ]\n예산: 977,240,000원")])
+    assert "하자" in rows[0]["phrase"] and "검수" in rows[0]["phrase"]
+    assert not rows[0]["phrase"].startswith("사업")
+    assert rows[1]["illustrative"]
+
+
+def test_currency_unit_headers_and_per_case_fines_are_not_budget_values():
+    rows = quantity_rows([chunk("a", "사업예산(천원) | 부문\n10 | 운영"),
+                          chunk("b", "건당 500만원 | 300만원 | 100만원"),
+                          chunk("c", "사업예산: 천원")])
+    assert not any(r["doc_id"] == "a" and r["unit"] == "원" for r in rows)
+    assert all(not r["phrase"] for r in rows if r["doc_id"] == "b")
+    assert next(r for r in rows if r["doc_id"] == "c")["value"] == 1000
+
+
+def test_overview_uses_real_introduction_before_unrelated_value_source(index):
+    index.chunks[0]["body"] = "국가 일반개황: 수도·면적·기후·인구와 경제현황에 관한 일반 정보를 제공한다."
+    index.chunks.append(chunk("a", "요구사항 고유번호 | PMR-001\n세부내용 | 사업자는 사업내용과 사업목적을 작성해 산출물을 제출해야 한다.", "-requirements"))
+    index.chunks.append(chunk("a", "사업 목적: 스마트 관개시스템을 구축하여 취약 지역의 기후 및 재해 회복력을 강화한다.", "-purpose"))
+    index._rank.side_effect = None
+    index._rank.return_value = [{"index": 9, "score": 1}, {"index": 10, "score": .9}]
+    hits, _ = index.search_with_candidates("예산 1억원 이하인 사업의 개요")
+    assert hits[0]["chunk_id"] == "a-purpose"
+    assert "스마트 관개" in hits[0]["body"] and "일반개황" not in hits[0]["body"]
+
+
+def test_overview_recovers_real_introduction_after_toc_tail(index):
+    index.chunks[0]["body"] = ("Ⅵ. 기타 사항 61\n제출자료 서식 64\n정성제안서 서식 69\n정량제안서 서식 79\n참고자료 82\n"
+                              "Ⅰ. 사업 개요\n1. 사업 일반\n사업명: 수문정보시스템 고도화\n"
+                              "2. 사업 배경\n수자원정보를 표준화하고 이용 불편 사항을 개선하기 위한 시스템 고도화 사업이다.")
+    hits, _ = index.search_with_candidates("예산 1억원 이하인 사업의 개요")
+    assert hits[0]["chunk_id"] == "a"
+    assert "수자원정보를 표준화" in hits[0]["body"] and "정량제안서" not in hits[0]["body"]
