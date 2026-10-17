@@ -174,7 +174,10 @@ def review_packets(experiment_id):
     """
     storage.EXPERIMENT = experiment_id
     record = storage._read_json(storage.state_root() / "freeze.json")
-    planned, _ = plan.load_plan(record["plan"]["plan_id"])
+    # 검토지의 인용 근거는 계획 파일에서 읽으므로, run 기록이 아니라 지금 읽는 파일이 고정한 계획과 같아야 한다.
+    planned, sha = plan.load_plan(record["plan"]["plan_id"])
+    if sha != record["plan"]["sha256"]:
+        raise ValueError(f"계획 {record['plan']['plan_id']} 가 고정한 계획(freeze.json)과 다릅니다. 검토지를 쓰지 않습니다")
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
     rng = random.Random(SEED)
     chosen = []

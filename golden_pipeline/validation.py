@@ -6,6 +6,7 @@
 모든 후보는 auto_validated(accepted.jsonl) 아니면 rejected(rejected.jsonl) 로 끝난다. 애매한 판정은 실패 코드가 없어
 자기 개선에 쓸 수 없으므로 두지 않는다. 출시는 auto_validated 항목을 releases/{version}/ 로 모은다.
 """
+import hashlib
 import json
 import re
 import unicodedata
@@ -54,7 +55,7 @@ def validate(topic, method, run_id, config_path, client):
     run_dir = storage.unvalidated_run(topic, method, run_id)
     candidates = storage._read_jsonl(run_dir / "candidates.jsonl")
     survivors = _survivors(topic, method, run_id)
-    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors)
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, {})
     return storage.write_validation(topic, method, run_id, judged, info)
 
 
@@ -85,7 +86,10 @@ def resume_validation(topic, method, run_id, config_path, client):
             survivors.setdefault(key, item["candidate_id"])
     pending = set(last["pending"])
     candidates = [item for item in storage._read_jsonl(run_dir / "candidates.jsonl") if item["candidate_id"] in pending]
-    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors)
+    # 앞 기록에 출력이 남은 호출: 한 후보의 검증 도중 거절되어 pending 이 된 후보의 이미 정산된 호출을 다시 사지 않는다.
+    settled = {(call["request_sha256"], call["attempt"]): call["text"]
+               for path in storage.validation_records(run_dir) for call in storage._read_json(path)["calls"] if "text" in call}
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, settled)
     return storage.continue_validation(topic, method, run_id, judged, info)
 
 
@@ -96,8 +100,11 @@ def _criteria(record):
             "prompt_sha256": record["prompt_sha256"], "run_config": priced}
 
 
-def _judge_run(run_dir, topic, method, config_path, client, candidates, survivors):
-    """candidates 를 차례로 검증해 (판정한 항목, 검증 기록) 을 돌려준다. 한도에 닿으면 남은 후보를 pending 에 남긴다."""
+def _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, settled):
+    """candidates 를 차례로 검증해 (판정한 항목, 검증 기록) 을 돌려준다. 한도에 닿으면 남은 후보를 pending 에 남긴다.
+
+    settled 는 앞 검증 기록에 출력이 남은 호출 {(요청 SHA-256, 시도): 출력} 이다 (_reply).
+    """
     config, config_sha = generation._run_config(config_path)
     plan_id, planned, spec = _pinned_plan(run_dir, topic)
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
@@ -105,8 +112,8 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     documents = _documents(topic, planned, bundles, candidates)
     prompt_path = storage.PROMPTS / "validator.txt"
     calls = []
-    ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls)
-    judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls)
+    ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls, settled)
+    judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls, settled)
     free_rejects = _static_rejections(candidates, spec, units, survivors, documents)
     rejected_ids = {item["candidate_id"] for item in free_rejects}
     to_judge = [item for item in candidates if item["candidate_id"] not in rejected_ids]
@@ -291,7 +298,8 @@ def _screener(client, config, instructions, calls):
     """항목 하나를 판정기에 묻고 (쓸모 있는지, 실패 코드, 이유) 를 돌려주는 함수. 출력이 두 번 다 계약을 어기면 쓸모 없다고 본다."""
     def screen(item):
         content = json.dumps({"question": item["question"], "answer": item["answer"]}, ensure_ascii=False)
-        verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful)
+        # 출시는 한 번에 끝나야 쓰므로 이어 돌 앞 출력이 없다.
+        verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful, {})
         return verdict if error is None else (False, None, f"판정기 출력 오류: {error}")
     return screen
 
@@ -916,15 +924,15 @@ def _survivors(topic, method, run_id):
     return survivors
 
 
-def _asker(client, config, instructions, calls):
+def _asker(client, config, instructions, calls, settled):
     """질문과 근거 단위로 검증기를 부르고 (답, None) 또는 (None, 출력 오류) 를 돌려주는 함수."""
     def ask(question, units):
         content = json.dumps(validator_input(question, units), ensure_ascii=False)
-        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict, settled)
     return ask
 
 
-def _judger(client, config, instructions, calls):
+def _judger(client, config, instructions, calls, settled):
     """독립 답(answer_a)과 후보 답(answer_b)이 같은 답인지 판정기에 묻고 (참거짓, None) 또는 (None, 출력 오류) 를 돌려주는 함수.
 
     판정기는 질문 · 근거 · 두 답만 받는다. 독립 답은 후보 답을 보지 않고 나왔으므로, 판정기는 견주기만 한다.
@@ -932,23 +940,35 @@ def _judger(client, config, instructions, calls):
     def judge(question, units, independent, answer):
         content = json.dumps({**validator_input(question, units), "answer_a": independent, "answer_b": answer},
                              ensure_ascii=False)
-        return _reply(client, config, instructions, content, calls, question, units, _parse_same)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_same, settled)
     return judge
 
 
-def _reply(client, config, instructions, content, calls, question, units, parse):
-    """한 번 부르고, 출력이 계약에 맞지 않으면 한 번 더 부른다. 두 번 다 어기면 (None, 출력 오류)."""
+def _reply(client, config, instructions, content, calls, question, units, parse, settled):
+    """한 번 부르고, 출력이 계약에 맞지 않으면 한 번 더 부른다. 두 번 다 어기면 (None, 출력 오류).
+
+    호출마다 요청의 SHA-256 · 몇 번째 시도인지 · 출력을 calls 에 남긴다. settled 는 앞 검증 기록에 남은
+    {(요청, 시도): 출력} 이다. 한 후보의 여러 호출 중 뒤 호출이 실험 장부에 거절되어 그 후보가 pending 으로 남으면,
+    이어 돌 때 이미 정산된 앞 호출은 다시 사지 않고 그 출력을 쓴다 (calls 에 다시 넣지 않아 비용도 두 번 세지 않는다).
+    """
     messages = [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
-    for _ in range(2):
-        response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
-        calls.append({
-            "question": question,
-            "labels": [unit["label"] for unit in units],
-            "model": response["model"],
-            "input_tokens": response["input_tokens"],
-            "output_tokens": response["output_tokens"],
-        })
-        parsed, error = parse(response["text"])
+    request = hashlib.sha256(json.dumps(messages, ensure_ascii=False).encode("utf-8")).hexdigest()
+    for attempt in range(2):
+        text = settled.get((request, attempt))
+        if text is None:
+            response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
+            text = response["text"]
+            calls.append({
+                "question": question,
+                "labels": [unit["label"] for unit in units],
+                "model": response["model"],
+                "input_tokens": response["input_tokens"],
+                "output_tokens": response["output_tokens"],
+                "request_sha256": request,
+                "attempt": attempt,
+                "text": text,
+            })
+        parsed, error = parse(text)
         if error is None:
             return parsed, None
     return None, error

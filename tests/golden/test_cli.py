@@ -205,6 +205,45 @@ def test_compare_refuses_runs_outside_the_frozen_plan_or_train_assignment(planne
         golden("compare", "x1")
 
 
+def test_review_packets_refuse_a_plan_file_changed_after_the_freeze(planned, api):
+    # 실행 기록은 고정한 계획으로 만들어졌어도, 검토지가 나중에 바뀐 계획 파일의 근거를 인용하면 다른 근거를 판정하게 된다.
+    golden("--experiment", "x1", "run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train",
+           *GENERATOR, *LIMITS)
+    root = write_freeze()
+    path = storage.OUTPUTS / "plans/p3.json"
+    path.write_text(path.read_text(encoding="utf-8").replace("130,000,000원", "140,000,000원"), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="고정한 계획"):
+        golden("review-packets", "x1")
+    assert not (root / "review").exists()
+
+
+def test_resuming_a_candidate_refused_mid_verdict_reuses_its_settled_calls(planned, api, monkeypatch):
+    # 한 후보의 검증은 여러 호출이다. 앞 호출이 정산된 뒤 뒤 호출이 거절되면, 이어 돌 때 정산된 호출을 다시 사지 않는다.
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
+    sent = []
+
+    def client(model, reasoning_effort, messages):
+        user = messages[1]["content"]
+        if not (user.startswith("{") and "보증금" in user):
+            return api(model, reasoning_effort, messages)
+        sent.append(user)
+        if len(sent) == 2:
+            raise generation.BudgetExceeded("실험 상한")
+        # 첫 호출과 이어 돈 뒤의 첫 호출은 계약에 맞지 않는 출력이라 같은 요청을 한 번 더 보낸다.
+        text = "JSON 아님" if len(sent) in (1, 3) else json.dumps(VERDICTS["E2"], ensure_ascii=False)
+        return {"model": model, "text": text, "input_tokens": 10, "output_tokens": 10}
+
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(client))
+    golden("audit", "--topic", "numeric", "--method", "B", "--id", "b1", *VALIDATOR, *LIMITS)
+    golden("resume", "--topic", "numeric", "--method", "B", "--id", "b1", *LIMITS)
+
+    # 정산된 첫 출력을 다시 쓰므로 이어 돌기는 거절된 두 번째 시도 하나만 보낸다. 그 출력도 어겨 출력 오류로 거절된다.
+    assert len(sent) == 3
+    rejected = read_jsonl(storage.OUTPUTS / "goldens/numeric/runs/B/b1/rejected.jsonl")
+    assert any("검증기 출력 오류" in row["state_history"][-1]["reason"] for row in rejected if "보증금" in row.get("question", ""))
+
+
 def test_a_refused_call_keeps_the_settled_sibling_calls_of_its_batch(planned, api, monkeypatch):
     # 실험 장부가 함께 보낸 호출 하나를 거절해도, 이미 정산한 다른 호출의 출력 · 판정은 run 에 남아야 한다.
     monkeypatch.setattr(generation, "WORKERS", 2)

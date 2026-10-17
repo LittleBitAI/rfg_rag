@@ -105,7 +105,7 @@ In tests/golden/test_cli.py, reuse the `planned`/`api` fixtures: run B b1 on p3 
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, not verified (draft). Ran the proposed experiment as `tests/golden/test_cli.py::test_review_packets_refuse_a_plan_file_changed_after_the_freeze`. It runs B b1 on p3 with `--part train`, calls `write_freeze()`, then replaces `130,000,000원` with `140,000,000원` in outputs/plans/p3.json. On 89f54e6 + the research pages (9272eca) it failed with `DID NOT RAISE ValueError`, and `outputs/experiments/x1/review` was written from the edited plan, which confirms the hypothesis. The fix in the commit after 9272eca ("golden: tie review packets to the frozen plan and reuse settled validation calls on resume") makes `review_packets` keep the hash from `plan.load_plan` and raise before `_checked_runs` and `folder.mkdir()` when it differs from `freeze.json`. The test then passed, as did all of test_cli.py and test_experiment.py (39 passed). A grep found no other post-run reader of plan contents in comparison.py.
 
 ## Unresolved limits
 

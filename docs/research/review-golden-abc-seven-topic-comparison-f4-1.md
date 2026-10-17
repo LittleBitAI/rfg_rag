@@ -107,7 +107,12 @@ Add one test to tests/golden/test_cli.py using the existing planned/api fixtures
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, not verified (draft). This page's text researches the review-packets plan hash (round-2 F1), not the round-2 F4 finding it is listed under (sub-call results lost inside one candidate's verdict). Both were run.
+
+- Plan hash: the experiment in this page is `tests/golden/test_cli.py::test_review_packets_refuse_a_plan_file_changed_after_the_freeze`. It failed on 9272eca (`DID NOT RAISE`; the review folder was written from the edited plan) and passes after the fix (see the F1 page).
+- F4 as raised: `tests/golden/test_cli.py::test_resuming_a_candidate_refused_mid_verdict_reuses_its_settled_calls`. In it, the bond candidate's first validator call settles with output that breaks the contract, and the retry is refused by the ledger (`BudgetExceeded`). The candidate stays pending; `resume` then runs. On 9272eca, resume re-sent the settled first call, giving 4 validator requests where 3 were needed (`assert 4 == 3`). That confirms the settled sub-call result was lost.
+- Fix (commit after 9272eca): `validation._reply` records each call's request SHA-256, attempt and output in the validation record. `resume_validation` passes these as `settled`, so `_reply` reuses a settled output instead of calling again and does not count its cost twice. The test then passed, with exactly 3 requests and the candidate rejected for validator output error.
+- All validator, judge, document-batch and multi-hop sub-calls go through `_reply`, so there are no other call sites. release screening passes an empty `settled` because release refuses `--experiment`.
 
 ## Unresolved limits
 
