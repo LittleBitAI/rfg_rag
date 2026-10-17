@@ -45,6 +45,8 @@ Quantity conditions targeting projects (`사업`), without an agency or document
 
 The scope modifier `전체` is supported before the project target: `예산 1억원 이상인 전체 사업` has the same filter and default overview context as its unmodified form. The same modifier before requirements or vendors keeps hybrid retrieval, including questions mentioning a project later. This bounded rule does not interpret arbitrary restrictive modifiers.
 
+`이내`와 단독 `까지`는 `이하`와 같은 포함 상한입니다. `사업기간 6개월 이내인 사업`과 `사업기간 6개월까지인 사업`은 6개월을 포함하여 오름차순으로 모든 일치 사업을 반환합니다. `부터…까지`는 기존의 양 끝값 포함 범위를 유지합니다.
+
 수량 추출을 바꾸면 02에서 색인을 다시 만드세요. `artifacts/index/quantities.jsonl`은 수량마다 문서·청크·값·단위·정리한 항목명·원문 범위를 저장합니다. 서로 다른 항목명은 기존 로컬 Embedder로 한 번씩 임베딩합니다. 띄어 쓴 항목명과 표 머리글을 복원하고, 단위는 Kiwi 품사로 읽습니다. 한글 금액, 앞쪽 통화 기호, 확인된 단위 중복 오타는 로컬에서 정규화합니다. 색인·라우팅·필터에 LLM이나 API 호출을 추가하지 않습니다.
 
 Comparison expressions remain marked as bounds. Explicit labelled quantity ceilings, such as `사업예산: 230,000천원 이내` and `사업기간: 계약일로부터 24개월 이내`, can supply the document value; eligibility clauses, examples and explicit reference blocks cannot. Estimated prices (`추정가격`) remain excluded. Won values of 1 or less are unstated; valid one-month and one-item quantities remain usable. Parenthesized currency scales declare units, and counter-only labels such as `건당` cannot supply a budget field. Table-cell subjects take precedence over generic headers, and artificial project context is added only to monetary labels so unrelated periods retain their actual subjects.
@@ -54,6 +56,8 @@ Declared column units and a preceding `(단위: 천원)` apply to numeric table 
 Optional boundary pipes, exterior whitespace and LF/CRLF endings do not add table columns. Interior empty cells retain their positions. A shortened total still uses the existing unique-declared-column recovery; this does not infer arbitrary merged cells or prefer totals over fields with higher similarity.
 
 Missing or textual data values leave the active column labels and units intact. A table schema starts with a label-only row, changes on another label-only unit declaration, and resets at the existing non-pipe table boundary or chunk end. Numeric key/value rows remain data. Adjacent unmarked header changes in delimiter-free text remain ambiguous; they require a declaration or a supported boundary.
+
+선언 단위 머리글에는 `1차 예산(천원)`이나 `2026년 1차 예산(천원)`처럼 숫자 수식어가 있어도 됩니다. 수식어 뒤의 항목명과 끝의 단위 선언을 확인하여 열 단위를 설치하며, 머리글의 차수·연도는 데이터 수량으로 내보내지 않습니다. 숫자 셀, 명시 단위 값, 괄호 약어가 섞인 본문은 데이터로 유지합니다.
 
 02 builds FAISS, BM25 tokens, quantity rows, phrase names and phrase vectors in a private sibling directory. It publishes the completed directory only after quantity embedding and summary calculation succeed, restoring the previous directory if the publication rename raises. This rollback covers the five index artifacts; preprocessing chunk files are unchanged. It is not a concurrent-reader or process-crash transaction.
 

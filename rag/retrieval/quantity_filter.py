@@ -70,7 +70,8 @@ class Condition:
             return self.values[0] <= value <= self.values[1]
         comparisons = {"이상": lambda: value >= self.values[0], "이하": lambda: value <= self.values[0],
                        "초과": lambda: value > self.values[0], "미만": lambda: value < self.values[0]}
-        return comparisons[self.mode]() if self.mode in comparisons else True
+        mode = {"이내": "이하", "까지": "이하"}.get(self.mode, self.mode)
+        return comparisons[mode]() if mode in comparisons else True
 
 
 def _range_parts(question):
@@ -106,7 +107,7 @@ def _range(question):
 def parse_condition(question):
     question = unicodedata.normalize("NFC", question)
     question = re.sub(rf"(?<=[{''.join(SCALES)}])인(?=\s|$)", " 인", question)
-    question = re.sub(r"(이상|이하|초과|미만)", r" \1", question)
+    question = COMPARISON.sub(r" \1", question)
     ranged = _range(question)
     if ranged:
         return ranged
@@ -114,7 +115,7 @@ def parse_condition(question):
     if len(found) == 1:
         (value, unit), _, (start, end) = found[0]
         comparison = COMPARISON.match(question[end:])
-        if comparison and comparison[1] in ("이상", "이하", "초과", "미만"):
+        if comparison:
             return Condition(_question_subject(question, question[:start]), unit, comparison[1], (float(value),),
                              question[end + comparison.end():])
     extreme = EXTREME.search(question)
@@ -162,7 +163,7 @@ def choose_values(rows, phrases, vectors, embedder, condition, cutoff):
         unit = Counter(r["unit"] for r in _document_values(eligible).values()).most_common(1)[0][0]
     chosen = _document_values(eligible, unit)
     matched = [r for r in chosen.values() if condition.accepts(r["value"])]
-    matched.sort(key=lambda r: r["value"], reverse=condition.mode not in ("min", "이하", "미만"))
+    matched.sort(key=lambda r: r["value"], reverse=condition.mode not in ("min", "이하", "미만", "이내", "까지"))
     if matched and condition.mode in ("max", "min"):
         matched = [r for r in matched if r["value"] == matched[0]["value"]]
     return matched, chosen

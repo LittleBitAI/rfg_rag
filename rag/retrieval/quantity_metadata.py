@@ -207,16 +207,42 @@ def _row(chunk, line, quantity, offset, headers, context, declaration=None):
             "estimated_price": "추정가격" in phrase.replace(" ", "")}
 
 
+def _header_label(cell, declaration, offset, spans):
+    suffix = cell.string[declaration["span"][1] - offset:cell.end()].strip()
+    if suffix not in ("", ")"):
+        return False
+    ends = {end for _, end in spans}
+    if any(t.start in ends and t.tag.startswith("J") for t in tokens(cell[0])):
+        return False
+    label = cell.string[cell.start():declaration["span"][0] - offset]
+    for start, end in reversed(spans):
+        label = label[:start] + label[end:]
+    parsed = tokens(label.lstrip(" \t.()"))
+    return bool(parsed) and not parsed[0].tag.startswith("J") and _field_label(label)
+
+
+def _header_modifiers(cell, declaration, offset, quantities):
+    spans = [(start - cell.start(), end - cell.start()) for (_, _, start, end), _ in quantities
+             if cell.start() <= start < cell.end()]
+    if not spans:
+        return True
+    if declaration is None or max(end for _, end in spans) + cell.start() + offset > declaration["span"][0]:
+        return False
+    return _header_label(cell, declaration, offset, spans)
+
+
 def _table_schema(line, offset, headers, declarations, quantities):
-    if quantities or not re.search(r"[가-힣]", line):
-        return headers, declarations
+    if not re.search(r"[가-힣]", line):
+        return headers, declarations, False
     cells = _cells(line)
     if any(NUMBER_CELL.fullmatch(cell[0]) for cell in cells):
-        return headers, declarations
+        return headers, declarations, False
     declared = [_declared_unit(cell[0], offset + cell.start()) for cell in cells]
+    if not all(_header_modifiers(cell, declaration, offset, quantities) for cell, declaration in zip(cells, declared)):
+        return headers, declarations, False
     if headers and not any(declared):
-        return headers, declarations
-    return [cell[0].strip() for cell in cells], declared
+        return headers, declarations, False
+    return [cell[0].strip() for cell in cells], declared, True
 
 
 def _chunk_rows(chunk):
@@ -226,7 +252,9 @@ def _chunk_rows(chunk):
     for line in body.splitlines(keepends=True):
         quantities = [(quantity, None) for quantity in _read(line)]
         if "|" in line:
-            headers, declarations = _table_schema(line, offset, headers, declarations, quantities)
+            headers, declarations, is_header = _table_schema(line, offset, headers, declarations, quantities)
+            if is_header:
+                quantities = []
             quantities.extend(_implicit_cells(line, headers, declarations, default))
         else:
             declared = _declared_unit(line, offset) if "단위" in line else None

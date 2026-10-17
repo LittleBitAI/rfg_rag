@@ -31,6 +31,8 @@ def test_corpus_tolerance_is_kept_as_a_bound_quantity():
 @pytest.mark.parametrize("text,mode,unit,values", [
     ("사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘.", "이상", "원", (1e8,)),
     ("사업기간 6개월 이하인 사업", "이하", "개월", (6,)),
+    ("사업기간 6개월 이내인 사업", "이내", "개월", (6,)),
+    ("사업기간 6개월까지인 사업", "까지", "개월", (6,)),
     ("예산 1억원 초과 사업", "초과", "원", (1e8,)),
     ("예산 1억원 미만 사업", "미만", "원", (1e8,)),
     ("예산 1억원이상인 사업", "이상", "원", (1e8,)),
@@ -143,6 +145,31 @@ def test_highest_similarity_wins_over_larger_value(index):
     assert "a" not in [h["doc_id"] for h in hits]
 
 
+@pytest.mark.parametrize("comparison", ["이내", "까지"])
+@pytest.mark.parametrize("space", ["", " "])
+@pytest.mark.parametrize("rewritten", [False, True])
+@pytest.mark.parametrize("limit", ["3억원", "5천만원"])
+def test_inclusive_upper_bound_aliases_preserve_filter_results_and_sort(index, comparison, space, rewritten, limit):
+    index.chunks[5] = chunk("f", "예산 4억원")
+    index.quantity_rows = quantity_rows(index.chunks)
+    index.quantity_phrases = list(dict.fromkeys(row["phrase"] for row in index.quantity_rows))
+    index.quantity_vectors = index.embedder.encode(index.quantity_phrases)
+    baseline, candidates = index.search_with_candidates(f"예산 {limit} 이하인 전체 사업")
+    question = f"예산 {limit}{space}{comparison}인 전체 사업"
+    condition = project_condition(question)
+    assert condition is not None and condition.mode == comparison
+    bound = condition.values[0]
+    assert condition.accepts(bound - 1) and condition.accepts(bound) and not condition.accepts(bound + 1)
+    hits, actual_candidates = index.search_with_candidates("앞 질문" if rewritten else question,
+                                                          query=question if rewritten else None)
+    assert hits == baseline and hits.values == baseline.values and actual_candidates == candidates
+    assert format_context(hits) == format_context(baseline)
+    assert "[수량 필터]" in format_context(hits)
+    assert [row["value"] for row in hits.values] == sorted(row["value"] for row in hits.values)
+    assert all(row["value"] <= bound for row in hits.values)
+    assert (len(hits) == 3) if limit == "3억원" else (hits == [] and "조건 일치 0개" in hits.summary)
+
+
 @pytest.mark.parametrize("toc_body", [
     "목 차\n1. 사업개요와 일반사항 1\n2. 사업 추진배경 및 필요성 2\n3. 주요 사업내용 및 범위 3",
     "Ⅰ. 사업개요와 일반사항 1\n1. 사업 추진배경 및 필요성 2\n2. 주요 사업내용 및 범위 3",
@@ -233,7 +260,8 @@ def test_bounds_are_not_document_values(index, comparison, space):
 
 
 @pytest.mark.parametrize("question", ["한국정보공사 예산 1억원 이상 사업", "「문서명」 사업에서 예산 1억원 이상 사업",
-                                      "한국정보공사 예산 1억원 이상인 전체 사업", "「문서명」 사업에서 예산 1억원 이상인 전체 사업"])
+                                      "한국정보공사 예산 1억원 이상인 전체 사업", "「문서명」 사업에서 예산 1억원 이상인 전체 사업",
+                                      "한국정보공사 사업기간 6개월 이내인 사업", "「문서명」 사업에서 사업기간 6개월까지인 사업"])
 def test_agency_and_document_prefix_keep_current_route(index, question):
     index.router.org_docs = {"한국정보공사": {"a"}}
     index._rank.side_effect = None
@@ -390,6 +418,66 @@ def test_declared_table_units_scale_numeric_cells_and_preserve_spans(text, value
     assert text[slice(*declaration["span"])] == declaration["original"]
 
 
+@pytest.mark.parametrize("label,number,value,unit,declared", [
+    ("1차 예산(천원)", "100", 100000, "원", "천원"),
+    ("2026년 1차 예산(천원)", "100", 100000, "원", "천원"),
+    ("2026년 예산(백만원)", "100", 100000000, "원", "백만원"),
+    ("2차 사업기간(개월)", "12", 12, "개월", "개월"),
+    ("3차 수량(개)", "12", 12, "개", "개"),
+])
+@pytest.mark.parametrize("separator", [False, True])
+def test_numbered_declared_headers_install_schema_without_emitting_label_quantities(index, label, number, value, unit, declared, separator):
+    text = f"구분 | {label}\n" + ("--- | ---\n" if separator else "") + f"A | {number}"
+    rows = quantity_rows([chunk("a", text)])
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["value"], row["unit"], row["original"]) == (value, unit, number)
+    assert text[slice(*row["span"])] == number
+    assert text[slice(*row["unit_declaration"]["span"])] == declared
+    assert not any(word in row["phrase"] for word in ("천원", "백만원"))
+    if unit == "원":
+        assert "예산" in row["phrase"]
+        index.chunks[0] = chunk("a", text)
+        index.quantity_rows = rows
+        index.quantity_phrases = [row["phrase"]]
+        index.quantity_vectors = np.array([[1, 0]])
+        hits, _ = index.search_with_candidates("예산 100000원 이상인 사업")
+        assert [(r["doc_id"], r["value"]) for r in hits.values] == [("a", value)]
+
+
+def test_parallel_numbered_columns_keep_declarations_and_numeric_data_is_not_a_header():
+    text = ("구분 | 1차 예산(천원) | 2차 예산(백만원)\nA | 100 | 2\n"
+            "다음 본문\n사업금액(원) | 717,285,200원\n"
+            "다음 본문\n사업예산(천원) 100원 | 값")
+    rows = quantity_rows([chunk("a", text)])
+    assert [(row["value"], row["unit"]) for row in rows] == [(100000, "원"), (2000000, "원"),
+                                                           (717285200, "원"), (100, "원")]
+    assert all(text[slice(*row["span"])] == row["original"] for row in rows)
+    assert [text[slice(*row["unit_declaration"]["span"])] for row in rows[:2]] == ["천원", "백만원"]
+    assert all(not row.get("unit_declaration") for row in rows[2:])
+
+
+def test_quantity_in_prose_before_parenthetical_text_remains_data():
+    text = "항목 | 세부내용\n내용 | 사업기간은 12개월이며 협의하여 결정한다(동작)"
+    rows = quantity_rows([chunk("a", text)])
+    assert [(row["value"], row["unit"]) for row in rows] == [(12, "개월")]
+    assert text[slice(*rows[0]["span"])] == "12개월"
+    assert not rows[0].get("unit_declaration")
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("사업명 | 2024년 평택시 버스정보시스템(BIS)구축사업 용역", [(2024, "년")]),
+    ("항목 | 세부내용\n내용 | ∙ 신규 통신서버(2대, MQTT Broker) 및 신규 테스트서버(1대, MQTT Broker) "
+     "통신(TLS) 방안과 구현방안을 구체적으로 제시하여야 한다.", [(2, "대"), (1, "대")]),
+    ("항목 | 세부내용\n내용 | 35. 고유식별정보의 인터넷과 내부망의 중간지점(DMZ)", [(35, "고유식별정보")]),
+])
+def test_parenthetical_names_in_observed_data_rows_do_not_turn_them_into_headers(text, expected):
+    rows = quantity_rows([chunk("a", text)])
+    assert [(row["value"], row["unit"]) for row in rows] == expected
+    assert all(text[slice(*row["span"])] == row["original"] for row in rows)
+    assert all(not row.get("unit_declaration") for row in rows)
+
+
 def test_table_units_are_column_specific_and_end_with_the_table():
     text = ("(단위: 천원)\n사업예산 | 사업기간(개월)\n10 | 5\n20원 | 6개월\n"
             "다음 본문\n사업예산 | 부문\n30 | 운영")
@@ -505,6 +593,7 @@ def test_declared_table_units_preserve_component_labels_and_collapsed_total_cell
     "예산 1억원 이상인 업체의 자격을 알려줘",
     "응답시간 3초 이하인 전체 요구사항을 알려줘", "예산 1억원 이상인 전체 업체의 자격을 알려줘",
     "응답시간 3초 이하인 전체 요구사항과 해당 사업을 알려줘",
+    "응답시간 3초 이내인 전체 요구사항을 알려줘", "예산 1억원까지인 전체 업체의 자격을 알려줘",
 ])
 @pytest.mark.parametrize("rewritten", [False, True])
 def test_non_project_quantity_questions_keep_hybrid_retrieval(index, question, rewritten):

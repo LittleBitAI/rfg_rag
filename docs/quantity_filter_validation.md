@@ -1,5 +1,19 @@
 # Corrected-index paid validation
 
+## 검토 4차: 번호가 있는 선언 단위 머리글과 포함 상한
+
+수정 전 `artifacts/reproduce_quantity_review4.py`에서 두 결함을 재현했습니다. `구분 | 1차 예산(천원)\n--- | ---\nA | 100`은 `1차`만 내보내고 100,000원을 누락했습니다. `사업기간 6개월 이내인 사업`과 `사업기간 6개월까지인 사업`은 조건 파싱 결과가 None이어서 일반 검색으로 진행했습니다. 수동으로 만든 두 상한 조건도 7개월을 허용했습니다. 기록은 `artifacts/quantity_review4_before.log`와 `artifacts/quantity_review4_before_lightweight.log`에 있습니다.
+
+F2는 숫자가 발견되었다는 이유만으로 머리글을 거절하지 않고, 각 셀의 수식어 뒤 항목명과 끝의 단위 선언을 확인합니다. 확인된 머리글은 열 단위를 설치하고 차수·연도 수량을 내보내지 않습니다. 숫자 데이터 셀, 선언 뒤 명시 값, 본문 서술과 괄호 약어는 기존 데이터로 유지합니다. 실제 코퍼스 비교에서 발견한 BIS 사업명, TLS 서버 수량, DMZ 조항도 회귀 테스트로 남겼습니다. 별도로 확인한 적용 지점은 스키마 판정과 행 출력의 두 곳입니다.
+
+F6는 `이내`와 단독 `까지`를 포함 상한으로 처리합니다. 별도 적용 지점 네 곳은 비교 표현 앞 공백 정규화, 조건 생성, 값의 포함 여부, 결과 오름차순 정렬입니다. 기존 메타데이터의 여섯 비교 표현과 상한 표시는 이미 두 표현을 지원하여 유지했습니다. `부터…까지` 범위, 기관·문서 접두어, 비사업 대상, 일치 0개인 필터도 기존 경로를 유지합니다.
+
+별도 코퍼스 집계는 18,989개 청크 중 표가 있는 13,627개를 다시 읽고 단위 선언이 있는 6,968개를 확인했습니다. 이전 29,359개 수량 중 한 문서·한 청크의 무항목 행 하나만 제거되어 29,358개가 남았습니다. 제거된 `2.2 농업정보`는 `2.2 농업정보 활용 농가비율(%) | 연간실적`이라는 머리글에서 읽은 번호입니다. 추가 수량과 항목명 변경은 0개이며 모든 숫자·단위 선언 범위가 원문과 일치합니다. 이는 제보 사례의 합성 회귀 테스트와 별개로 센 실제 코퍼스 영향입니다. 기록은 `artifacts/quantity_filter/review4_checked/scope.json`, `scope_summary.json`과 `artifacts/quantity_review4_published_scope.log`입니다.
+
+코드 확정 후 테스트 정리에서 변경한 수량 필터 테스트와 이를 사용하는 색인·검색·저장 레코드·IR·재작성·서버·노트북·사용량·스모크 테스트를 점검했습니다. 현재 동작을 보호하는 테스트는 유지하고 삭제한 테스트나 만료된 skip/xfail은 없습니다. 전체 저장소 게이트 `.venv\Scripts\python -m pytest -q tests`는 1,311개 통과, 경고 12개, 134.80초입니다(`artifacts/quantity_review4_final_repository_gate.log`). 수량 필터 파일 단독 검사는 215개 통과했습니다. 이전 중간 검사 실패는 본문 오인식 방지를 보강하기 전 결과이므로 최종 통과로 제시하지 않습니다.
+
+격리된 색인에서 29,358개 수량의 11,934개 항목명을 로컬에서 다시 임베딩했습니다. 기존 네 질문은 61/30/44/1개 사업과 제외 10/45/10/10개를 유지했고, 선택 금액·기간과 사업 추가·제거는 모두 변경 0개입니다. `전체` 수식어 쌍도 같은 후보·문맥을 반환했습니다. `6개월 이내`와 `6개월까지`는 각각 37개 사업·제외 45개, `1억원 이내`와 `1억원까지`는 각각 30개 사업·제외 10개이며, 모두 `이하`와 같은 값·정렬·문맥입니다. 비사업 질문 10개는 일반 검색을 유지했습니다. 저장된 dev 질문을 가중치 .6/.5로 각각 30개씩 재실행하여 60개 문맥 청크 ID가 모두 같았습니다. 소켓 연결을 차단하고 사용량 CSV의 바이트 불변을 확인했습니다(`artifacts/quantity_review4_checked_offline.log`). 기존 유료 답변과 화면 확인은 이 수정 전의 기록이며, 이번 수정은 API 호출이나 활성 색인 전환을 추가하지 않습니다.
+
 ## Review round 3: table schema lifetime and whole-project scope
 
 Both draft research pages were read before the experiments: `docs/research/review-fix-quantity-filter-questions-f2-2.md` and `docs/research/review-fix-quantity-filter-questions-f4-1.md`. At parent `51629a7`, `artifacts/reproduce_quantity_review3.py` traced headers, column declarations, default units and quantities after every line. Without the missing row, `B 사업 | 100` inherited thousand-won units and yielded 100,000 won. Inserting `A 사업 | -` replaced headers and declarations with the data row and `[None, None]`, so the next value disappeared. Kiwi 0.24.0 returned `인/NNG 전체/NNG 사업/NNG`; the condition parsed correctly, the router returned no agency, but project recognition returned None and selected hybrid retrieval. The log is `artifacts/quantity_review3_before.log`. New regressions initially failed in 35 cases.
