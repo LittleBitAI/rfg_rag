@@ -85,7 +85,8 @@ def test_successful_rebuild_replaces_core_and_quantity_artifacts_together(setup_
     result = indexing.build_index(chunks(2), cfg, directory)
     assert result["청크"] == 2
     assert faiss.read_index(str(directory / "faiss.index")).ntotal == 2
-    assert len(json.loads((directory / "bm25_tokens.json").read_text(encoding="utf-8"))) == 2
+    stored = json.loads((directory / "bm25_tokens.json").read_text(encoding="utf-8"))
+    assert len(stored["tokens"]) == 2
     rows = read_jsonl(directory / "quantities.jsonl")
     phrases = json.loads((directory / "quantity_phrases.json").read_text(encoding="utf-8"))
     assert {row["chunk_id"] for row in rows} == {"0", "1"}
@@ -106,3 +107,54 @@ def test_failed_first_build_leaves_no_published_index(setup_index, monkeypatch):
         indexing.build_index(chunks(2), cfg, destination)
     assert not destination.exists()
     assert sorted(p.name for p in directory.parent.iterdir()) == ["chunks.jsonl", "docs.jsonl", "index"]
+
+
+@pytest.mark.parametrize("change", ["source", "dictionary", "kiwipiepy", "kiwipiepy_model", "hanja"])
+def test_incompatible_bm25_index_is_rejected_before_loading_dense_model(setup_index, monkeypatch, change):
+    directory, _, cfg = setup_index
+    if change == "dictionary":
+        read = Path.read_bytes
+
+        def changed_dictionary(path):
+            data = read(path)
+            return json.dumps(json.loads(data) + ["회귀검사용어"]).encode("utf-8") if path.name == "kiwi_user_words.json" else data
+
+        monkeypatch.setattr(Path, "read_bytes", changed_dictionary)
+    elif change == "source":
+        read = Path.read_text
+
+        def changed_source(path, **kwargs):
+            data = read(path, **kwargs)
+            return data + "\n" if path == Path(indexing.__file__) else data
+
+        monkeypatch.setattr(Path, "read_text", changed_source)
+    else:
+        version = indexing.version
+        monkeypatch.setattr(indexing, "version", lambda name: "new-version" if name == change else version(name))
+    before = snapshot(directory)
+    dense = MagicMock(side_effect=AssertionError("must reject before loading dense model"))
+    monkeypatch.setattr(retrieval, "Embedder", dense)
+    with pytest.raises(ValueError, match=r"BM25 tokenizer.*Rebuild.*02_retrieval.ipynb"):
+        retrieval.HybridIndex(directory.parent, cfg)
+    dense.assert_not_called()
+    assert snapshot(directory) == before
+
+
+def test_legacy_bm25_index_requires_rebuild_then_finds_dictionary_compound(setup_index):
+    directory, _, cfg = setup_index
+    rows = chunks(3)
+    for row, text in zip(rows, ["개인정보처리시스템", "네트워크 보안", "계약 기간"]):
+        row.update(text=text, body=text)
+    cfg["retrieval"]["dense_weight"] = 0
+    write_jsonl(rows, directory.parent / "chunks.jsonl")
+    legacy = [["개인", "정보", "처리", "시스템"], ["네트워크", "보안"], ["계약", "기간"]]
+    (directory / "bm25_tokens.json").write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    before = snapshot(directory)
+    with pytest.raises(ValueError, match="BM25 tokenizer.*Rebuild"):
+        retrieval.HybridIndex(directory.parent, cfg)
+    assert snapshot(directory) == before
+    indexing.build_index(rows, cfg, directory)
+    loaded = retrieval.HybridIndex(directory.parent, cfg)
+    hits, candidates = loaded.search_with_candidates("개인정보처리시스템")
+    assert [row["chunk_id"] for row in hits] == ["0"]
+    assert [row["chunk_id"] for row in candidates] == ["0"]

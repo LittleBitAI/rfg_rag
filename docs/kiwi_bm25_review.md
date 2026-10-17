@@ -320,3 +320,51 @@ BM25 재구축, 승인된 수량 보존 항목과 usage 바이트 보존을 확�
 | `.venv\Scripts\python -m pytest -q tests` | `1330 passed, 12 warnings in 269.86s` |
 | `.venv\Scripts\ruff check .` | `All checks passed!` |
 | `git diff --no-index CLAUDE.md AGENTS.md` | 출력 없음, 바이트 동일 |
+
+## 리뷰 1 — 기존 BM25 색인과 질문 토크나이저의 세대 불일치 (F1)
+
+수정 전에 `artifacts/reproduce_kiwi_index_generation.py`로 문제를 재현했다. 기준선 커밋
+`2f746f3`의 실제 색인 생성 함수를 로컬 임베딩 대역과 세 문서에 적용했다. 저장 토큰은
+`개인`, `정보`, `처리`, `시스템`이었다. 같은 파일을 읽고 `dense_weight=0`으로
+`개인정보처리시스템`을 검색하면 이전 질문 토크나이저는 청크 `0`을 반환했고,
+채택 토크나이저는 질문을 한 토큰으로 만들어 후보를 전혀 반환하지 않았다.
+이 재현은 코드 변경 전에 실행했으며 유료 호출은 없었다.
+
+`indexing.py`의 유일한 제품 BM25 작성 경로가 이제 `bm25_tokens.json` 한 파일 안에
+`tokenizer` 지문과 `tokens`를 함께 저장한다. 지문은 줄바꿈을 정규화한 이 모듈의 SHA-256,
+실제로 읽은 생성 사전의 SHA-256, `kiwipiepy`·`kiwipiepy_model`·`hanja` 버전이다.
+전체 모듈을 포함하므로 규칙 변경 때 지문 버전을 수동으로 올리는 누락을 피하지만,
+색인 생성 코드나 주석만 바뀌어도 보수적으로 재구축을 요구한다.
+기존 디렉터리 단위 발행·실패 시 복원 경계 안에서 지문과 토큰을 함께 발행한다.
+
+유일한 제품 BM25 읽기 경로인 `HybridIndex.__init__`은 지문 없는 옛 목록이나 불일치를
+FAISS·임베딩 모델 로드 전에 거부하고 `02_retrieval.ipynb`의 `build_index` 셀로 재구축하라고 안내한다.
+오류가 난 파일에 지문만 덧붙여서 재사용하지 않는다. README의 설정 셀만 실행하라는 설명도
+호환 색인 재사용과 최초 마이그레이션을 구분하도록 수정했다. 불러오기·설정·색인 만들기 셀만
+실행하면 되고, 유료 재작성 예제 셀은 이 마이그레이션에 필요하지 않다.
+
+같은 규칙의 다른 적용 지점은 아래와 같이 별도 집계했다. 다른 제품 로더는 0개이며,
+다섯 앱 호출부와 한 문서 예제 모두 공통 생성자 검사로 보호된다.
+
+| 구분 | 개수 | 위치 |
+| --- | ---: | --- |
+| 공통 제품 작성·읽기 경계 | 각각 1 | `indexing._build_index`, `HybridIndex.__init__` |
+| 앱 생성자 호출부 | 5 | 02 노트북 2곳, 04 노트북 1곳, 05 노트북 1곳, `frontend/server.py` 1곳 |
+| 문서 실행 예제 | 1 | README의 `rerun_retrieval` 예제 |
+
+`artifacts/verify_kiwi_round1.py`는 네트워크를 차단하고 실제 활성 옛 형식이 거부되는지 확인했다.
+이어서 18,989개 청크를 다시 토큰화해 기존 채택 토큰 내용과 전부 같음을 확인한 뒤 새 형식으로 저장했다.
+실제 `HybridIndex`의 BM25 단독 검색에서 같은 질의는 50개 후보·35개 결과를 반환했다.
+FAISS, 수량 색인의 모든 파일, 활성 청크, eval 입력, 두 규칙 파일과 14개 usage CSV는 바이트 그대로다.
+측정한 토큰과 검색 규칙은 바꾸지 않았으며 새 품질 측정이나 test 분할 실행을 하지 않았다.
+결과는 `artifacts/kiwi_review/round1.json`과 `round1.log`에 보관했다.
+
+테스트 정리에서 색인 발행·복원, 토크나이저, 검색 및 수량 색인 작성 회귀를 감사했다.
+중간 단계의 옛 형식 거부 단독 사례는 거부 → 재구축 → BM25 단독 검색까지 확인하는 한 회귀에 합쳤다.
+코드·사전·세 패키지 버전 변경은 실제 지문 입력을 바꿔 모델 로드 전 거부와 기존 파일 보존을 각각 확인한다.
+현재 동작을 지키는 기존 테스트와 별칭·사용자 단어·부정어·코드 assertion은 유지했다.
+
+정리 후 `.venv\Scripts\python -m pytest -q tests`는
+`1336 passed, 12 warnings in 130.56s (0:02:10)`으로 통과했다.
+`.venv\Scripts\ruff check .`는 `All checks passed!`,
+`git diff --no-index CLAUDE.md AGENTS.md`는 출력 없이 통과했다.

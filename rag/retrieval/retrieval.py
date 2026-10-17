@@ -60,6 +60,11 @@ class HybridIndex:
     질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter)."""
 
     def __init__(self, artifacts: Path, cfg: dict):
+        self.tokenizer = KiwiTokenizer()
+        stored = json.loads((artifacts / "index" / "bm25_tokens.json").read_text(encoding="utf-8"))
+        if not isinstance(stored, dict) or stored.get("tokenizer") != self.tokenizer.fingerprint:
+            raise ValueError("BM25 tokenizer mismatch or missing fingerprint. "
+                             "Rebuild the index with 02_retrieval.ipynb's build_index cell before searching.")
         self.chunks = read_jsonl(artifacts / "chunks.jsonl")
         self.doc_ids = np.array([c["doc_id"] for c in self.chunks])
         self.code_chunks: dict[str, set[int]] = defaultdict(set)
@@ -67,10 +72,8 @@ class HybridIndex:
             for code in find_codes(chunk["text"]):
                 self.code_chunks[code].add(i)
         self.faiss = faiss.read_index(str(artifacts / "index" / "faiss.index"))
-        tokens = json.loads((artifacts / "index" / "bm25_tokens.json").read_text(encoding="utf-8"))
-        self.bm25 = BM25Okapi(tokens, k1=float(cfg["bm25"]["k1"]), b=float(cfg["bm25"]["b"]))
+        self.bm25 = BM25Okapi(stored["tokens"], k1=float(cfg["bm25"]["k1"]), b=float(cfg["bm25"]["b"]))
         self.embedder = Embedder(cfg["embedding"])
-        self.tokenizer = KiwiTokenizer()
         self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"), read_csv_orgs(ROOT / cfg["paths"]["org_csv"]))
         self.rcfg = cfg["retrieval"]
         self.chunk_file = str((artifacts / "chunks.jsonl").resolve())
