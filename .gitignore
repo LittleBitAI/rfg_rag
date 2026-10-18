@@ -1,6 +1,12 @@
 .env
 .venv/
+.venv-benchmark*/
 artifacts/
+# Benchmark records and dataset-derived reports remain local.
+/docs/benchmarks/seven_model/*
+!/docs/benchmarks/seven_model/protocol.md
+!/docs/benchmarks/seven_model/models.json
+/eval/golden/
 data/
 hf_cache/
 __pycache__/

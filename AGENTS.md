@@ -42,6 +42,15 @@ Complexity is measured by ruff, configured in `pyproject.toml`.
 - When a function fails, split it or simplify it. Never silence it with `noqa` or by raising a limit.
 - `ruff check .` reports nothing today; keep it that way.
 
+### 1.4 Keep dataset information out of Git
+
+Never commit or upload dataset content or metadata, including questions, answers,
+document text, evidence or chunk identifiers, mappings, split membership, manifests,
+candidate ranks, returned contexts, or dataset-derived measurements and reports.
+Keep these under ignored `artifacts/` locally. Commit only source code, model
+configuration, generic instructions, and synthetic test fixtures. Ignore rules do
+not remove already tracked files; flag pre-existing tracked datasets before any push.
+
 ## 2. Dependencies
 
 - A package goes into `requirements.txt` only when this repository's code imports it directly,
