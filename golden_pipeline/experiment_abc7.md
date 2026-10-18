@@ -17,6 +17,8 @@ golden_pipeline\golden.cmd pro-packets abc7
   몫은 자기 개선과 같은 해시 나눔(`adoption.split`)이라, A loop 가 실제로 쓰는 몫과 같습니다.
   몫이 하나라도 모자라면 계획을 쓰지 않고 멈춥니다. 일곱 주제 모두 6 · 2 · 2 를 채웠습니다.
 - 고정 기록은 `outputs/experiments/abc7/freeze.json` 입니다.
+  `freeze` 는 근거 manifest 까지 다 읽은 뒤 고정 기록을 먼저, 실험 계획을 맨 나중에 내놓습니다. 그래서 실험 계획이 있으면 그 고정 기록도 있습니다.
+  도중에 실패하면 둘 다 남기지 않아, 원인을 고친 뒤 같은 명령으로 다시 고정합니다. 이미 있는 계획 id 는 덮지 않고 멈춥니다.
 
 | 항목 | SHA-256 |
 |---|---|

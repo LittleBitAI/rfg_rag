@@ -4,8 +4,10 @@
 장부는 그 실험의 모든 명령 · 방식 · 이어 돌기가 함께 쓰는 하나의 상한이다. run 마다의 한도는 호출 사이에서만 보므로
 함께 날아가는 호출 · 끊긴 호출의 비용을 막지 못한다. 장부는 호출을 보내기 전에 최악 비용을 잡아 두고, 돌아온 사용량으로 정산한다.
 """
+import hashlib
 import json
 import math
+import os
 import threading
 import time
 import uuid
@@ -48,25 +50,43 @@ def freeze(experiment_id, pool_plan_id):
         "planned": {topic: sum(b["topic"] == topic for b in chosen) for topic in TOPICS},
         "coverage": plan._coverage(chosen), "bundles": chosen,
     }
-    plan_path = storage._child(storage.OUTPUTS / "plans", f"{experiment_id}.json")
-    with plan_path.open("x", encoding="utf-8") as f:
-        f.write(json.dumps(frozen, ensure_ascii=False, indent=1) + "\n")
+    plan_bytes = (json.dumps(frozen, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
     evidence_manifest = storage._read_json(storage.OUTPUTS / "evidence" / pool["evidence_run"] / "manifest.json")
     record = {
         "experiment": experiment_id, "created_at": frozen["created_at"], "code_commit": frozen["code_commit"],
         "source": {"evidence_run": pool["evidence_run"], "v11_manifest_sha256": pool["v11_manifest_sha256"],
                    "pinned_sha256": evidence_manifest["pinned_sha256"]},
         "pool_plan": {"plan_id": pool_plan_id, "sha256": pool_sha},
-        "plan": {"plan_id": experiment_id, "sha256": storage._sha256(plan_path)},
+        "plan": {"plan_id": experiment_id, "sha256": hashlib.sha256(plan_bytes).hexdigest()},
         "topic_specs": pool["topic_specs"], "prompts": storage.snapshot(storage.PROMPTS),
         "part_counts": {topic: {part: len(ids) for part, ids in found.items()} for topic, found in parts.items()},
         "parts": parts,
     }
+    plan_path = storage._child(storage.OUTPUTS / "plans", f"{experiment_id}.json")
     root = storage._child(storage.OUTPUTS / "experiments", experiment_id)
     root.mkdir(parents=True, exist_ok=True)
-    with (root / "freeze.json").open("x", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+    # 읽을 것은 다 읽은 뒤에 쓴다. 다른 명령이 읽는 계획을 맨 나중에 내놓으므로, 계획이 있으면 그 고정 기록도 있다.
+    # 계획을 내놓지 못하면 고정 기록을 거둬, 아무것도 남지 않고 다시 고정할 수 있다.
+    _publish(root / "freeze.json", (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    try:
+        _publish(plan_path, plan_bytes)
+    except BaseException:
+        (root / "freeze.json").unlink()
+        raise
     return root / "freeze.json"
+
+
+def _publish(path, data):
+    """data 를 path 에 한 번에 내놓는다. 옆 임시 파일에 다 쓴 뒤 하드 링크로 거는데, 링크는 있는 파일을 덮지 않는다.
+
+    그래서 쓰다 멈춰도 path 에 반쯤 쓴 파일이 남지 않고, 이미 있으면 FileExistsError 로 그 파일을 그대로 둔다.
+    """
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temp.write_bytes(data)
+    try:
+        os.link(temp, path)
+    finally:
+        temp.unlink()
 
 
 def pro_packets(experiment_id):
@@ -86,15 +106,18 @@ def pro_packets(experiment_id):
     if changed:
         raise ValueError(f"실험 {experiment_id} 를 고정한 뒤 바뀌었습니다: {changed}")
     template = Template((storage.PROMPTS / "C.txt").read_text(encoding="utf-8"))
-    folder = root / "pro"
-    folder.mkdir(exist_ok=True)
+    texts = {}
     for topic in TOPICS:
         spec, _ = plan.topic_spec(topic)
         train = record["parts"][topic]["train"]
         bundles = [bundle for bundle in planned["bundles"] if bundle["bundle_id"] in train]
-        text = template.substitute(
+        texts[topic] = template.substitute(
             topic=topic, requires=spec["requires"], structure=json.dumps(spec["structure"], ensure_ascii=False),
             count=len(bundles), bundles="\n\n".join(f"=== 근거 묶음 bundle_id: {b['bundle_id']} ===\n{b['context']}" for b in bundles))
+    # 모든 주제를 다 만든 뒤에 쓴다. 중간 주제에서 멈추면 앞 주제의 파일이 남아 다시 만들 수 없기 때문이다.
+    folder = root / "pro"
+    folder.mkdir(exist_ok=True)
+    for topic, text in texts.items():
         with (folder / f"{topic}.txt").open("x", encoding="utf-8") as f:
             f.write(text)
         with (folder / f"{topic}.sidecar.json").open("x", encoding="utf-8") as f:

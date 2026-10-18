@@ -59,6 +59,36 @@ def test_freeze_refuses_a_topic_with_an_empty_part_and_writes_no_plan(outputs, m
     assert not (outputs / "outputs/plans/x1.json").exists()
 
 
+def test_a_freeze_that_fails_after_planning_leaves_nothing_and_can_be_retried(outputs, monkeypatch):
+    # 계획만 남고 고정 기록이 없으면, 그 계획은 고정 출처 없이 쓰이고 다시 고정할 수도 없다.
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
+    manifest = outputs / "outputs/evidence/ev/manifest.json"
+    kept = manifest.read_bytes()
+    manifest.unlink()
+    plan_path, freeze_path = outputs / "outputs/plans/x1.json", outputs / "outputs/experiments/x1/freeze.json"
+
+    with pytest.raises(FileNotFoundError):
+        experiment.freeze("x1", "pool")
+    assert not plan_path.exists() and not freeze_path.exists()
+
+    manifest.write_bytes(kept)
+    record = json.loads(experiment.freeze("x1", "pool").read_text(encoding="utf-8"))
+    assert record["plan"]["sha256"] == storage._sha256(plan_path)
+
+
+def test_a_freeze_onto_an_existing_plan_id_keeps_that_plan_and_writes_no_record(outputs, monkeypatch):
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
+    plan_path = outputs / "outputs/plans/x1.json"
+    plan_path.write_bytes(b'{"plan_id": "x1"}\n')
+
+    with pytest.raises(FileExistsError):
+        experiment.freeze("x1", "pool")
+    assert plan_path.read_bytes() == b'{"plan_id": "x1"}\n'
+    assert not (outputs / "outputs/experiments/x1/freeze.json").exists()
+
+
 def test_pro_packets_refuse_a_c_prompt_or_topic_spec_changed_after_freeze(outputs, monkeypatch):
     # 고정한 뒤 바뀐 프롬프트 · 주제 명세로 만든 Pro 프롬프트는 A · B 와 다른 실험 정의를 C 에 준다.
     order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2

@@ -190,11 +190,13 @@ def review_packets(experiment_id):
     rng.shuffle(chosen)
     for n, entry in enumerate(chosen, 1):
         entry["review_id"] = f"R{n:02d}"
+    # 검토지를 다 만든 뒤에 폴더를 만든다. 만드는 중에 멈추면 빈 폴더가 남아 다시 만들 수 없기 때문이다.
+    packet = _packet(chosen, bundles)
     folder = storage.state_root() / "review"
     folder.mkdir()
     storage._write_json(folder / "key.json", {"seed": SEED, "per_cell": PER_CELL, "strata": STRATA,
                                               "entries": [{k: e[k] for k in ("review_id", "topic", "method", "run_id", "candidate_id", "stratum")} for e in chosen]})
-    (folder / "packet.md").write_text(_packet(chosen, bundles), encoding="utf-8")
+    (folder / "packet.md").write_text(packet, encoding="utf-8")
     with (folder / "judgments.csv").open("x", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["review_id", *RUBRIC, "note"])
