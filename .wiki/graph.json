@@ -127,6 +127,26 @@
    "a": "docs/quantity_filter_validation.md",
    "b": "docs/quantity_filter_estimate.md",
    "kind": "link"
+  },
+  {
+   "a": "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
+   "b": "docs/research/review-golden-abc-seven-topic-comparison-f1-1.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
+   "b": "docs/research/review-golden-abc-seven-topic-comparison-f4-2.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/research/review-golden-abc-seven-topic-comparison-f5-1.md",
+   "b": "docs/research/review-golden-abc-seven-topic-comparison-f6-1.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/research/review-golden-abc-seven-topic-comparison-f6-1.md",
+   "b": "docs/research/review-golden-abc-seven-topic-comparison-f5-1.md",
+   "kind": "link"
   }
  ],
  "orphans": [
@@ -140,15 +160,19 @@
   "docs/research/review-feature-golden-data-generation-f1-2.md",
   "docs/research/review-feature-golden-data-self-improvement-f2-1.md",
   "docs/research/review-feature-golden-data-validation-f1-1.md",
-  "docs/research/review-feature-golden-data-validation-f1-2.md"
+  "docs/research/review-feature-golden-data-validation-f1-2.md",
+  "docs/research/review-golden-abc-seven-topic-comparison-f2-1.md",
+  "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
+  "docs/research/review-golden-abc-seven-topic-comparison-f8-1.md",
+  "docs/research/review-golden-abc-seven-topic-comparison-f8-2.md"
  ],
  "counts": {
-  "docs": 25,
-  "linked": 14,
+  "docs": 33,
+  "linked": 18,
   "read": 0,
-  "orphans": 11,
+  "orphans": 15,
   "pages": 1,
-  "decisions": 53,
+  "decisions": 55,
   "injectable_decisions": 12
  }
 }

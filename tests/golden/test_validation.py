@@ -1,9 +1,10 @@
 """독립 검증 · 난도 · 출시. 생성은 가짜 생성기로, 검증은 가짜 검증기로 돌린다. API 호출은 없다."""
 import json
+from collections import deque
 
 import pytest
 
-from golden_pipeline import storage, validation
+from golden_pipeline import generation, storage, validation
 from golden_pipeline.generation import comparison_answer, generate, import_c, with_document
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.plan import topic_spec as load_topic_spec
@@ -469,6 +470,45 @@ def test_run_is_validated_once_and_the_call_cap_leaves_candidates_pending(config
     with pytest.raises(FileExistsError, match="이미 검증한"):
         validate("multi_hop", "A", "a1", config, validator)
     assert validator.requests == []
+
+
+def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_against_the_call_cap(config, tmp_path):
+    # multi_hop 후보는 호출 셋(전체 · E1 · E2)이다. 전체가 정산된 뒤 E1 이 실험 장부에 거절되면 남은 호출은 둘이다.
+    # 호출 기록에는 역할이 없다. 검증기가 보낼 요청을 다시 만들어 요청 SHA-256 으로 정산된 호출을 찾는다.
+    export, sidecar = tmp_path / "multi.jsonl", tmp_path / "sidecar.json"
+    export.write_text(json.dumps({**MULTI_HOP, "bundle_id": bundle("p2", "multi_hop")["bundle_id"]}, ensure_ascii=False) + "\n",
+                      encoding="utf-8")
+    sidecar.write_text("{}", encoding="utf-8")
+    import_c("multi_hop", "p2", "c1", [export], sidecar)
+    validator = Validator({("E1", "E2"): verdict("2년"), ("E1",): verdict("", answerable=False), ("E2",): verdict("1년", ["이내"])})
+
+    def refuse_singles(model, reasoning_effort, messages):
+        if len(Validator.labels(messages)) == 1:
+            raise generation.BudgetExceeded("실험 상한")
+        return validator(model, reasoning_effort, messages)
+
+    validate("multi_hop", "C", "c1", config, refuse_singles)
+    capped = tmp_path / "capped.json"
+    capped.write_text(json.dumps({**CONFIG, "max_calls": 2}), encoding="utf-8")
+    run_dir = validation.resume_validation("multi_hop", "C", "c1", capped, validator)
+
+    # 정산된 전체 호출은 다시 쓰므로 한도 2 로 E1 · E2 를 보내 끝낸다.
+    assert [Validator.labels(messages) for messages in validator.requests] == [("E1", "E2"), ("E1",), ("E2",)]
+    [item] = validated(run_dir).values()
+    assert item["state"] == "auto_validated"
+
+
+def test_a_settled_judge_call_does_not_count_as_a_paid_validator_call(config):
+    # 판정기 요청은 같은 질문 · 근거에 두 답이 더 있어 검증기 요청과 SHA-256 이 다르다. 그 출력이 남아 있어도 검증기 호출 셋은 그대로 사야 한다.
+    planned = bundle("p2", "multi_hop")
+    item = {**MULTI_HOP, "primary_topic": "multi_hop", "evidence": [unit["ref"] for unit in planned["units"][:2]]}
+    units = validation.evidence_units(item, planned)
+    asked = validation.validator_input(item["question"], units)
+    judged = json.dumps({**asked, "answer_a": "2년", "answer_b": "2년"}, ensure_ascii=False)
+    judge = validation._request_sha256((storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), judged)
+    validator = (storage.PROMPTS / "validator.txt").read_text(encoding="utf-8")
+
+    assert validation._calls_left(item, units, None, {(judge, 0): deque(['{"same": true}'])}, validator) == 3
 
 
 def test_free_rejections_are_recorded_even_after_a_candidate_blocked_by_the_call_cap(config, tmp_path):

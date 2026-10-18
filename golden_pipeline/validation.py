@@ -6,9 +6,11 @@
 모든 후보는 auto_validated(accepted.jsonl) 아니면 rejected(rejected.jsonl) 로 끝난다. 애매한 판정은 실패 코드가 없어
 자기 개선에 쓸 수 없으므로 두지 않는다. 출시는 auto_validated 항목을 releases/{version}/ 로 모은다.
 """
+import hashlib
 import json
 import re
 import unicodedata
+from collections import Counter, deque
 from decimal import Decimal
 from functools import lru_cache
 
@@ -54,7 +56,7 @@ def validate(topic, method, run_id, config_path, client):
     run_dir = storage.unvalidated_run(topic, method, run_id)
     candidates = storage._read_jsonl(run_dir / "candidates.jsonl")
     survivors = _survivors(topic, method, run_id)
-    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors)
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, {})
     return storage.write_validation(topic, method, run_id, judged, info)
 
 
@@ -85,8 +87,24 @@ def resume_validation(topic, method, run_id, config_path, client):
             survivors.setdefault(key, item["candidate_id"])
     pending = set(last["pending"])
     candidates = [item for item in storage._read_jsonl(run_dir / "candidates.jsonl") if item["candidate_id"] in pending]
-    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors)
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, _settled_calls(run_dir, pending))
     return storage.continue_validation(topic, method, run_id, judged, info)
+
+
+def _settled_calls(run_dir, pending):
+    """pending 후보마다 앞 기록에서 이미 정산한 호출의 출력: {후보: {(요청 SHA-256, 시도): [출력, ...]}}.
+
+    한 후보의 검증 도중 뒤 호출이 실험 장부에 거절되면 그 후보는 pending 이 되고 앞 호출의 출력은 기록에만 남는다.
+    같은 요청이라도 출력은 호출마다 다르므로, 열쇠에 후보를 넣어 다른 후보의 출력을 쓰지 않고,
+    한 후보 안의 같은 요청은 기록된 차례대로 꺼낸다 (한 후보의 호출은 한 스레드에서 차례로 간다).
+    """
+    replay = {}
+    for path in storage.validation_records(run_dir):
+        for call in storage._read_json(path)["calls"]:
+            if call.get("candidate_id") in pending:
+                key = (call["request_sha256"], call["attempt"])
+                replay.setdefault(call["candidate_id"], {}).setdefault(key, deque()).append(call["text"])
+    return replay
 
 
 def _criteria(record):
@@ -96,33 +114,51 @@ def _criteria(record):
             "prompt_sha256": record["prompt_sha256"], "run_config": priced}
 
 
-def _judge_run(run_dir, topic, method, config_path, client, candidates, survivors):
-    """candidates 를 차례로 검증해 (판정한 항목, 검증 기록) 을 돌려준다. 한도에 닿으면 남은 후보를 pending 에 남긴다."""
+def _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, replays):
+    """candidates 를 차례로 검증해 (판정한 항목, 검증 기록) 을 돌려준다. 한도에 닿으면 남은 후보를 pending 에 남긴다.
+
+    replays 는 후보마다 앞 검증 기록에서 이미 정산한 호출의 출력이다 (_settled_calls).
+    검증기 · 판정기는 후보마다 만들어 그 후보의 출력만 다시 쓰고, 한도에는 아직 사지 않은 호출만 센다.
+    """
     config, config_sha = generation._run_config(config_path)
     plan_id, planned, spec = _pinned_plan(run_dir, topic)
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
     units = {item["candidate_id"]: evidence_units(item, bundles[item["bundle_id"]]) for item in candidates}
     documents = _documents(topic, planned, bundles, candidates)
     prompt_path = storage.PROMPTS / "validator.txt"
+    prompts = (prompt_path.read_text(encoding="utf-8"), (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"))
     calls = []
-    ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls)
-    judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls)
+
+    def verdict(item):
+        candidate_id = item["candidate_id"]
+        replay = replays.get(candidate_id, {})
+        ask = _asker(client, config, prompts[0], calls, candidate_id, replay)
+        judge = _judger(client, config, prompts[1], calls, candidate_id, replay)
+        return _verdict(item, spec, units[candidate_id], ask, judge, survivors, documents.get(candidate_id))
+
     free_rejects = _static_rejections(candidates, spec, units, survivors, documents)
     rejected_ids = {item["candidate_id"] for item in free_rejects}
     to_judge = [item for item in candidates if item["candidate_id"] not in rejected_ids]
+    left = {item["candidate_id"]: _calls_left(item, units[item["candidate_id"]], documents.get(item["candidate_id"]),
+                                              replays.get(item["candidate_id"], {}), prompts[0]) for item in to_judge}
 
     judged, status = [], "complete"
     while len(judged) < len(to_judge):
         rest = to_judge[len(judged):]
-        batch = _batch(config, calls, rest, units, documents)
+        batch = _batch(config, calls, rest, left)
         if not batch:
-            needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]], documents.get(rest[0]["candidate_id"]))
+            needed = left[rest[0]["candidate_id"]]
             status = generation.limit_reached(config, len(calls), generation._cost(config, calls), needed)
             break
-        verdicts = generation.parallel(lambda item: _verdict(
-            item, spec, units[item["candidate_id"]], ask, judge, survivors, documents.get(item["candidate_id"])), batch)
-        judged += [_settle(item, verdict, units[item["candidate_id"]], survivors) for item, verdict in zip(batch, verdicts)]
-    unjudged = to_judge[len(judged):]
+        verdicts = generation.parallel(verdict, batch)
+        judged += [_settle(item, verdict, units[item["candidate_id"]], survivors)
+                   for item, verdict in zip(batch, verdicts) if verdict is not None]
+        if None in verdicts:
+            # 실험 장부가 거절한 후보는 pending 으로 남고, 그 후보가 먼저 쓴 호출은 calls 에 남아 비용으로 잡힌다.
+            status = "ceiling"
+            break
+    done = {item["candidate_id"] for item in judged}
+    unjudged = [item for item in to_judge if item["candidate_id"] not in done]
     free_rejects += _static_rejections(unjudged, spec, units, survivors, documents)
     rejected_ids.update(item["candidate_id"] for item in free_rejects)
     pending = [item["candidate_id"] for item in unjudged if item["candidate_id"] not in rejected_ids]
@@ -285,7 +321,9 @@ def _screener(client, config, instructions, calls):
     """항목 하나를 판정기에 묻고 (쓸모 있는지, 실패 코드, 이유) 를 돌려주는 함수. 출력이 두 번 다 계약을 어기면 쓸모 없다고 본다."""
     def screen(item):
         content = json.dumps({"question": item["question"], "answer": item["answer"]}, ensure_ascii=False)
-        verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful)
+        # 출시는 한 번에 끝나야 쓰므로 이어 돌 앞 출력이 없다.
+        verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful,
+                                item["candidate_id"], {})
         return verdict if error is None else (False, None, f"판정기 출력 오류: {error}")
     return screen
 
@@ -313,11 +351,11 @@ def evidence_units(item, bundle):
     return plan._with_headers(cited, headers)
 
 
-def _batch(config, calls, candidates, units, documents):
-    """함께 검증할 앞쪽 후보들 (많아야 WORKERS 개). 후보마다 쓸 수 있는 호출 수를 더해 한도 안에 드는 데까지 고른다."""
+def _batch(config, calls, candidates, left):
+    """함께 검증할 앞쪽 후보들 (많아야 WORKERS 개). 후보마다 아직 사야 할 호출 수(left)를 더해 한도 안에 드는 데까지 고른다."""
     batch, needed = [], 0
     for item in candidates[:generation.WORKERS]:
-        needed += _calls_needed(item, units[item["candidate_id"]], documents.get(item["candidate_id"]))
+        needed += left[item["candidate_id"]]
         if generation.limit_reached(config, len(calls), generation._cost(config, calls), needed):
             break
         batch.append(item)
@@ -595,11 +633,8 @@ def _topic_rule(item, question, units):
 
 def _single_unit_verdict(item, units, full, ask, judge):
     """multi_hop 은 근거 단위를 하나씩만 줬을 때 어느 것으로도 독립 답이 나오지 않아야 한다 (머리글 행은 그 표 행에 붙여 준다)."""
-    headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
-    for unit in units:
-        if plan._table_row(unit) == 0:
-            continue
-        single, error = ask(item["question"], plan._with_headers([unit], headers))
+    for unit, asked in _single_units(units):
+        single, error = ask(item["question"], asked)
         if not error and single["answerable"]:
             same, error = _settled(item["question"], units, full["answer"], single["answer"], judge)
         if error:
@@ -910,15 +945,15 @@ def _survivors(topic, method, run_id):
     return survivors
 
 
-def _asker(client, config, instructions, calls):
-    """질문과 근거 단위로 검증기를 부르고 (답, None) 또는 (None, 출력 오류) 를 돌려주는 함수."""
+def _asker(client, config, instructions, calls, candidate_id, replay):
+    """후보 candidate_id 의 질문과 근거 단위로 검증기를 부르고 (답, None) 또는 (None, 출력 오류) 를 돌려주는 함수."""
     def ask(question, units):
         content = json.dumps(validator_input(question, units), ensure_ascii=False)
-        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict, candidate_id, replay)
     return ask
 
 
-def _judger(client, config, instructions, calls):
+def _judger(client, config, instructions, calls, candidate_id, replay):
     """독립 답(answer_a)과 후보 답(answer_b)이 같은 답인지 판정기에 묻고 (참거짓, None) 또는 (None, 출력 오류) 를 돌려주는 함수.
 
     판정기는 질문 · 근거 · 두 답만 받는다. 독립 답은 후보 답을 보지 않고 나왔으므로, 판정기는 견주기만 한다.
@@ -926,26 +961,50 @@ def _judger(client, config, instructions, calls):
     def judge(question, units, independent, answer):
         content = json.dumps({**validator_input(question, units), "answer_a": independent, "answer_b": answer},
                              ensure_ascii=False)
-        return _reply(client, config, instructions, content, calls, question, units, _parse_same)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_same, candidate_id, replay)
     return judge
 
 
-def _reply(client, config, instructions, content, calls, question, units, parse):
-    """한 번 부르고, 출력이 계약에 맞지 않으면 한 번 더 부른다. 두 번 다 어기면 (None, 출력 오류)."""
-    messages = [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
-    for _ in range(2):
-        response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
-        calls.append({
-            "question": question,
-            "labels": [unit["label"] for unit in units],
-            "model": response["model"],
-            "input_tokens": response["input_tokens"],
-            "output_tokens": response["output_tokens"],
-        })
-        parsed, error = parse(response["text"])
+def _reply(client, config, instructions, content, calls, question, units, parse, candidate_id, replay):
+    """한 번 부르고, 출력이 계약에 맞지 않으면 한 번 더 부른다. 두 번 다 어기면 (None, 출력 오류).
+
+    호출마다 후보 · 요청의 SHA-256 · 몇 번째 시도인지 · 출력을 calls 에 남긴다. replay 는 이 후보가 앞 기록에서 이미
+    정산한 호출의 출력 {(요청, 시도): [출력, ...]} 이다 (_settled_calls). 남은 출력이 있으면 차례대로 꺼내 쓰고 다시 사지 않는다
+    (calls 에 다시 넣지 않아 비용도 두 번 세지 않는다).
+    """
+    messages = _messages(instructions, content)
+    request = _request_sha256(instructions, content)
+    for attempt in range(2):
+        recorded = replay.get((request, attempt))
+        if recorded:
+            text = recorded.popleft()
+        else:
+            response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
+            text = response["text"]
+            calls.append({
+                "candidate_id": candidate_id,
+                "question": question,
+                "labels": [unit["label"] for unit in units],
+                "model": response["model"],
+                "input_tokens": response["input_tokens"],
+                "output_tokens": response["output_tokens"],
+                "request_sha256": request,
+                "attempt": attempt,
+                "text": text,
+            })
+        parsed, error = parse(text)
         if error is None:
             return parsed, None
     return None, error
+
+
+def _messages(instructions, content):
+    return [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
+
+
+def _request_sha256(instructions, content):
+    """한 요청의 SHA-256. 이어 돌 때 앞 기록의 출력을 같은 요청에 다시 쓰는 열쇠다."""
+    return hashlib.sha256(json.dumps(_messages(instructions, content), ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _parse_same(text):
@@ -984,14 +1043,34 @@ def _valid_comparison(comparison):
     )
 
 
-def _calls_needed(item, units, document):
-    """후보 하나에 드는 호출 수: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 한 번 더.
-    unanswerable 은 독립 답 대신 대상 문서의 묶음마다 한 번이다.
+def _calls_left(item, units, document, replay, instructions):
+    """후보가 아직 사야 할 검증기 호출 수. 이어 돌 때 앞 기록에 첫 시도 출력이 남은 요청은 다시 쓰므로 세지 않는다.
 
     한 후보의 검증을 도중에 끊지 않도록 후보를 시작하기 전에 이만큼을 한도와 견준다.
+    검증기가 보낼 요청을 그대로 다시 만들어 요청 SHA-256 으로 맞추므로, 기록에 호출의 역할이 없어도 된다
+    (판정기 요청에는 두 답이 더 들어 있어 검증기 요청과 같을 수 없다).
     ponytail: 출력 오류의 다시 묻기 · 판정기 호출은 세지 않아 그만큼 한도를 넘을 수 있다. 정확히 막아야 하면 최대치로 센다.
     """
+    requests = Counter(_request_sha256(instructions, json.dumps(validator_input(item["question"], asked), ensure_ascii=False))
+                       for asked in _validator_unit_lists(item, units, document))
+    return sum(max(0, n - len(replay.get((request, 0), ()))) for request, n in requests.items())
+
+
+def _validator_unit_lists(item, units, document):
+    """검증기에 묻는 근거 단위 목록들: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 (머리글을 붙여) 한 번 더.
+    unanswerable 은 독립 답 대신 대상 문서의 묶음마다 한 번이다 (_verdict 가 묻는 차례와 같다).
+    """
     if item["primary_topic"] == "unanswerable":
-        return len(document_batches(document))
-    singles = sum(plan._table_row(unit) != 0 for unit in units) if item["primary_topic"] == "multi_hop" else 0
-    return 1 + singles
+        return document_batches(document)
+    if item["primary_topic"] != "multi_hop":
+        return [units]
+    return [units, *(asked for _, asked in _single_units(units))]
+
+
+def _single_units(units):
+    """multi_hop 에서 하나씩 묻는 근거: 머리글이 아닌 단위마다 (그 단위, 그 표의 머리글을 붙여 검증기에 줄 목록).
+
+    _single_unit_verdict 와 _calls_left 가 함께 써서, 한도에 세는 요청과 실제로 보내는 요청이 어긋나지 않게 한다.
+    """
+    headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
+    return [(unit, plan._with_headers([unit], headers)) for unit in units if plan._table_row(unit) != 0]
