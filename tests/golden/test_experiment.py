@@ -84,9 +84,9 @@ def test_review_quality_is_unmeasured_unless_every_sampled_output_is_judged_exac
     entries = [{"review_id": review_id, "method": "A", "topic": "numeric", "stratum": "rejected"} for review_id in ("R01", "R02")]
     (folder / "key.json").write_text(json.dumps({"entries": entries}), encoding="utf-8")
     header = "review_id,evidence_support,answer_correct,topic_fit,useful,note"
-    judged = {"R01": "R01,Y,Y,Y,Y,", "R02": "R02,N,Y,Y,Y,", "R03": "R03,Y,Y,Y,Y,"}
+    judged = {"R01": "R01,Y,Y,Y,Y,", "R02": "R02,N,Y,Y,Y,", "R03": "R03,Y,Y,Y,Y,", "R01 짧음": "R01,Y,Y", "R02 짧음": "R02,N,Y"}
 
-    for rows in ([], ["R01"], ["R01", "R01", "R02"], ["R01", "R02", "R03"]):
+    for rows in ([], ["R01"], ["R01", "R01", "R02"], ["R01", "R02", "R03"], ["R01 짧음", "R02 짧음"]):
         (folder / "judgments.csv").write_text("\n".join([header, *(judged[r] for r in rows)]) + "\n", encoding="utf-8-sig")
         assert comparison._human("x1")["measured"] is False, rows
     (folder / "judgments.csv").write_text("\n".join([header, judged["R01"], judged["R02"]]) + "\n", encoding="utf-8-sig")
@@ -171,6 +171,15 @@ def test_uncertain_failures_keep_their_reservation_and_rate_limits_release_it_ac
     summary = experiment.usage("x1")
     assert summary["events"] == {"reserve": 3, "uncertain": 1, "rate_limited": 1, "settled": 1}
     assert summary["committed_usd"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("change", [{"max_output_tokens": 0}, {"prices": {"m": [-1, 4]}}, {"ceiling_usd": 0},
+                                    {"max_output_tokens": True}, {"prices": {}}])
+def test_a_budget_that_cannot_bound_the_worst_case_is_refused_before_any_call(outputs, change):
+    # 출력 상한 0 은 출력 비용을 잡지 않고 API 에 상한도 보내지 않으며, 음수 단가는 잡아 둔 비용을 줄여 상한을 푼다.
+    with pytest.raises(ValueError, match="0 보다 큰 수"):
+        with open_ledger(outputs, {**BUDGET, **change}):
+            pass
 
 
 def test_a_second_command_cannot_open_the_same_ledger(outputs):

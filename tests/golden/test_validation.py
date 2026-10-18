@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from golden_pipeline import storage, validation
+from golden_pipeline import generation, storage, validation
 from golden_pipeline.generation import comparison_answer, generate, import_c, with_document
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.plan import topic_spec as load_topic_spec
@@ -469,6 +469,31 @@ def test_run_is_validated_once_and_the_call_cap_leaves_candidates_pending(config
     with pytest.raises(FileExistsError, match="이미 검증한"):
         validate("multi_hop", "A", "a1", config, validator)
     assert validator.requests == []
+
+
+def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_against_the_call_cap(config, tmp_path):
+    # multi_hop 후보는 호출 셋(전체 · E1 · E2)이다. 전체가 정산된 뒤 E1 이 실험 장부에 거절되면 남은 호출은 둘이다.
+    export, sidecar = tmp_path / "multi.jsonl", tmp_path / "sidecar.json"
+    export.write_text(json.dumps({**MULTI_HOP, "bundle_id": bundle("p2", "multi_hop")["bundle_id"]}, ensure_ascii=False) + "\n",
+                      encoding="utf-8")
+    sidecar.write_text("{}", encoding="utf-8")
+    import_c("multi_hop", "p2", "c1", [export], sidecar)
+    validator = Validator({("E1", "E2"): verdict("2년"), ("E1",): verdict("", answerable=False), ("E2",): verdict("1년", ["이내"])})
+
+    def refuse_singles(model, reasoning_effort, messages):
+        if len(Validator.labels(messages)) == 1:
+            raise generation.BudgetExceeded("실험 상한")
+        return validator(model, reasoning_effort, messages)
+
+    validate("multi_hop", "C", "c1", config, refuse_singles)
+    capped = tmp_path / "capped.json"
+    capped.write_text(json.dumps({**CONFIG, "max_calls": 2}), encoding="utf-8")
+    run_dir = validation.resume_validation("multi_hop", "C", "c1", capped, validator)
+
+    # 정산된 전체 호출은 다시 쓰므로 한도 2 로 E1 · E2 를 보내 끝낸다.
+    assert [Validator.labels(messages) for messages in validator.requests] == [("E1", "E2"), ("E1",), ("E2",)]
+    [item] = validated(run_dir).values()
+    assert item["state"] == "auto_validated"
 
 
 def test_free_rejections_are_recorded_even_after_a_candidate_blocked_by_the_call_cap(config, tmp_path):

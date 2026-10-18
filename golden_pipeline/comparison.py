@@ -248,7 +248,8 @@ def _human(experiment_id):
         return {"measured": False, "reason": "판정 행이 표본과 하나씩 맞지 않습니다",
                 "missing": sorted(set(key) - set(ids)), "unknown": sorted(set(ids) - set(key)),
                 "duplicated": sorted(review_id for review_id, n in ids.items() if n > 1)}
-    if any(row[name].strip().upper() not in ("Y", "N") for row in rows for name in RUBRIC):
+    # 칸이 모자란 행은 csv 가 빈 칸을 None 으로 준다. 빈 칸과 같이 판정하지 않은 것으로 본다.
+    if any((row[name] or "").strip().upper() not in ("Y", "N") for row in rows for name in RUBRIC):
         return {"measured": False, "reason": "판정에 Y · N 이 아닌 칸이 있습니다"}
     cells = {}
     for row in rows:

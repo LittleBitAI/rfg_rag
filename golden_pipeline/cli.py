@@ -40,7 +40,7 @@ def api_client():
     book = experiment.ledger(storage.EXPERIMENT) if storage.EXPERIMENT else nullcontext()
     with book as book, openai.OpenAI(max_retries=0 if book else 8) as client:
         def call(model, reasoning_effort, messages, max_output_tokens=None):
-            limit = {"max_completion_tokens": max_output_tokens} if max_output_tokens else {}
+            limit = {"max_completion_tokens": max_output_tokens} if max_output_tokens is not None else {}
             response = client.chat.completions.create(model=model, reasoning_effort=reasoning_effort, messages=messages,
                                                       response_format={"type": "json_object"}, **limit)
             return {"model": response.model, "text": response.choices[0].message.content or "",

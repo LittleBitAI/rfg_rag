@@ -188,8 +188,8 @@ def write_freeze(plan_sha=None):
     root = storage.OUTPUTS / "experiments/x1"
     root.mkdir(parents=True, exist_ok=True)
     (root / "freeze.json").write_text(json.dumps(record), encoding="utf-8")
-    (storage.CONFIGS / "experiments/x1.json").write_text(json.dumps({"ceiling_usd": 3, "max_output_tokens": 9, "prices": {}}),
-                                                         encoding="utf-8")
+    budget = {"ceiling_usd": 3, "max_output_tokens": 9, "prices": {"generator-test": [1, 4]}}
+    (storage.CONFIGS / "experiments/x1.json").write_text(json.dumps(budget), encoding="utf-8")
     return root
 
 

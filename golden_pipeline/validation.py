@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections import deque
+from collections import Counter, deque
 from decimal import Decimal
 from functools import lru_cache
 
@@ -56,7 +56,7 @@ def validate(topic, method, run_id, config_path, client):
     run_dir = storage.unvalidated_run(topic, method, run_id)
     candidates = storage._read_jsonl(run_dir / "candidates.jsonl")
     survivors = _survivors(topic, method, run_id)
-    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, {})
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, ({}, Counter()))
     return storage.write_validation(topic, method, run_id, judged, info)
 
 
@@ -92,19 +92,22 @@ def resume_validation(topic, method, run_id, config_path, client):
 
 
 def _settled_calls(run_dir, pending):
-    """pending 후보마다, 앞 기록에서 그 후보가 이미 정산한 호출의 출력: {후보: {(요청 SHA-256, 시도): [출력, ...]}}.
+    """pending 후보마다 앞 기록에서 이미 정산한 호출: (출력, 정산한 검증기 첫 시도 수).
 
-    한 후보의 검증 도중 뒤 호출이 실험 장부에 거절되면 그 후보는 pending 이 되고 앞 호출의 출력은 기록에만 남는다.
-    같은 요청이라도 출력은 호출마다 다르므로, 열쇠에 후보를 넣어 다른 후보의 출력을 쓰지 않고,
-    한 후보 안의 같은 요청은 기록된 차례대로 꺼낸다 (한 후보의 호출은 한 스레드에서 차례로 간다).
+    출력은 {후보: {(요청 SHA-256, 시도): [출력, ...]}} 이다. 한 후보의 검증 도중 뒤 호출이 실험 장부에 거절되면
+    그 후보는 pending 이 되고 앞 호출의 출력은 기록에만 남는다. 같은 요청이라도 출력은 호출마다 다르므로,
+    열쇠에 후보를 넣어 다른 후보의 출력을 쓰지 않고, 한 후보 안의 같은 요청은 기록된 차례대로 꺼낸다
+    (한 후보의 호출은 한 스레드에서 차례로 간다).
+    정산한 검증기 첫 시도 수 {후보: 수} 는 _calls_needed 가 세는 호출 중 다시 사지 않을 몫이다.
     """
-    settled = {}
+    replay, prepaid = {}, Counter()
     for path in storage.validation_records(run_dir):
         for call in storage._read_json(path)["calls"]:
             if call.get("candidate_id") in pending:
                 key = (call["request_sha256"], call["attempt"])
-                settled.setdefault(call["candidate_id"], {}).setdefault(key, deque()).append(call["text"])
-    return settled
+                replay.setdefault(call["candidate_id"], {}).setdefault(key, deque()).append(call["text"])
+                prepaid[call["candidate_id"]] += call["role"] == "validator" and call["attempt"] == 0
+    return replay, prepaid
 
 
 def _criteria(record):
@@ -117,9 +120,10 @@ def _criteria(record):
 def _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, settled):
     """candidates 를 차례로 검증해 (판정한 항목, 검증 기록) 을 돌려준다. 한도에 닿으면 남은 후보를 pending 에 남긴다.
 
-    settled 는 후보마다 앞 검증 기록에서 이미 정산한 호출의 출력이다 (_settled_calls). 검증기 · 판정기는 후보마다 만들어
-    그 후보의 출력만 다시 쓴다.
+    settled 는 후보마다 앞 검증 기록에서 이미 정산한 호출 (출력, 검증기 첫 시도 수) 이다 (_settled_calls).
+    검증기 · 판정기는 후보마다 만들어 그 후보의 출력만 다시 쓰고, 한도에는 아직 사지 않은 호출만 센다.
     """
+    replays, prepaid = settled
     config, config_sha = generation._run_config(config_path)
     plan_id, planned, spec = _pinned_plan(run_dir, topic)
     bundles = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
@@ -131,7 +135,7 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
 
     def verdict(item):
         candidate_id = item["candidate_id"]
-        replay = settled.get(candidate_id, {})
+        replay = replays.get(candidate_id, {})
         ask = _asker(client, config, prompts[0], calls, candidate_id, replay)
         judge = _judger(client, config, prompts[1], calls, candidate_id, replay)
         return _verdict(item, spec, units[candidate_id], ask, judge, survivors, documents.get(candidate_id))
@@ -143,9 +147,9 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     judged, status = [], "complete"
     while len(judged) < len(to_judge):
         rest = to_judge[len(judged):]
-        batch = _batch(config, calls, rest, units, documents)
+        batch = _batch(config, calls, rest, units, documents, prepaid)
         if not batch:
-            needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]], documents.get(rest[0]["candidate_id"]))
+            needed = _calls_left(rest[0], units, documents, prepaid)
             status = generation.limit_reached(config, len(calls), generation._cost(config, calls), needed)
             break
         verdicts = generation.parallel(verdict, batch)
@@ -321,7 +325,7 @@ def _screener(client, config, instructions, calls):
         content = json.dumps({"question": item["question"], "answer": item["answer"]}, ensure_ascii=False)
         # 출시는 한 번에 끝나야 쓰므로 이어 돌 앞 출력이 없다.
         verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful,
-                                item["candidate_id"], {})
+                                (item["candidate_id"], "screen"), {})
         return verdict if error is None else (False, None, f"판정기 출력 오류: {error}")
     return screen
 
@@ -349,11 +353,11 @@ def evidence_units(item, bundle):
     return plan._with_headers(cited, headers)
 
 
-def _batch(config, calls, candidates, units, documents):
+def _batch(config, calls, candidates, units, documents, prepaid):
     """함께 검증할 앞쪽 후보들 (많아야 WORKERS 개). 후보마다 쓸 수 있는 호출 수를 더해 한도 안에 드는 데까지 고른다."""
     batch, needed = [], 0
     for item in candidates[:generation.WORKERS]:
-        needed += _calls_needed(item, units[item["candidate_id"]], documents.get(item["candidate_id"]))
+        needed += _calls_left(item, units, documents, prepaid)
         if generation.limit_reached(config, len(calls), generation._cost(config, calls), needed):
             break
         batch.append(item)
@@ -950,7 +954,7 @@ def _asker(client, config, instructions, calls, candidate_id, replay):
     """후보 candidate_id 의 질문과 근거 단위로 검증기를 부르고 (답, None) 또는 (None, 출력 오류) 를 돌려주는 함수."""
     def ask(question, units):
         content = json.dumps(validator_input(question, units), ensure_ascii=False)
-        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict, candidate_id, replay)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict, (candidate_id, "validator"), replay)
     return ask
 
 
@@ -962,14 +966,15 @@ def _judger(client, config, instructions, calls, candidate_id, replay):
     def judge(question, units, independent, answer):
         content = json.dumps({**validator_input(question, units), "answer_a": independent, "answer_b": answer},
                              ensure_ascii=False)
-        return _reply(client, config, instructions, content, calls, question, units, _parse_same, candidate_id, replay)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_same, (candidate_id, "judge"), replay)
     return judge
 
 
-def _reply(client, config, instructions, content, calls, question, units, parse, candidate_id, replay):
+def _reply(client, config, instructions, content, calls, question, units, parse, caller, replay):
     """한 번 부르고, 출력이 계약에 맞지 않으면 한 번 더 부른다. 두 번 다 어기면 (None, 출력 오류).
 
-    호출마다 후보 · 요청의 SHA-256 · 몇 번째 시도인지 · 출력을 calls 에 남긴다. replay 는 이 후보가 앞 기록에서 이미
+    caller 는 (후보, 역할: validator · judge · screen) 이다. 호출마다 후보 · 역할 · 요청의 SHA-256 · 몇 번째 시도인지 ·
+    출력을 calls 에 남긴다. replay 는 이 후보가 앞 기록에서 이미
     정산한 호출의 출력 {(요청, 시도): [출력, ...]} 이다 (_settled_calls). 남은 출력이 있으면 차례대로 꺼내 쓰고 다시 사지 않는다
     (calls 에 다시 넣지 않아 비용도 두 번 세지 않는다).
     """
@@ -983,7 +988,8 @@ def _reply(client, config, instructions, content, calls, question, units, parse,
             response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
             text = response["text"]
             calls.append({
-                "candidate_id": candidate_id,
+                "candidate_id": caller[0],
+                "role": caller[1],
                 "question": question,
                 "labels": [unit["label"] for unit in units],
                 "model": response["model"],
@@ -1033,6 +1039,12 @@ def _valid_comparison(comparison):
         and all(generation._is_text(name) and generation._is_text(value) for name, value in values.items())
         and (choice is None or generation._is_text(choice))
     )
+
+
+def _calls_left(item, units, documents, prepaid):
+    """후보가 아직 사야 할 호출 수: _calls_needed 에서 이어 돌 때 다시 쓸 정산된 검증기 호출(prepaid)을 뺀 몫."""
+    candidate_id = item["candidate_id"]
+    return max(0, _calls_needed(item, units[candidate_id], documents.get(candidate_id)) - prepaid[candidate_id])
 
 
 def _calls_needed(item, units, document):

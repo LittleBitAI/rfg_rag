@@ -5,6 +5,7 @@
 함께 날아가는 호출 · 끊긴 호출의 비용을 막지 못한다. 장부는 호출을 보내기 전에 최악 비용을 잡아 두고, 돌아온 사용량으로 정산한다.
 """
 import json
+import math
 import threading
 import time
 import uuid
@@ -119,7 +120,18 @@ def budget(experiment_id):
     data = storage._read_json(path)
     if set(data) != set(BUDGET_FIELDS):
         raise ValueError(f"실험 예산은 정확히 {BUDGET_FIELDS} 를 가져야 합니다: {path}")
+    # 출력 상한 0 은 출력 비용을 잡지 않고 API 에도 상한을 보내지 않으며, 음수 단가는 잡아 둔 비용을 줄여 상한을 풀어 버린다.
+    prices = data["prices"]
+    valid = (_positive(data["ceiling_usd"]) and type(data["max_output_tokens"]) is int and data["max_output_tokens"] > 0
+             and isinstance(prices, dict) and prices
+             and all(isinstance(pair, list) and len(pair) == 2 and all(map(_positive, pair)) for pair in prices.values()))
+    if not valid:
+        raise ValueError(f"실험 예산의 상한 · 단가는 0 보다 큰 수, 출력 상한은 1 이상의 정수여야 합니다: {path}")
     return data
+
+
+def _positive(value):
+    return generation._is_number(value) and math.isfinite(value) and value > 0
 
 
 @contextmanager
