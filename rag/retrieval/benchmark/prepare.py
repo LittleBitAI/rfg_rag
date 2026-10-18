@@ -11,6 +11,7 @@ from rag.config import read_jsonl, write_jsonl
 from rag.evaluation.ir import exclusion_report
 from rag.validation.evidence import _chunk_label, _context_labels, normalize_evidence
 from rag.validation.validation import load_eval_items
+from rag.validation.local_inputs import local_input
 
 from .common import (MODEL_IGNORE_PATTERNS, OUT, RECORD, ROOT, SEED, WEIGHTS, digest, models,
                      protected_files, save_json, source_identity, verify_source)
@@ -18,11 +19,11 @@ from .full_dev import load_full_dev
 
 
 def verify_provenance(rows):
-    dev_path = ROOT / "eval/golden/dev.jsonl"
+    dev_path = local_input(ROOT, "eval/golden/dev.jsonl")
     dev = {r["candidate_id"]: r for r in read_jsonl(dev_path)}
-    release = json.loads((ROOT / "eval/golden/manifest.json").read_text(encoding="utf-8"))
+    release = json.loads(local_input(ROOT, "eval/golden/manifest.json").read_text(encoding="utf-8"))
     assert digest(dev_path) == release["dev"]["sha256"]
-    yaml = {r["id"]: r for r in load_eval_items(["eval/eval_questions.yaml"])}
+    yaml = {r["id"]: r for r in load_eval_items([str(local_input(ROOT, "eval/eval_questions.yaml"))])}
     for row in rows:
         if row["evidence_source"] != "golden":
             assert row["question"] == yaml[row["id"]]["question"]
@@ -122,6 +123,8 @@ def freeze_inputs():
                "eval_questions.yaml": "eval/eval_questions.yaml", "kiwi_user_words.json": "rag/retrieval/kiwi_user_words.json"}
     rows, plans = load_full_dev()
     sources.update({f"plans/{p.name}": str(p.relative_to(ROOT)).replace("\\", "/") for p in plans})
+    sources = {name: str(local_input(ROOT, source).relative_to(ROOT)).replace("\\", "/")
+               for name, source in sources.items()}
     for name, source in sources.items():
         (destination / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / source, destination / name)
@@ -149,7 +152,7 @@ def make_manifest(sources, rows, chunks, split, identity):
             "models_sha256": digest(RECORD / "models.json"), "models": models(),
             "protected_before": protected_files(), "counts": {"questions": len(rows), "chunks": len(chunks),
                 "documents": len({c["doc_id"] for c in chunks}),
-                "original_release_dev": len(read_jsonl(ROOT / "eval/golden/dev.jsonl")),
+                "original_release_dev": len(read_jsonl(local_input(ROOT, "eval/golden/dev.jsonl"))),
                 "selected_golden_dev": len(rows), "yaml": 0, "not_selected_release_dev": 0},
             "protocol": {"candidate_k": 50, "bm25": {"k1": 1.5, "b": 0.75}, "ordinary_token_budget": 2500,
                 "budget_tokenizer": models()[0]["id"], "budget_revision": models()[0]["revision"],

@@ -4,6 +4,7 @@ import json
 from rag.config import read_jsonl
 from rag.validation.evidence import _context_labels
 from rag.validation.validation import load_eval_items
+from rag.validation.local_inputs import local_input
 
 from .common import ROOT
 
@@ -48,10 +49,11 @@ def restore_row(item, source, found):
 
 
 def load_full_dev():
-    dev = read_jsonl(ROOT / "eval/golden/dev.jsonl")
+    dev_path = local_input(ROOT, "eval/golden/dev.jsonl")
+    dev = read_jsonl(dev_path)
     found = plan_evidence(dev)
     source = {row["candidate_id"]: row for row in dev}
-    items = load_eval_items(["eval/golden/dev.jsonl"])
+    items = load_eval_items([str(dev_path)])
     rows = [restore_row(item, source[item["id"]], found) for item in items]
     assert len(rows) == len(source)
     assert {row["id"] for row in rows} == set(source)

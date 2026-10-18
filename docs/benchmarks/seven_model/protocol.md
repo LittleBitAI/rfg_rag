@@ -39,6 +39,7 @@ Stage 1은 KURE를 고정해 공백 BM25, dense, 현재 Kiwi BM25, Kiwi+dense, �
 측정 소스를 먼저 커밋한 뒤 준비한다. manifest v3은 준비 시점의 커밋과 검색·검증·지표 코드의 SHA-256을 고정한다. 소스의 미커밋 변경, 준비 후 커밋 변경, 모델 간 소스 지문 차이는 준비 재사용·실행 완료·집계·기록 검증에서 거부한다. 원본 코드가 없는 기존 기록에 현재 지문을 덧붙여 같은 실행으로 취급하지 않는다.
 
 ```powershell
+.venv-benchmark310\Scripts\python -m rag.validation.local_inputs
 .venv-benchmark310\Scripts\python -m rag.retrieval.benchmark prepare
 foreach ($model in @('kure','nemotron','harrier','jina','pplx','dragonkue','upskyy')) {
     .venv-benchmark310\Scripts\python -m rag.retrieval.benchmark run --model $model
@@ -48,6 +49,8 @@ foreach ($model in @('kure','nemotron','harrier','jina','pplx','dragonkue','upsk
 ```
 
 입력과 측정은 `artifacts/seven_model_full_dev/`, frozen 질문·split·manifest와 집계·문항별 결과는 그 아래 `record/`에 쓴다. 원래 실행의 로컬 기록은 `artifacts/seven_model/record/`에 보존한다. 완료된 측정은 덮어쓰지 않는다. BM25 사례 감사를 다시 실행하려면 로컬 입력 `audit_probes.json`에 진단 질문 ID를 준비하고 `python -m rag.retrieval.benchmark.audit`를 사용한다. 실제 ID는 코드에 넣지 않는다.
+
+평가 입력은 공통 로더가 `artifacts/local_inputs/`에서 읽는다. 기존 논리 경로는 유지하며 깨끗한 업데이트로 원본 파일이 사라져도 추적 해제 직전의 로컬 Git 객체에서 복원한다. 네트워크나 추론은 호출하지 않는다. 얕은 clone 또는 정리된 이력에는 소유자가 제공한 비공개 묶음을 `python -m rag.validation.local_inputs --from-directory PATH`로 먼저 복원한다. 묶음의 구조와 검증·덮어쓰기 금지 규칙은 [README](../../../README.md#평가-데이터셋-03-검증)를 따른다. 복원된 파일은 Git에서 무시한다.
 
 각 설정은 예열을 제외하고 단건 입력·캐시 없는 질문 임베딩으로 섞인 질문 순서의 3패스를 측정한다. 입력부터 반환 컨텍스트까지 GPU 동기화를 포함하며 로딩·색인 구축·지표 계산은 타이머 밖이다. 원시 밀리초·p50/p90·표본 수·패스 변동과 각 단계의 시간·처리량·색인 크기·CUDA/RSS 피크를 로컬에 기록한다. 장치 전체 사용량에는 다른 프로세스가 포함되고 표본 메모리는 짧은 피크를 놓칠 수 있다.
 

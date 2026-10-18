@@ -5,6 +5,7 @@ import random
 
 from rag.config import read_jsonl
 from rag.evaluation.ir import label_state
+from rag.validation.local_inputs import local_input
 
 from .common import ROOT, SEED, digest, models, verify_source
 from .prepare import evidence_groups, grouped_split
@@ -42,7 +43,7 @@ def verify_partition(record, manifest):
     split = json.loads((record / "split.json").read_text(encoding="utf-8"))
     assert manifest["version"] == 3, "Unbound historical records require a new measured run"
     assert grouped_split(rows) == split
-    assert {r["id"] for r in rows} == {r["candidate_id"] for r in read_jsonl(ROOT / "eval/golden/dev.jsonl")}
+    assert {r["id"] for r in rows} == {r["candidate_id"] for r in read_jsonl(local_input(ROOT, "eval/golden/dev.jsonl"))}
     partitions = {qid: name for name, ids in split["ids"].items() for qid in ids}
     assert all(len({partitions[r["id"]] for r in group}) == 1 for group in evidence_groups(rows))
     assert len(partitions) == sum(map(len, split["ids"].values())) == len(rows) == manifest["counts"]["questions"]

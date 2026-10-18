@@ -9,6 +9,7 @@ import pandas as pd
 import yaml
 
 from ..config import ROOT, read_jsonl
+from .local_inputs import local_input
 
 
 # ====================================================================================================
@@ -47,8 +48,7 @@ def _field_names(rows: list[dict]) -> set[str]:
 
 
 def _quantity(number: str, answer: str) -> str | None:
-    """표의 맨 수(47)를 정답이 쓴 꼴로. 05 평가는 '47' 과 '47개' 를 다른 값으로 보므로 둘 다 받는다('47|47개').
-    정답에서 날짜 같은 더 큰 수의 일부(2024.12.27 의 2024)뿐이면 None"""
+    """표의 수와 정답에 붙은 단위를 함께 허용하되 날짜 등 더 긴 수의 일부는 제외한다."""
     found = re.search(rf"(?<![\d.,]){re.escape(number)}(?![\d]|[.,]\d)([가-힣%]*)", answer)
     if not found:
         return None
@@ -82,23 +82,20 @@ def _starts(text: str, part: str) -> list[int]:
 
 
 def _copied(value: str, answer: str, question: str) -> bool:
-    """정답 속 value 가 모두 질문을 옮긴 자리인가 — 앞이나 뒤로 한 글자 늘려도 질문에 있다 (공백 무시).
-    379 의 '요구사항 분류: 기능' 은 ':기능' · '기능지' 모두 질문에 없어 옮긴 자리가 아니다"""
+    """정답의 모든 출현이 질문을 옮긴 자리인지 인접 글자까지 확인한다."""
     v, a, q = (re.sub(r"\s+", "", t) for t in (value, answer, question))
     return all((s > 0 and a[s - 1:s + len(v)] in q) or (s + len(v) < len(a) and a[s:s + len(v) + 1] in q)
                for s in _starts(a, v))
 
 
 def _inside_longer(value: str, answer: str, found: list[str]) -> bool:
-    """정답 속 value 가 모두 더 긴 값 안에만 나오는가 — 343 의 '데이터' 는 '데이터 설계 요구사항' 밖에도 나온다"""
+    """더 긴 값 밖에도 독립적으로 나온 짧은 값은 제외하지 않는다."""
     spans = [(s, s + len(other)) for other in found if value != other and value in other for s in _starts(answer, other)]
     return all(any(b <= s and s + len(value) <= e for b, e in spans) for s in _starts(answer, value))
 
 
 def _asked_value_in_question(row: dict, field_names: set[str], answer: str, question: str) -> bool:
-    """질문이 묻는 항목(이름의 끝 낱말이 질문에 있음)의 값이 질문에도 있고, 정답 쪽은 질문을 옮긴 자리가 아니다.
-    질문이 조건으로 준 값(367 의 'SFR-021 요구사항의')인지 묻는 값(379 의 분류 '기능' — 질문의 '지도기반 기능')인지
-    글만으로는 가를 수 없어, 이런 행은 사실을 만들지 않고 뺀다"""
+    """같은 값이 질문의 조건인지 질문이 요구하는 값인지 구별할 수 없으면 제외한다."""
     for cells in _raw_cells(row["context"]):
         label = _squash(cells[0])
         if len(cells) < 2 or label not in field_names or label.split()[-1] not in question:
@@ -113,7 +110,7 @@ def _multi_hop_key_facts(row: dict, field_names: set[str]) -> list[str]:
     """정답 글이 언급한 근거 표 칸 값 · 칸 속 글머리 항목 — 05 평가는 사실을 이어진 글자로 찾으므로, 근거 단위마다
     따로 찾을 수 있는 값이어야 근거를 모두 검색했을 때 만점이 된다. 항목 이름과 질문에 이미 있는 값은 뺀다.
     정답을 바꿔 말해 사실이 정답의 60% 를 못 덮으면 [] — 답의 일부만으로 만점이 나지 않게 점검에서 뺀다.
-    (dev 에서 덮지 못한 행은 0.54 이하, 다 덮은 행은 0.60 이상이었다)"""
+    적용 근거와 데이터셋별 관측은 무시된 로컬 보고서에만 보관한다."""
     answer, question = _squash(row["answer"]), _squash(row["question"])
     if _asked_value_in_question(row, field_names, answer, question):
         return []
@@ -167,7 +164,7 @@ def load_eval_items(paths: list[str]) -> list[dict]:
     answerable 은 답이 문서에 있는가 — 골든 unanswerable 만 False 이고, 05 평가가 그 질문에 맞지 않는 지표를 뺀다"""
     items = []
     for path in paths:
-        path = ROOT / path
+        path = local_input(ROOT, path)
         rows = yaml.safe_load(path.read_text(encoding="utf-8")) if path.suffix == ".yaml" else read_jsonl(path)
         field_names = _field_names(rows)
         items += [_eval_item(r, field_names) for r in rows]

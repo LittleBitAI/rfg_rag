@@ -59,8 +59,8 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 - `run --method B --part train` 은 계획에서 그 몫(`adoption.split`)의 묶음만 부릅니다.
 
 ```
-golden_pipeline\golden.cmd evidence v11-20261014 "<내려받은 압축>\RFP_Preprocessing_Final_v11_Team\RFP_Preprocessing_Final_v11_Team"
-golden_pipeline\golden.cmd plan p1 v11-20261014 --count numeric 20 --count table 20 --max-context-chars 4000
+golden_pipeline\golden.cmd evidence example-input "<내려받은 압축>\RFP_Preprocessing_Final_v11_Team\RFP_Preprocessing_Final_v11_Team"
+golden_pipeline\golden.cmd plan p1 example-input --count numeric 20 --count table 20 --max-context-chars 4000
 
 golden_pipeline\golden.cmd run --topic numeric --method A --plan p1 --id a1 --model <모델> --reasoning-effort low --price <입력 단가> <출력 단가> --max-calls 200 --budget 5 --max-rounds 3 --validator-model <모델> --validator-reasoning-effort high --validator-price <입력 단가> <출력 단가>
 golden_pipeline\golden.cmd run --topic numeric --method B --plan p1 --id b1 --model <모델> --reasoning-effort low --price <입력 단가> <출력 단가> --max-calls 40 --budget 2
@@ -74,9 +74,9 @@ golden_pipeline\golden.cmd resume --topic numeric --method B --id b1 --max-calls
 golden_pipeline\golden.cmd release --topic numeric --version v1 --run A:a1-r1 --run A:a1-r2 --model <모델> --reasoning-effort high --price <입력 단가> <출력 단가> --max-calls 400 --budget 2
 golden_pipeline\golden.cmd rename --topic numeric --version final --source v1 --source v2
 golden_pipeline\golden.cmd split --version final
-golden_pipeline\golden.cmd split --version final3 --base final2
-golden_pipeline\golden.cmd plan p2 v11-20261014 --count numeric 20 --max-context-chars 4000 --skip-plan p1
-golden_pipeline\golden.cmd plan p3 v11-20261014 --count unanswerable 60 --max-context-chars 4000 --skip-plan p1 --side final2 dev
+golden_pipeline\golden.cmd split --version example-split --base example-split
+golden_pipeline\golden.cmd plan p2 example-input --count numeric 20 --max-context-chars 4000 --skip-plan p1
+golden_pipeline\golden.cmd plan p3 example-input --count unanswerable 60 --max-context-chars 4000 --skip-plan p1 --side example-split dev
 golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 ```
 
@@ -240,15 +240,7 @@ golden_pipeline\golden.cmd evidence <run_id> "<내려받은 압축>/RFP_Preproce
 - 원본 그리드 참고 파일은 레코드에 검증 상태 필드가 없고 패키지 노트북 7절이 원본 구조를 증명하지 않는 참고 근거라고 적어,
   검증되지 않은 것으로 매니페스트 `original_grid_file` 에 기록합니다.
 
-2026-10-14 실제 v11 실행 결과 (두 사본 SHA 일치):
-
-| 항목 | 값 |
-|---|---|
-| 개수 | 문서 98 · 레코드 23,761 · 요소 26,040 · 청크 18,992 · 검색 입력 청크 18,984 (`manifest.json` 과 같음) |
-| 제외 청크 | 8개, 모두 본문이 `[IMAGE]` 표시뿐 |
-| `artifacts/raw` | 100개 모두 SHA 로 연결 (문서 98개, 두 파일은 다른 파일과 바이트가 같음), 이름만 같은 파일 0 |
-| 근거 단위 | 136,581 (청크 86,995 · 그리드 셀 49,586), `eligible` 64,904 · `held` 71,677 |
-| 이미지 | v11 검증 OCR 12개는 범위 안이라 검증, 범위 선언이 없는 7개(v10 OCR 1 · 이미지 패널 6)는 `hold` |
+입력별 개수·지문·검증 상태와 실행 관측은 무시된 로컬 산출물에만 보관한다.
 
 ## 분포 계획
 
@@ -265,9 +257,7 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 3. 주제 순서(`numeric` → `table` → `condition` → `comparison` → `multi_hop` → `unanswerable` → `false_premise`)대로, 주제 명세의 `pattern` · `table_only` 에 맞는 단위를
    문서마다 패키지 순서로 `bundle_units` 개씩 묶습니다. 컨텍스트가 `--max-context-chars` 를 넘는 묶음은 버립니다.
    multi_hop 은 청크 둘 이상에 걸친 묶음만 냅니다 (`_spanning`). 이어진 단위는 대개 한 표의 이웃 행이라
-   그대로 묶으면 절반 넘게(night 계획 300개 중 162개) 한 청크 안에 들었고, 그 묶음의 후보 431개는 하나도 출시되지 못했습니다.
-   multi_hop 컨텍스트는 라벨 옆에 청크 번호를 보입니다 (`[E3 · 청크 2]`). 번호가 없을 때 생성기는 청크가 다른 근거를 고를 수 없어,
-   청크 둘에 걸친 묶음에서도 round 마다 후보의 절반 넘게 한 청크만 인용했습니다 (계획 `v11-20261015-span`, loop `span1`).
+   같은 청크만 반복 인용하지 않도록 청크 구분을 컨텍스트 라벨에 보존한다.
    한 단위는 한 주제의 묶음에만 들어갑니다 (카탈로그가 같은 근거를 두 주제에 두지 않기 때문).
    표 행이 든 묶음에는 그 표의 머리글 행(논리 표 0행)을 맨 앞에 붙입니다. 열 이름 없이는 칸을 가리킬 수 없기 때문입니다.
    머리글 행이 `eligible` 이 아니거나 앞 주제의 묶음이 이미 가졌으면 그 묶음을 버립니다.
@@ -301,9 +291,6 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | `bundles[]` | `bundle_id`, `topic`, `doc_sha` (질문이 묻는 문서), `doc` (`agency`, `title`), `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
 
 `context` 는 `[E1]\n본문\n\n[E2]\n본문` 형식이며 생성기에 이 문자열을 그대로 보냅니다. 문서 이름은 컨텍스트에 넣지 않습니다.
-
-2026-10-14 실제 v11 근거 run(`v11-20261014`)으로 주제마다 20개를 요청한 계획은 약 8초에 만들어졌고,
-다섯 주제 모두 20개 묶음을 서로 다른 문서 20개에서 골랐습니다.
 
 ## 주제 명세
 
@@ -631,7 +618,7 @@ unanswerable · false_premise 는 판정기 프롬프트 뒤에 주제 명세의
 출력이 두 번 다 계약을 어기면 쓸모 없다고 봅니다. 빠진 항목은 `candidate_id` · 방식 · `run_id` · 질문 · 코드 · 이유와 함께 매니페스트 `release.dropped` 에,
 판정 설정 · 프롬프트 SHA-256 · 호출 수 · 비용은 `release` 에 남습니다. CLI 는 다른 유료 명령처럼 모델 · 추론 강도 · 단가 · 한도를 받고,
 한도에 닿으면 일부만 판정한 출시본을 만들지 않고 멈춥니다.
-2026-10-15 실제 표본(비교 40 · 표 30)에서 `low` 는 같은 기준을 들쭉날쭉 적용해, 출시에는 `high` 를 씁니다.
+출시 판정의 모델·설정은 계획에 고정하며 실행별 결과는 로컬에 보관한다.
 
 | 거절 | 이유 |
 |---|---|

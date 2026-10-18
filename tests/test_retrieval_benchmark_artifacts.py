@@ -89,7 +89,7 @@ def local_record(tmp_path, monkeypatch):
     for name, suffix in (("questions", "jsonl"), ("split", "json"), ("models", "json")):
         manifest[f"{name}_sha256"] = digest(record / f"{name}.{suffix}")
     save_json(manifest, record / "manifest.json")
-    release = tmp_path / "eval/golden/dev.jsonl"
+    release = tmp_path / "artifacts/local_inputs/golden/dev.jsonl"
     release.parent.mkdir(parents=True)
     write_jsonl([{"candidate_id": q["id"]} for q in questions], release)
     monkeypatch.setattr(verify, "ROOT", tmp_path)
