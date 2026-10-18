@@ -1,13 +1,15 @@
 """비교 실험: 계획 고정, 실험 상태 분리, 실험 장부. 네트워크 호출은 없다."""
 import json
 import pathlib
+import subprocess
+import sys
 import threading
 
 import httpx
 import openai
 import pytest
 
-from golden_pipeline import adoption, cli, comparison, experiment, generation, storage
+from golden_pipeline import adoption, cli, comparison, experiment, generation, plan, storage
 from golden_pipeline.schema import TOPICS
 
 REQUEST = httpx.Request("POST", "https://api.test/v1/chat/completions")
@@ -78,27 +80,96 @@ def test_a_freeze_that_fails_after_planning_leaves_nothing_and_can_be_retried(ou
     assert record["plan"]["sha256"] == storage._sha256(plan_path)
 
 
-def test_a_freeze_that_fails_after_creating_the_plan_removes_what_it_created_and_can_be_retried(outputs, monkeypatch):
-    # 계획 파일은 만들어졌지만 쓰다 실패했다. 실패가 어디서 났든 이 호출이 만든 파일은 다 거둬야 다시 고정할 수 있다.
+# 계획의 임시 파일을 반쯤 쓰고 프로세스를 바로 끝낸다 (예외가 아니라 강제 종료라 되돌리기가 돌지 않는다).
+KILLED_WHILE_WRITING_THE_PLAN = r'''
+import json, os, pathlib, sys
+from golden_pipeline import adoption, experiment, storage
+root = pathlib.Path(sys.argv[1])
+storage.OUTPUTS, storage.CONFIGS, storage.PROMPTS = root / "outputs", root / "configs", root / "prompts"
+adoption.split = json.loads(sys.argv[2]).get
+real = pathlib.Path.write_bytes
+def write_bytes(self, data):
+    if self.name.startswith(".x1.json."):
+        real(self, data[:len(data) // 2])
+        os._exit(9)
+    return real(self, data)
+pathlib.Path.write_bytes = write_bytes
+experiment.freeze("x1", "pool")
+'''
+
+
+def test_a_freeze_killed_while_writing_the_plan_publishes_no_plan_and_a_retry_freezes(outputs, monkeypatch):
+    # 끊긴 자리에 반쯤 쓴 계획이 보이면 다른 명령이 읽고, 남은 파일이 다시 고정을 막는다.
     order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
-    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
-    plan_path, freeze_path = outputs / "outputs/plans/x1.json", outputs / "outputs/experiments/x1/freeze.json"
-    real = pathlib.Path.open
+    split = write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS})
+    monkeypatch.setattr(adoption, "split", split.get)
+    plan_path = outputs / "outputs/plans/x1.json"
 
-    def closed_on_the_plan(self, *args, **kwargs):
-        f = real(self, *args, **kwargs)
-        if self == plan_path:
-            f.close()
-        return f
+    killed = subprocess.run([sys.executable, "-c", KILLED_WHILE_WRITING_THE_PLAN, str(outputs), json.dumps(split)],
+                            capture_output=True, text=True)
 
-    monkeypatch.setattr(pathlib.Path, "open", closed_on_the_plan)
-    with pytest.raises(ValueError):
-        experiment.freeze("x1", "pool")
-    assert not plan_path.exists() and not freeze_path.exists()
-
-    monkeypatch.setattr(pathlib.Path, "open", real)
+    assert killed.returncode == 9, killed.stderr
+    assert not plan_path.exists() and (outputs / "outputs/experiments/x1/freeze.json").exists()
     record = json.loads(experiment.freeze("x1", "pool").read_text(encoding="utf-8"))
     assert record["plan"]["sha256"] == storage._sha256(plan_path)
+
+
+def test_a_reader_never_sees_a_partly_written_plan(outputs, monkeypatch):
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
+    real, seen = pathlib.Path.write_bytes, []
+
+    def read_midway(self, data):
+        if self.name.startswith(".x1.json."):
+            real(self, data[:len(data) // 2])
+            with pytest.raises(FileNotFoundError):
+                plan.load_plan("x1")
+            seen.append(self.name)
+        return real(self, data)
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", read_midway)
+    experiment.freeze("x1", "pool")
+
+    assert seen and plan.load_plan("x1")[0]["plan_id"] == "x1"
+
+
+def test_a_failed_temp_cleanup_after_publishing_still_reports_a_complete_freeze(outputs, monkeypatch):
+    # 링크로 내놓은 뒤의 임시 파일 지우기가 실패해도, 내놓은 계획을 실패로 알리고 고정 기록을 거두면 안 된다.
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
+    real = pathlib.Path.unlink
+
+    def unlink(self, *args, **kwargs):
+        if self.name.endswith(".tmp"):
+            raise PermissionError("임시 파일을 지우지 못했습니다")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", unlink)
+    record = json.loads(experiment.freeze("x1", "pool").read_text(encoding="utf-8"))
+
+    assert record["plan"]["sha256"] == storage._sha256(outputs / "outputs/plans/x1.json")
+
+
+def test_a_folder_is_published_whole_or_not_at_all_and_never_over_an_existing_one(outputs, monkeypatch):
+    folder = outputs / "outputs/experiments/x1/pro"
+    folder.parent.mkdir(parents=True)
+    real = pathlib.Path.write_bytes
+
+    def fail_second(self, data):
+        if self.name == "b.txt":
+            raise OSError("디스크가 찼습니다")
+        return real(self, data)
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", fail_second)
+    with pytest.raises(OSError, match="디스크"):
+        storage.publish_folder(folder, {"a.txt": b"a", "b.txt": b"b"})
+    assert list(folder.parent.iterdir()) == []
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", real)
+    storage.publish_folder(folder, {"a.txt": b"a", "b.txt": b"b"})
+    with pytest.raises(OSError):
+        storage.publish_folder(folder, {"a.txt": b"new"})
+    assert (folder / "a.txt").read_bytes() == b"a"
 
 
 def test_a_freeze_onto_an_existing_plan_id_keeps_that_plan_and_writes_no_record(outputs, monkeypatch):

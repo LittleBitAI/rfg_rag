@@ -198,11 +198,10 @@ def review_packets(experiment_id):
     writer.writerow(["review_id", *RUBRIC, "note"])
     writer.writerows([entry["review_id"], *[""] * len(RUBRIC), ""] for entry in chosen)
     folder = storage.state_root() / "review"
-    folder.mkdir(exist_ok=True)
-    # 세 파일을 다 만든 뒤에 쓰고, 쓰다 실패하면 만든 것을 거둔다. 이미 있으면 덮지 않고 멈춘다.
-    experiment.create_all({folder / "key.json": (json.dumps(key, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
-                           folder / "packet.md": _packet(chosen, bundles).encode("utf-8"),
-                           folder / "judgments.csv": judgments.getvalue().encode("utf-8-sig")})
+    # 세 파일을 다 만든 뒤 한 폴더로 한 번에 내놓는다. 이미 있으면 덮지 않고 멈춘다.
+    storage.publish_folder(folder, {"key.json": (json.dumps(key, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+                                    "packet.md": _packet(chosen, bundles).encode("utf-8"),
+                                    "judgments.csv": judgments.getvalue().encode("utf-8-sig")})
     return folder
 
 

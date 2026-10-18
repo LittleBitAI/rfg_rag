@@ -64,30 +64,24 @@ def freeze(experiment_id, pool_plan_id):
     plan_path = storage._child(storage.OUTPUTS / "plans", f"{experiment_id}.json")
     root = storage._child(storage.OUTPUTS / "experiments", experiment_id)
     root.mkdir(parents=True, exist_ok=True)
-    # 읽을 것은 다 읽은 뒤에 쓴다. 다른 명령이 읽는 계획을 맨 나중에 쓰므로, 계획이 있으면 그 고정 기록도 있다.
-    create_all({root / "freeze.json": (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
-                plan_path: plan_bytes})
-    return root / "freeze.json"
-
-
-def create_all(files):
-    """files {경로: 바이트} 를 차례대로 새로 만든다. 하나라도 실패하면 어디서 났든 이 호출이 만든 파일만 지우고 다시 올린다.
-
-    그래서 실패한 명령은 아무것도 남기지 않아 그대로 다시 돌릴 수 있다. 이미 있던 파일은 'x' 가 열기 전에 막으므로
-    만든 목록에 들지 않아 그대로 남는다. 열자마자 목록에 넣으므로, 열린 뒤의 어떤 실패도 그 파일을 거둔다.
-    """
-    created = []
+    freeze_path = root / "freeze.json"
+    if plan_path.exists():
+        raise FileExistsError(f"계획 {experiment_id} 가 이미 있습니다. 덮지 않습니다: {plan_path}")
+    # 읽을 것은 다 읽은 뒤에 쓴다. 둘 다 storage.publish 로 다 쓴 파일만 한 번에 내놓고, 다른 명령이 읽는 계획을 맨 나중에 내놓는다.
+    # 그래서 계획이 있으면 온전한 고정 기록도 있다. 계획 없는 고정 기록은 앞 고정이 계획을 내놓기 전에 끊긴 것이고
+    # 어떤 명령도 그것만으로는 쓰지 못하므로, 거두고 다시 고정한다.
+    # ponytail: 같은 실험 id 를 두 명령이 함께 고정하면 서로의 기록을 거둘 수 있다. 함께 고정하면 장부처럼 잠금 파일을 둔다.
+    if freeze_path.exists():
+        freeze_path.unlink()
+    storage.publish(freeze_path, (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     try:
-        for path, data in files.items():
-            path = storage.guard(path)
-            f = path.open("xb")
-            created.append(path)
-            with f:
-                f.write(data)
+        storage.publish(plan_path, plan_bytes)
     except BaseException:
-        for path in created:
-            path.unlink()
+        # 계획을 내놓은 뒤에 끊겼으면 둘 다 온전하므로 그대로 둔다.
+        if not plan_path.exists():
+            freeze_path.unlink()
         raise
+    return freeze_path
 
 
 def pro_packets(experiment_id):
@@ -115,13 +109,11 @@ def pro_packets(experiment_id):
         texts[topic] = template.substitute(
             topic=topic, requires=spec["requires"], structure=json.dumps(spec["structure"], ensure_ascii=False),
             count=len(bundles), bundles="\n\n".join(f"=== 근거 묶음 bundle_id: {b['bundle_id']} ===\n{b['context']}" for b in bundles))
-    # 모든 주제를 다 만든 뒤에 쓴다. 중간 주제에서 멈추면 앞 주제의 파일이 남아 다시 만들 수 없기 때문이다.
-    folder = root / "pro"
-    folder.mkdir(exist_ok=True)
+    # 모든 주제를 다 만든 뒤 한 폴더로 한 번에 내놓는다. 도중에 끊겨도 pro 폴더가 반쯤 남지 않아 다시 만들 수 있다.
     sidecar = (json.dumps({name: "" for name in generation.SIDECAR}, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    create_all({path: data for topic, text in texts.items()
-                for path, data in ((folder / f"{topic}.txt", text.encode("utf-8")), (folder / f"{topic}.sidecar.json", sidecar))})
-    return folder
+    storage.publish_folder(root / "pro", {name: data for topic, text in texts.items()
+                                          for name, data in ((f"{topic}.txt", text.encode("utf-8")), (f"{topic}.sidecar.json", sidecar))})
+    return root / "pro"
 
 
 def _stratified(bundles):

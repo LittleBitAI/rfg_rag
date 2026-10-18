@@ -2,10 +2,14 @@
 
 모든 쓰기는 golden_pipeline/outputs 아래에서만 일어나고, 이미 있는 run 과 release 는 덮어쓰지 않는다.
 """
+import contextlib
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -357,6 +361,40 @@ def _read_json(path):
 def _read_jsonl(path):
     with path.open(encoding="utf-8") as f:
         return [json.loads(line) for line in f]
+
+
+def publish(path, data):
+    """data 를 path 에 한 번에 내놓는다. 옆 숨은 임시 파일에 다 쓴 뒤 하드 링크로 건다.
+
+    링크는 다 쓴 파일을 한 번에 보이게 하고, 있는 파일은 덮지 않는다(FileExistsError). 그래서 읽는 쪽은 반쯤 쓴 파일을
+    보지 못하고, 쓰다 끊기면 숨은 임시 파일만 남아 path 는 없다. 링크 뒤의 임시 파일 지우기는 실패해도 넘겨,
+    내놓은 뒤에는 이 호출이 실패하지 않는다.
+    """
+    path = guard(path)
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temp.write_bytes(data)
+    try:
+        os.link(temp, path)
+    finally:
+        with contextlib.suppress(OSError):
+            temp.unlink()
+
+
+def publish_folder(folder, files):
+    """files {이름: 바이트} 를 옆 숨은 임시 폴더에 다 쓴 뒤 folder 로 한 번에 옮긴다. folder 가 이미 있으면 옮기지 않고 멈춘다.
+
+    읽는 쪽은 반쯤 찬 폴더를 보지 못하고, 쓰다 끊기면 숨은 임시 폴더만 남아 같은 명령을 다시 돌릴 수 있다.
+    """
+    folder = guard(folder)
+    temp = folder.with_name(f".{folder.name}.{uuid.uuid4().hex}.tmp")
+    temp.mkdir()
+    try:
+        for name, data in files.items():
+            (temp / name).write_bytes(data)
+        os.rename(temp, folder)
+    except BaseException:
+        shutil.rmtree(temp, ignore_errors=True)
+        raise
 
 
 def _write_json(path, data):
