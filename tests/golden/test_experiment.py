@@ -97,6 +97,16 @@ def test_review_quality_is_unmeasured_unless_every_sampled_output_is_judged_exac
         assert comparison._human("x1")["measured"] is False, names[dropped]
     (folder / "judgments.csv").write_bytes(b"")
     assert comparison._human("x1")["measured"] is False
+    # review_id 가 첫 열이 아닌 짧은 행, UTF-8 이 아닌 저장(엑셀의 그냥 CSV), NUL 바이트도 잴 수 없다.
+    reordered = "evidence_support,answer_correct,topic_fit,useful,review_id"
+    (folder / "judgments.csv").write_text("\n".join([reordered, "Y,Y,Y,Y,R01", "N,Y,Y,Y", "Y,Y,Y,Y,R03"]) + "\n", encoding="utf-8")
+    assert comparison._human("x1")["measured"] is False
+    (folder / "judgments.csv").write_text("\n".join([header, "R01,Y,Y,Y,Y,근거 확인", "R02,N,Y,Y,Y,"]) + "\n", encoding="cp949")
+    assert comparison._human("x1")["measured"] is False
+    (folder / "judgments.csv").write_text("\n".join([header, "R01,Y,Y,Y,Y,a\0b", judged["R02"]]) + "\n", encoding="utf-8")
+    assert comparison._human("x1")["measured"] is False
+    (folder / "judgments.csv").write_text("\n".join([reordered, "Y,Y,Y,Y,R01", "N,Y,Y,Y,R02"]) + "\n", encoding="utf-8")
+    assert comparison._human("x1")["cells"]["A · all"] == {"numerator": 1, "denominator": 2, "value": 0.5}
     # note 열은 아무도 읽지 않으므로 없어도 잰다.
     no_note = [line.rsplit(",", 1)[0] for line in [header, judged["R01"], judged["R02"]]]
     (folder / "judgments.csv").write_text("\n".join(no_note) + "\n", encoding="utf-8-sig")

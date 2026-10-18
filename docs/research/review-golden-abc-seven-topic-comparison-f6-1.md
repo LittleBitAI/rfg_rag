@@ -137,7 +137,11 @@ Extend tests/golden/test_experiment.py::test_review_quality_is_unmeasured_unless
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+This page analyses F2 (`_human` reading judgments.csv), not the round-6 F6 finding, which is about the resume call cap in `golden_pipeline/validation.py:110` (`_settled_calls`). Both were handled in the same commit, and both are recorded here.
+
+The page's experiment on F2: `tests/golden/test_experiment.py::test_review_quality_is_unmeasured_unless_every_sampled_output_is_judged_exactly_once` was extended with (a), (b), (c) and a reordered complete header. A scratch run of the `af5aa9f` `_human` under the repo's 3.10 `.venv` gave the predicted errors: (a) `TypeError '<' not supported between instances of 'NoneType' and 'str'`, (b) `UnicodeDecodeError 'utf-8' codec can't decode byte 0xb1`, (c) `csv.Error line contains NUL`. The reordered complete header was already measured (A · all = 1/2). The fix is the hypothesis's single parse step, `comparison._judgment_rows`. It catches `UnicodeDecodeError` and `csv.Error` around the read block only. It keeps the header gate. It returns unmeasured when any row holds None in `review_id` or a RUBRIC column. The `or ""` is removed. After the fix, (a) is unmeasured as a short row, (b) and (c) are unmeasured as unreadable with "save as 'CSV UTF-8'", and the reordered complete header is still measured.
+
+F6 as raised: the same test-file run with the roleless case of `tests/golden/test_validation.py::test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_against_the_call_cap` at `max_calls=2` failed before the fix. Only `[('E1','E2')]` was sent, and the candidate stayed pending. The fix drops the `role` field rather than inferring it. `_calls_left` rebuilds the validator requests the candidate will send from the same unit lists `_verdict` uses (`_validator_unit_lists`, which replaces `_calls_needed`). It counts a request as already paid when its first attempt is in that candidate's replay, matched by request SHA-256; a judge request also carries both answers, so it cannot match. Old (8326cee) and new records now count the same way. The test was folded back to one case with cap 2, and it passes. `tests/golden/test_validation.py`, `test_experiment.py` and `test_cli.py` gave 137 passed; `test_improvement.py` gave 41 passed. The full gate is the server's and is still pending.
 
 ## Unresolved limits
 

@@ -240,22 +240,16 @@ def _human(experiment_id):
     if not (folder / "judgments.csv").exists():
         return {"measured": False, "reason": "검토 표본이 없습니다"}
     key = {entry["review_id"]: entry for entry in storage._read_json(folder / "key.json")["entries"]}
-    with (folder / "judgments.csv").open(encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        # 빈 파일이면 fieldnames 는 None 이고 읽을 때마다 파일을 다시 보므로, 파일이 열려 있을 때 읽는다.
-        columns, rows = set(reader.fieldnames or ()), list(reader)
-    # 사람이 고치는 파일이라 열이 빠질 수 있다. 없는 열은 행에 열쇠조차 없으므로 아래의 행 검사보다 먼저 본다.
-    missing_columns = sorted({"review_id", *RUBRIC} - columns)
-    if missing_columns:
-        return {"measured": False, "reason": "판정 파일에 필요한 열이 없습니다", "missing_columns": missing_columns}
+    rows, unreadable = _judgment_rows(folder / "judgments.csv")
+    if unreadable:
+        return {"measured": False, **unreadable}
     # 빠진 행은 표본을 줄이고 겹친 행은 한 출력을 두 번 세므로, 표본의 모든 출력을 꼭 한 번씩 판정했을 때만 잰다.
     ids = Counter(row["review_id"] for row in rows)
     if set(ids) != set(key) or max(ids.values(), default=0) > 1:
         return {"measured": False, "reason": "판정 행이 표본과 하나씩 맞지 않습니다",
                 "missing": sorted(set(key) - set(ids)), "unknown": sorted(set(ids) - set(key)),
                 "duplicated": sorted(review_id for review_id, n in ids.items() if n > 1)}
-    # 칸이 모자란 행은 csv 가 빈 칸을 None 으로 준다. 빈 칸과 같이 판정하지 않은 것으로 본다.
-    if any((row[name] or "").strip().upper() not in ("Y", "N") for row in rows for name in RUBRIC):
+    if any(row[name].strip().upper() not in ("Y", "N") for row in rows for name in RUBRIC):
         return {"measured": False, "reason": "판정에 Y · N 이 아닌 칸이 있습니다"}
     cells = {}
     for row in rows:
@@ -267,6 +261,27 @@ def _human(experiment_id):
     return {"measured": True, "cells": {f"{m} · {scope}": _ratio(*pair) for (m, scope), pair in sorted(cells.items())},
             "checks": {name: dict(Counter(f"{key[r['review_id']]['method']}:{r[name].strip().upper()}" for r in rows))
                        for name in RUBRIC}}
+
+
+def _judgment_rows(path):
+    """사람이 고친 판정 파일을 한 번에 읽어, 쓰기 전에 모든 칸이 문자열인 행으로 만든다. 그럴 수 없으면 (None, 잴 수 없는 이유).
+
+    사람이 고치는 파일이라 다른 인코딩으로 저장되거나, 열이 빠지거나, 행의 칸이 모자랄 수 있다.
+    csv 는 모자란 칸을 None 으로 채우고 없는 열은 열쇠조차 만들지 않으므로, 둘 다 여기서 거른다.
+    """
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            # 빈 파일이면 fieldnames 는 None 이고 읽을 때마다 파일을 다시 보므로, 파일이 열려 있을 때 읽는다.
+            columns, rows = set(reader.fieldnames or ()), list(reader)
+    except (UnicodeDecodeError, csv.Error) as error:
+        return None, {"reason": f"판정 파일을 읽을 수 없습니다. 'CSV UTF-8' 로 저장하세요: {error}"}
+    missing_columns = sorted({"review_id", *RUBRIC} - columns)
+    if missing_columns:
+        return None, {"reason": "판정 파일에 필요한 열이 없습니다", "missing_columns": missing_columns}
+    if any(row[name] is None for row in rows for name in ("review_id", *RUBRIC)):
+        return None, {"reason": "칸이 모자란 판정 행이 있습니다"}
+    return rows, None
 
 
 def _exists(topic, method, run_id):
