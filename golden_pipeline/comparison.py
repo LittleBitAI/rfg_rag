@@ -5,6 +5,7 @@ A 의 round 2 · 3 은 출력을 더 내므로 첫 시도와 따로, 누적 커�
 모든 비율은 분자 · 분모를 함께 남기고, 잴 수 없는 값은 0 이 아니라 None 이나 unobserved 로 둔다.
 """
 import csv
+import io
 import json
 import random
 from collections import Counter
@@ -190,17 +191,18 @@ def review_packets(experiment_id):
     rng.shuffle(chosen)
     for n, entry in enumerate(chosen, 1):
         entry["review_id"] = f"R{n:02d}"
-    # 검토지를 다 만든 뒤에 폴더를 만든다. 만드는 중에 멈추면 빈 폴더가 남아 다시 만들 수 없기 때문이다.
-    packet = _packet(chosen, bundles)
+    key = {"seed": SEED, "per_cell": PER_CELL, "strata": STRATA,
+           "entries": [{k: e[k] for k in ("review_id", "topic", "method", "run_id", "candidate_id", "stratum")} for e in chosen]}
+    judgments = io.StringIO(newline="")
+    writer = csv.writer(judgments)
+    writer.writerow(["review_id", *RUBRIC, "note"])
+    writer.writerows([entry["review_id"], *[""] * len(RUBRIC), ""] for entry in chosen)
     folder = storage.state_root() / "review"
-    folder.mkdir()
-    storage._write_json(folder / "key.json", {"seed": SEED, "per_cell": PER_CELL, "strata": STRATA,
-                                              "entries": [{k: e[k] for k in ("review_id", "topic", "method", "run_id", "candidate_id", "stratum")} for e in chosen]})
-    (folder / "packet.md").write_text(packet, encoding="utf-8")
-    with (folder / "judgments.csv").open("x", encoding="utf-8-sig", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["review_id", *RUBRIC, "note"])
-        writer.writerows([entry["review_id"], *[""] * len(RUBRIC), ""] for entry in chosen)
+    folder.mkdir(exist_ok=True)
+    # 세 파일을 다 만든 뒤에 쓰고, 쓰다 실패하면 만든 것을 거둔다. 이미 있으면 덮지 않고 멈춘다.
+    experiment.create_all({folder / "key.json": (json.dumps(key, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+                           folder / "packet.md": _packet(chosen, bundles).encode("utf-8"),
+                           folder / "judgments.csv": judgments.getvalue().encode("utf-8-sig")})
     return folder
 
 

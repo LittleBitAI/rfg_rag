@@ -1,5 +1,6 @@
 """비교 실험: 계획 고정, 실험 상태 분리, 실험 장부. 네트워크 호출은 없다."""
 import json
+import pathlib
 import threading
 
 import httpx
@@ -73,6 +74,29 @@ def test_a_freeze_that_fails_after_planning_leaves_nothing_and_can_be_retried(ou
     assert not plan_path.exists() and not freeze_path.exists()
 
     manifest.write_bytes(kept)
+    record = json.loads(experiment.freeze("x1", "pool").read_text(encoding="utf-8"))
+    assert record["plan"]["sha256"] == storage._sha256(plan_path)
+
+
+def test_a_freeze_that_fails_after_creating_the_plan_removes_what_it_created_and_can_be_retried(outputs, monkeypatch):
+    # 계획 파일은 만들어졌지만 쓰다 실패했다. 실패가 어디서 났든 이 호출이 만든 파일은 다 거둬야 다시 고정할 수 있다.
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
+    plan_path, freeze_path = outputs / "outputs/plans/x1.json", outputs / "outputs/experiments/x1/freeze.json"
+    real = pathlib.Path.open
+
+    def closed_on_the_plan(self, *args, **kwargs):
+        f = real(self, *args, **kwargs)
+        if self == plan_path:
+            f.close()
+        return f
+
+    monkeypatch.setattr(pathlib.Path, "open", closed_on_the_plan)
+    with pytest.raises(ValueError):
+        experiment.freeze("x1", "pool")
+    assert not plan_path.exists() and not freeze_path.exists()
+
+    monkeypatch.setattr(pathlib.Path, "open", real)
     record = json.loads(experiment.freeze("x1", "pool").read_text(encoding="utf-8"))
     assert record["plan"]["sha256"] == storage._sha256(plan_path)
 

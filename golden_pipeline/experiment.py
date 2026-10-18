@@ -7,7 +7,6 @@
 import hashlib
 import json
 import math
-import os
 import threading
 import time
 import uuid
@@ -65,28 +64,30 @@ def freeze(experiment_id, pool_plan_id):
     plan_path = storage._child(storage.OUTPUTS / "plans", f"{experiment_id}.json")
     root = storage._child(storage.OUTPUTS / "experiments", experiment_id)
     root.mkdir(parents=True, exist_ok=True)
-    # 읽을 것은 다 읽은 뒤에 쓴다. 다른 명령이 읽는 계획을 맨 나중에 내놓으므로, 계획이 있으면 그 고정 기록도 있다.
-    # 계획을 내놓지 못하면 고정 기록을 거둬, 아무것도 남지 않고 다시 고정할 수 있다.
-    _publish(root / "freeze.json", (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-    try:
-        _publish(plan_path, plan_bytes)
-    except BaseException:
-        (root / "freeze.json").unlink()
-        raise
+    # 읽을 것은 다 읽은 뒤에 쓴다. 다른 명령이 읽는 계획을 맨 나중에 쓰므로, 계획이 있으면 그 고정 기록도 있다.
+    create_all({root / "freeze.json": (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+                plan_path: plan_bytes})
     return root / "freeze.json"
 
 
-def _publish(path, data):
-    """data 를 path 에 한 번에 내놓는다. 옆 임시 파일에 다 쓴 뒤 하드 링크로 거는데, 링크는 있는 파일을 덮지 않는다.
+def create_all(files):
+    """files {경로: 바이트} 를 차례대로 새로 만든다. 하나라도 실패하면 어디서 났든 이 호출이 만든 파일만 지우고 다시 올린다.
 
-    그래서 쓰다 멈춰도 path 에 반쯤 쓴 파일이 남지 않고, 이미 있으면 FileExistsError 로 그 파일을 그대로 둔다.
+    그래서 실패한 명령은 아무것도 남기지 않아 그대로 다시 돌릴 수 있다. 이미 있던 파일은 'x' 가 열기 전에 막으므로
+    만든 목록에 들지 않아 그대로 남는다. 열자마자 목록에 넣으므로, 열린 뒤의 어떤 실패도 그 파일을 거둔다.
     """
-    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    temp.write_bytes(data)
+    created = []
     try:
-        os.link(temp, path)
-    finally:
-        temp.unlink()
+        for path, data in files.items():
+            path = storage.guard(path)
+            f = path.open("xb")
+            created.append(path)
+            with f:
+                f.write(data)
+    except BaseException:
+        for path in created:
+            path.unlink()
+        raise
 
 
 def pro_packets(experiment_id):
@@ -117,11 +118,9 @@ def pro_packets(experiment_id):
     # 모든 주제를 다 만든 뒤에 쓴다. 중간 주제에서 멈추면 앞 주제의 파일이 남아 다시 만들 수 없기 때문이다.
     folder = root / "pro"
     folder.mkdir(exist_ok=True)
-    for topic, text in texts.items():
-        with (folder / f"{topic}.txt").open("x", encoding="utf-8") as f:
-            f.write(text)
-        with (folder / f"{topic}.sidecar.json").open("x", encoding="utf-8") as f:
-            f.write(json.dumps({name: "" for name in generation.SIDECAR}, ensure_ascii=False, indent=2) + "\n")
+    sidecar = (json.dumps({name: "" for name in generation.SIDECAR}, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    create_all({path: data for topic, text in texts.items()
+                for path, data in ((folder / f"{topic}.txt", text.encode("utf-8")), (folder / f"{topic}.sidecar.json", sidecar))})
     return folder
 
 
