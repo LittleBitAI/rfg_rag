@@ -21,7 +21,7 @@ def verify_result(record, question):
     assert len(record["context_chunk_ids"]) == len(record["context_sha256"])
 
 
-def verify_timing(path, questions, partitions):
+def verify_timing(path, questions, partitions, routes):
     with path.open(encoding="utf-8") as stream:
         times = [json.loads(line) for line in stream]
     assert len(times) == 3 * len(questions)
@@ -32,8 +32,8 @@ def verify_timing(path, questions, partitions):
         assert [r["id"] for r in selected] == [r["id"] for r in expected]
         assert [r["position"] for r in selected] == list(range(len(questions)))
         assert all(r["pass"] == pass_id and r["partition"] == partitions[r["id"]]
-                   and r["route"] == "ordinary" and math.isfinite(r["milliseconds"])
-                   and r["milliseconds"] > 0 for r in selected)
+                   and r["route"] == routes[r["id"]] and math.isfinite(r["milliseconds"])
+                   and r["milliseconds"] > 0 for r in selected), "Invalid timing pass, partition, route or duration"
 
 
 def verify_partition(record, manifest):
@@ -54,9 +54,10 @@ def verify_configuration(folder, name, questions, partitions, mode, weight):
     by_id = {r["id"]: r for r in questions}
     rows = load_results(folder / f"{name}.jsonl.gz")
     assert len(rows) == len(by_id) and {r["id"] for r in rows} == set(by_id)
+    allowed_routes = ("ordinary", "filter") if mode == "integrated" else ("ordinary",)
     for row in rows:
         assert row["partition"] == partitions[row["id"]]
-        assert row["route"] == "ordinary"
+        assert row["route"] in allowed_routes, "Invalid route for benchmark mode"
         verify_result(row, by_id[row["id"]])
     candidates = [c for row in rows for c in row["ranked_candidates"]]
     if mode == "isolated":
@@ -65,7 +66,7 @@ def verify_configuration(folder, name, questions, partitions, mode, weight):
         assert all(c["dense_rank"] is None for c in candidates)
     if weight == 1:
         assert all(c["bm25_rank"] is None for c in candidates)
-    verify_timing(folder / f"{name}-latency.jsonl", questions, partitions)
+    verify_timing(folder / f"{name}-latency.jsonl", questions, partitions, {r["id"]: r["route"] for r in rows})
 
 
 def verify_completion(folder, spec, manifest):

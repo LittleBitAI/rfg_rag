@@ -2,14 +2,18 @@
 import gzip
 import json
 import random
+import shutil
+from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
 
-from rag.config import write_jsonl
-from rag.retrieval.benchmark import common, prepare, summarize, verify
+from rag.config import read_jsonl, write_jsonl
+from rag.retrieval.benchmark import common, prepare, run, summarize, verify
 from rag.retrieval.benchmark.common import SEED, digest, save_json
 from rag.retrieval.benchmark.prepare import grouped_split
 from rag.retrieval.benchmark.run import configurations, measurement_files
+from rag.retrieval.retrieval import FilterHits
 
 
 def write_gzip(path, rows):
@@ -147,3 +151,95 @@ def test_frozen_weights_cannot_be_replaced(local_record, monkeypatch):
     monkeypatch.setattr(summarize, "RECORD", local_record)
     with pytest.raises(AssertionError, match="Frozen tuning choices changed"):
         summarize.summarize()
+
+
+def synthetic_search_hits(question, partition, weight, filter_id, matched):
+    row = synthetic_result(question, partition, weight)
+    candidates = row["ranked_candidates"]
+    hits = [{"chunk_id": row["context_chunk_ids"][0], "body": "synthetic ordinary context"}]
+    if question["id"] == filter_id:
+        candidates = [{**candidates[0], "dense_rank": None, "bm25_rank": None}] if matched else []
+        hits = [{"chunk_id": candidates[0]["chunk_id"], "body": "synthetic filtered context"}] if matched else []
+        values = [{"doc_id": question["evidence"][0]["doc_id"], "value": 123}] if matched else []
+        chosen = {row["doc_id"]: row for row in values}
+        hits = FilterHits(hits, "synthetic quantity-filter summary", values, chosen)
+    return hits, candidates
+
+
+@pytest.fixture(params=[False, True], ids=["empty-filter", "matching-filter"])
+def filtered_record(local_record, monkeypatch, request):
+    questions = read_jsonl(local_record / "questions.jsonl")
+    split = json.loads((local_record / "split.json").read_text(encoding="utf-8"))
+    partitions = {qid: name for name, ids in split["ids"].items() for qid in ids}
+    filter_id = split["ids"]["validation"][0]
+    by_query = {q["question"]: q for q in questions}
+    state = {}
+    index = MagicMock()
+    index.configure.side_effect = lambda sparse, weight, mode: state.update(weight=weight)
+
+    def search(query):
+        question = by_query[query]
+        return synthetic_search_hits(question, partitions[question["id"]], state["weight"], filter_id, request.param)
+
+    index.search_with_candidates.side_effect = search
+    monkeypatch.setattr(run.torch.cuda, "synchronize", lambda: None)
+    folder = local_record / "results/kure"
+    spec = {"key": "kure", "id": "synthetic/model"}
+    for sparse, weight in configurations(spec):
+        run.timed_configuration(index, questions, folder, "integrated", sparse, weight, partitions)
+    seal_model(folder, spec)
+    return local_record, request.param
+
+
+def test_measured_filter_results_summarize_and_verify_separately(filtered_record, monkeypatch):
+    record, matched = filtered_record
+    measurements = record / "measurements"
+    shutil.copytree(record / "results/kure", measurements / "kure")
+    monkeypatch.setattr(summarize, "OUT", measurements)
+    monkeypatch.setattr(summarize, "RECORD", record)
+    summarize.summarize()
+    verify.verify_record(record)
+    quality = pd.read_csv(record / "quality.csv")
+    quality = quality[(quality["mode"] == "integrated") & (quality.label == "kiwi_hybrid_fixed")
+                      & (quality.partition == "validation") & (quality.topic == "ALL") & (quality.group == "ALL")]
+    [filtered] = quality[quality.route == "filter"].to_dict("records")
+    assert filtered["questions"] == 1
+    assert filtered["evidence_coverage"] == float(matched)
+    assert quality.questions.sum() == len(json.loads((record / "split.json").read_text(encoding="utf-8"))["ids"]["validation"])
+    latency = pd.read_csv(record / "latency.csv")
+    filtered = latency[(latency["mode"] == "integrated") & (latency.label == "kiwi_hybrid_fixed")
+                       & (latency.partition == "validation") & (latency.route == "filter") & (latency["pass"] == "ALL")]
+    assert filtered.samples.tolist() == [3]
+    rows = summarize.load_results(record / "results/kure/integrated-kiwi-0.6.jsonl.gz")
+    [row] = [r for r in rows if r["route"] == "filter"]
+    assert row["filter_summary"] == "synthetic quantity-filter summary"
+    assert row["filter_chosen_document_count"] == int(matched)
+
+
+@pytest.mark.parametrize("artifact,mode,question_kind,route", [
+    ("results", "integrated", "filter", "unknown"),
+    ("results", "isolated", "filter", "filter"),
+    ("latency", "integrated", "filter", "ordinary"),
+    ("latency", "integrated", "ordinary", "filter"),
+    ("latency", "integrated", "filter", "unknown"),
+    ("latency", "isolated", "ordinary", "filter"),
+])
+def test_invalid_or_inconsistent_routes_are_rejected(filtered_record, artifact, mode, question_kind, route):
+    record, _ = filtered_record
+    folder = record / "results/kure"
+    split = json.loads((record / "split.json").read_text(encoding="utf-8"))
+    filter_id = split["ids"]["validation"][0]
+    qid = filter_id if question_kind == "filter" else next(q["id"] for q in read_jsonl(record / "questions.jsonl")
+                                                         if q["id"] != filter_id)
+    suffix = ".jsonl.gz" if artifact == "results" else "-latency.jsonl"
+    path = folder / f"{mode}-kiwi-0.6{suffix}"
+    rows = summarize.load_results(path) if artifact == "results" else read_jsonl(path)
+    selected = next(r for r in rows if r["id"] == qid and (artifact == "results" or r["pass"] == 1))
+    selected["route"] = route
+    if artifact == "results":
+        write_gzip(path, rows)
+    else:
+        write_jsonl(rows, path)
+    seal_model(folder, {"key": "kure"})
+    with pytest.raises(AssertionError, match="route"):
+        verify.verify_record(record)
