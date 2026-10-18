@@ -127,6 +127,16 @@
    "a": "docs/quantity_filter_validation.md",
    "b": "docs/quantity_filter_estimate.md",
    "kind": "link"
+  },
+  {
+   "a": "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
+   "b": "docs/research/review-golden-abc-seven-topic-comparison-f1-1.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
+   "b": "docs/research/review-golden-abc-seven-topic-comparison-f4-2.md",
+   "kind": "link"
   }
  ],
  "orphans": [
@@ -141,14 +151,13 @@
   "docs/research/review-feature-golden-data-self-improvement-f2-1.md",
   "docs/research/review-feature-golden-data-validation-f1-1.md",
   "docs/research/review-feature-golden-data-validation-f1-2.md",
-  "docs/research/review-golden-abc-seven-topic-comparison-f1-1.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md"
  ],
  "counts": {
-  "docs": 27,
-  "linked": 14,
+  "docs": 28,
+  "linked": 16,
   "read": 0,
-  "orphans": 13,
+  "orphans": 12,
   "pages": 1,
   "decisions": 55,
   "injectable_decisions": 12
