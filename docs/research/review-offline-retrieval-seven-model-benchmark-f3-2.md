@@ -2,6 +2,8 @@
 
 Draft research before the fix of review round 4 of PR #66, written 2026-10-19. It is not a verified fact or a shared rule: the review reads it with the fix.
 
+After this draft was written, the owner explicitly clarified that actual dataset records must remain private while measurements and aggregate statistics may be published. The broader exclusion studied below is historical. The Result applies the clarified requirement; the benchmark goal and completion criteria are unchanged.
+
 ## Problem
 
 F3의 불변식은 추적 파일 전체에서 데이터셋 내용·메타데이터·파생 측정값을 제외하는 것이다. 현재 README.md:424에는 실제 dev 근거·컨텍스트 블록의 집계와 과거 집계에 대한 정정이 남아 있다. 절차 설명 안에 들어 있는 관측값도 AGENTS.md 1.4의 예외가 아니다. 금지된 측정값 자체는 이 연구에 재인용하지 않는다. [C1, C2]
@@ -143,7 +145,7 @@ README.md:409-449는 입력 연결·본문 복원·라벨링 절차를 설명한
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, still a draft: the aggregate sentence persisted unchanged in README.md across `400f768`, `7371896`, `9063678`, `d26c9f1`, and `500eae4`; it was not reintroduced. The complete pre-change index and local originals were preserved under ignored `artifacts/review-round4/`. Claim review found aggregate observations without using the reported numbers as search keys. During that experiment, the owner's explicit clarification changed the publication boundary: those observations are allowed, while actual dataset records remain private. Accordingly, the README measurements are retained and F3 is disputed under the current requirement. `clarified_controls.py` checked ten independently authored, manually classified control claims: aggregate values remain publishable when commas, wording, or numbers change; actual records remain private in JSONL or embedded prose. This is a local research check, not an automated privacy guarantee. The documentation change is identified by the commit subject `docs: clarify that aggregate measurements may be published` (based on `500eae4`); its exact commit ID is recorded with the final publication check. No product code or tests were changed; pytest was not rerun for this documentation correction. Final staged/committed document review, Ruff, rule-file byte equality, whitespace checks, and the outgoing-object audit are recorded separately. Existing public history was not erased, and this draft does not claim independent verification of the benchmark measurements.
 
 ## Unresolved limits
 

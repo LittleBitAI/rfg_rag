@@ -367,7 +367,7 @@ display(coverage_table(scores))
 유료 확인은 모든 주제를 포함한 dev 30문항으로 제한합니다. 실행 전에 config 단가로 04 rewrite+answer와 05 두 심판의 견적을 표시하고 승인을 받은 뒤 실행합니다. 실제 비용은 해당 실행의 `api_usage.csv`로 계산합니다. 이전 per-evaluation 행의 질문당 심판 비용은 historical로 표시하며, 새 30문항과 질문·시점이 다르므로 동일 질문의 품질 비교로 해석하지 않습니다.
 
 [개발 검색 평가 절차](docs/eval_ir_sample.md)를 따르며 표본 구성·제외율·견적·실측 결과는 무시된 로컬 보고서에 기록합니다.
-실측 보고서는 공개 문서에 포함하지 않으며 실행 revision과 조건을 로컬 기록에 고정한다.
+Aggregate measurements and reports may be published with their execution revision and conditions. Keep actual questions, answers, evidence text, and record-level exports private; do not copy them into a report.
 
 ### 최종 test 평가 — 설정을 고정한 뒤 한 번
 
@@ -404,7 +404,7 @@ write_jsonl(test_eval_set, ARTIFACTS / "test_eval_set.jsonl")
 
 평가 묶음 구조는 `golden/dev.jsonl`, `golden/test.jsonl`, `golden/manifest.json`, `eval_questions.yaml`이다. OCR 캡션은 묶음 루트의 `ocr_captions.jsonl`로 제공한다. 같은 `--from-directory` 명령으로 평가 전용·OCR 전용·둘 다 포함한 묶음을 복원할 수 있다. 평가 파일이 하나라도 있으면 평가 묶음 전체와 manifest 검증이 필요하다. 파일은 무시된 `artifacts/local_inputs/`에 보관한다. 기존 config의 논리 경로는 공통 로더가 이 로컬 경로로 연결하며, OCR 소비자는 평가 릴리스 없이 캡션만 복원한다. test는 복원 중 바이트 지문만 검사하며 검색·튜닝하지 않는다. 필요한 자료가 없으면 복원 명령을 안내하고 멈춘다.
 
-주제별 핵심 사실은 숫자·단위, 비교 선택, 조건 또는 표 칸 값에서 얻는다. 다중 근거는 독립적으로 확인 가능한 사실을 사용한다. 부분 라벨과 누락은 사유별로 분리하며 실제 질문·정답·개수·분할·측정값은 로컬 보고서에만 기록한다.
+주제별 핵심 사실은 숫자·단위, 비교 선택, 조건 또는 표 칸 값에서 얻는다. 다중 근거는 독립적으로 확인 가능한 사실을 사용한다. 부분 라벨과 누락은 사유별로 분리한다. Actual questions, answers, evidence, and dataset records remain private. Dataset counts, aggregate scores, latency, memory use, and reports discussing those measurements may be published without the underlying records.
 
 ### 골든 문서·청크 라벨 연결 (03)
 

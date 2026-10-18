@@ -240,7 +240,7 @@ golden_pipeline\golden.cmd evidence <run_id> "<내려받은 압축>/RFP_Preproce
 - 원본 그리드 참고 파일은 레코드에 검증 상태 필드가 없고 패키지 노트북 7절이 원본 구조를 증명하지 않는 참고 근거라고 적어,
   검증되지 않은 것으로 매니페스트 `original_grid_file` 에 기록합니다.
 
-입력별 개수·지문·검증 상태와 실행 관측은 무시된 로컬 산출물에만 보관한다.
+Actual dataset records and evidence remain in ignored local outputs. Aggregate counts, validation rates, cost, and other measurements may be published without the underlying records.
 
 ## 분포 계획
 

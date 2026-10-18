@@ -2,6 +2,8 @@
 
 Draft research before the fix of review round 2 of PR #66, written 2026-10-19. It is not a verified fact or a shared rule: the review reads it with the fix.
 
+Publication scope was clarified by the owner after review round 4: actual dataset records stay private; aggregate measurements and reports may be published. The broader metadata/measurement exclusion quoted below describes the earlier rule and is not the current requirement. See AGENTS.md section 1.4 and the cycle 2 Result.
+
 아래 출처 설명은 수정 전 `714555e`의 관측이다. 이후 수정과 실험은 Result에 기록하며 이 페이지는 계속 초안으로 둔다.
 
 ## Problem

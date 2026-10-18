@@ -2,7 +2,7 @@
 .venv/
 .venv-benchmark*/
 artifacts/
-# Benchmark records and dataset-derived reports remain local.
+# Raw benchmark records and existing local archives remain ignored.
 /docs/benchmarks/seven_model/*
 !/docs/benchmarks/seven_model/protocol.md
 !/docs/benchmarks/seven_model/models.json

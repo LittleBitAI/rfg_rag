@@ -1,6 +1,6 @@
 # 일곱 주제 A·B·C 비교 절차
 
-같은 근거 계획을 먼저 고정하고 방식별 상태를 분리한다. 공개 config는 방법과 예산 상한만 담으며 질문·근거·실측 결과는 outputs와 ignored artifacts에 둔다.
+같은 근거 계획을 먼저 고정하고 방식별 상태를 분리한다. 공개 config는 방법과 예산 상한을 담는다. Actual questions, answers, and evidence records remain in private outputs and ignored artifacts. Aggregate measurements and comparison reports may be published without those records.
 
 실행 전에 CLI의 freeze·estimate로 입력과 전체 비용 가정을 고정하고 승인을 받는다. 유료 호출은 같은 실험 장부에 기록한다. C의 수동 생성은 pro-packets로 내보내고 응답 형식을 검증해 가져온다. blind review는 독립된 순서와 완전한 검토지로 수행한다.
 

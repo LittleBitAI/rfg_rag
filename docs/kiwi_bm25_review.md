@@ -4,4 +4,4 @@
 
 ## 기록 보관
 
-이 문서는 일반 절차만 설명한다. 이전 데이터셋별 보고서 원본은 무시된 `artifacts/review-round2/originals/`에 보존한다. 질문·근거·문서/청크 ID·해시·분할·제외 집계·측정 점수·사용량·추천 결과는 Git에 넣지 않는다. 현재의 평가 결과나 승자를 이 문서로 입증하지 않는다.
+This page describes the procedure. Earlier report originals remain in ignored `artifacts/review-round2/originals/`. Actual questions, answers, evidence text, and dataset records must remain private. Aggregate counts, quality scores, latency, resource usage, and reports discussing those measurements may be published without the underlying records. This procedure page alone does not establish a measured winner.

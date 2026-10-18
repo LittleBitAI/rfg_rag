@@ -1,7 +1,7 @@
 # 수량 필터 제외 항목 점검 절차
 
-금액·기간의 의미와 표 단위의 범위를 먼저 확인한다. 누락·모호·잘못 연결된 값은 별도 사유로 남기고 기본값으로 채우지 않는다. 표 머리글과 빈 칸의 위치를 보존한다. 제외 문서명·식별자·원문·집계는 로컬 보고서에만 기록한다. 회귀 검사는 독립적으로 작성한 합성 표로 재현한다.
+금액·기간의 의미와 표 단위의 범위를 먼저 확인한다. 누락·모호·잘못 연결된 값은 별도 사유로 남기고 기본값으로 채우지 않는다. 표 머리글과 빈 칸의 위치를 보존한다. Actual excluded records and source text remain private; aggregate exclusion counts may be published. 회귀 검사는 독립적으로 작성한 합성 표로 재현한다.
 
 ## 기록 보관
 
-이 문서는 일반 절차만 설명한다. 이전 데이터셋별 보고서 원본은 무시된 `artifacts/review-round2/originals/`에 보존한다. 질문·근거·문서/청크 ID·해시·분할·제외 집계·측정 점수·사용량·추천 결과는 Git에 넣지 않는다. 현재의 평가 결과나 승자를 이 문서로 입증하지 않는다.
+This page describes the procedure. Earlier report originals remain in ignored `artifacts/review-round2/originals/`. Actual questions, answers, evidence text, and dataset records must remain private. Aggregate counts, quality scores, latency, resource usage, and reports discussing those measurements may be published without the underlying records. This procedure page alone does not establish a measured winner.
