@@ -162,13 +162,14 @@
   "docs/research/review-feature-golden-data-validation-f1-1.md",
   "docs/research/review-feature-golden-data-validation-f1-2.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f2-1.md",
-  "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md"
+  "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
+  "docs/research/review-golden-abc-seven-topic-comparison-f8-1.md"
  ],
  "counts": {
-  "docs": 31,
+  "docs": 32,
   "linked": 18,
   "read": 0,
-  "orphans": 13,
+  "orphans": 14,
   "pages": 1,
   "decisions": 55,
   "injectable_decisions": 12
