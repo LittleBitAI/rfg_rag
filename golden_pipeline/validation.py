@@ -106,7 +106,8 @@ def _settled_calls(run_dir, pending):
             if call.get("candidate_id") in pending:
                 key = (call["request_sha256"], call["attempt"])
                 replay.setdefault(call["candidate_id"], {}).setdefault(key, deque()).append(call["text"])
-                prepaid[call["candidate_id"]] += call["role"] == "validator" and call["attempt"] == 0
+                # role 은 cb3f3c1 부터 기록한다. 그 앞 기록은 출력만 다시 쓰고, 검증기 호출인지 모르므로 빼지 않는다.
+                prepaid[call["candidate_id"]] += call.get("role") == "validator" and call["attempt"] == 0
     return replay, prepaid
 
 

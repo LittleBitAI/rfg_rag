@@ -471,8 +471,11 @@ def test_run_is_validated_once_and_the_call_cap_leaves_candidates_pending(config
     assert validator.requests == []
 
 
-def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_against_the_call_cap(config, tmp_path):
+@pytest.mark.parametrize("roleless, max_calls", [(False, 2), (True, 3)])
+def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_against_the_call_cap(config, tmp_path,
+                                                                                              roleless, max_calls):
     # multi_hop 후보는 호출 셋(전체 · E1 · E2)이다. 전체가 정산된 뒤 E1 이 실험 장부에 거절되면 남은 호출은 둘이다.
+    # role 이 없는 앞 기록(cb3f3c1 이전)도 출력은 다시 쓰고, 정산한 호출은 빼지 않고 셋 다 센다.
     export, sidecar = tmp_path / "multi.jsonl", tmp_path / "sidecar.json"
     export.write_text(json.dumps({**MULTI_HOP, "bundle_id": bundle("p2", "multi_hop")["bundle_id"]}, ensure_ascii=False) + "\n",
                       encoding="utf-8")
@@ -485,9 +488,14 @@ def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_agains
             raise generation.BudgetExceeded("실험 상한")
         return validator(model, reasoning_effort, messages)
 
-    validate("multi_hop", "C", "c1", config, refuse_singles)
+    first = validate("multi_hop", "C", "c1", config, refuse_singles)
+    if roleless:
+        for path in storage.validation_records(first):
+            record = json.loads(path.read_text(encoding="utf-8"))
+            record["calls"] = [{key: value for key, value in call.items() if key != "role"} for call in record["calls"]]
+            path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     capped = tmp_path / "capped.json"
-    capped.write_text(json.dumps({**CONFIG, "max_calls": 2}), encoding="utf-8")
+    capped.write_text(json.dumps({**CONFIG, "max_calls": max_calls}), encoding="utf-8")
     run_dir = validation.resume_validation("multi_hop", "C", "c1", capped, validator)
 
     # 정산된 전체 호출은 다시 쓰므로 한도 2 로 E1 · E2 를 보내 끝낸다.

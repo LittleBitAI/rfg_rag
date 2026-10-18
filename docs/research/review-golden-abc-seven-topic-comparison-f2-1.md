@@ -82,7 +82,7 @@ Extend tests/golden/test_experiment.py:79 so that, with the expected IDs R01/R02
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Ran the proposed experiment in `tests/golden/test_experiment.py::test_review_quality_is_unmeasured_unless_every_sampled_output_is_judged_exactly_once`, extended with (a) and (b) as a loop that drops each of `review_id` and the four RUBRIC columns in turn, (c) a 0-byte file, and a header with no `note`. The short-row and positive cases were kept. Before the fix (at `1513ad5`) the test failed on the first header case: dropping `review_id` raised `KeyError: 'review_id'` at comparison.py:246. A scratch run of the HEAD `_human` with the finding's header `review_id,evidence_support,answer_correct,topic_fit` raised `KeyError 'useful'`. The fix is the hypothesis's single header gate right after `csv.DictReader`, with `reader.fieldnames or ()`, returning `{'measured': False, 'reason': ..., 'missing_columns': [...]}`; `or ""` on values stays. Case (c) changed the gate's placement. The first version read `reader.fieldnames` after the `with` block, and the 0-byte file then raised `ValueError: I/O operation on closed file`. For an empty file, `fieldnames` stays None and re-reads the file on every access. The gate now reads `fieldnames` while the file is open. After that, the same scratch run returns `measured False, missing_columns ['useful']`, and the test passes, including the 0-byte file and the header without `note` (still measured, A · all = 1/2). The rest of `tests/golden/test_validation.py` and `tests/golden/test_experiment.py` passed (108). Results are in the commit that carries this page; the full gate is the server's and still pending.
 
 ## Unresolved limits
 

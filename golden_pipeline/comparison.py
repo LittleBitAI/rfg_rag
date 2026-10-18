@@ -241,7 +241,13 @@ def _human(experiment_id):
         return {"measured": False, "reason": "검토 표본이 없습니다"}
     key = {entry["review_id"]: entry for entry in storage._read_json(folder / "key.json")["entries"]}
     with (folder / "judgments.csv").open(encoding="utf-8-sig", newline="") as f:
-        rows = list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        # 빈 파일이면 fieldnames 는 None 이고 읽을 때마다 파일을 다시 보므로, 파일이 열려 있을 때 읽는다.
+        columns, rows = set(reader.fieldnames or ()), list(reader)
+    # 사람이 고치는 파일이라 열이 빠질 수 있다. 없는 열은 행에 열쇠조차 없으므로 아래의 행 검사보다 먼저 본다.
+    missing_columns = sorted({"review_id", *RUBRIC} - columns)
+    if missing_columns:
+        return {"measured": False, "reason": "판정 파일에 필요한 열이 없습니다", "missing_columns": missing_columns}
     # 빠진 행은 표본을 줄이고 겹친 행은 한 출력을 두 번 세므로, 표본의 모든 출력을 꼭 한 번씩 판정했을 때만 잰다.
     ids = Counter(row["review_id"] for row in rows)
     if set(ids) != set(key) or max(ids.values(), default=0) > 1:

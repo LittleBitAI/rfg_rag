@@ -89,7 +89,17 @@ def test_review_quality_is_unmeasured_unless_every_sampled_output_is_judged_exac
     for rows in ([], ["R01"], ["R01", "R01", "R02"], ["R01", "R02", "R03"], ["R01 짧음", "R02 짧음"]):
         (folder / "judgments.csv").write_text("\n".join([header, *(judged[r] for r in rows)]) + "\n", encoding="utf-8-sig")
         assert comparison._human("x1")["measured"] is False, rows
-    (folder / "judgments.csv").write_text("\n".join([header, judged["R01"], judged["R02"]]) + "\n", encoding="utf-8-sig")
+    # 사람이 고치는 파일이라 열이 빠질 수 있다. 판정 열이나 review_id 열이 없거나 빈 파일이면 잴 수 없다.
+    names = header.split(",")
+    for dropped in range(5):
+        lines = [[cell for i, cell in enumerate(line.split(",")) if i != dropped] for line in [header, judged["R01"], judged["R02"]]]
+        (folder / "judgments.csv").write_text("\n".join(map(",".join, lines)) + "\n", encoding="utf-8-sig")
+        assert comparison._human("x1")["measured"] is False, names[dropped]
+    (folder / "judgments.csv").write_bytes(b"")
+    assert comparison._human("x1")["measured"] is False
+    # note 열은 아무도 읽지 않으므로 없어도 잰다.
+    no_note = [line.rsplit(",", 1)[0] for line in [header, judged["R01"], judged["R02"]]]
+    (folder / "judgments.csv").write_text("\n".join(no_note) + "\n", encoding="utf-8-sig")
     assert comparison._human("x1")["cells"]["A · all"] == {"numerator": 1, "denominator": 2, "value": 0.5}
 
 
