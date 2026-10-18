@@ -2,6 +2,8 @@
 
 Draft research before the fix of review round 2 of PR #65, written 2026-10-18. It is not a verified fact or a shared rule: the review reads it with the fix.
 
+> Not F4 research (review round 3, F5). This page is filed under F4, but every section below analyses the review-packets plan hash: round-2 F1, the same subject as `review-golden-abc-seven-topic-comparison-f1-1.md`. It says nothing about F4, the settled sub-call outputs of one candidate on resume, or about the replay key the round-2 F4 fix used. That key collided across candidates and was found in round 3. Do not cite this page as grounds for any F4 fix. The F4 research is `review-golden-abc-seven-topic-comparison-f4-2.md`.
+
 ## Problem
 
 `review_packets()` is supposed to quote only the evidence from the frozen experiment, meaning the plan whose SHA-256 is in freeze.json. At comparison.py:177 it reloads outputs/plans/{plan_id}.json from disk as the file is now and throws away the hash `plan.load_plan` returns. Each sampled item's quoted evidence then comes from that copy (`_packet` -> `validation.evidence_units(item, bundles[...])`, comparison.py:227). If the plan file is edited after the runs, blinded reviewers judge evidence that is not what generated and validated the candidates. The rule it breaks: everything the comparison reads must be tied to the frozen hashes at the moment it is read.

@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import threading
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -218,30 +219,53 @@ def test_review_packets_refuse_a_plan_file_changed_after_the_freeze(planned, api
     assert not (root / "review").exists()
 
 
-def test_resuming_a_candidate_refused_mid_verdict_reuses_its_settled_calls(planned, api, monkeypatch):
-    # 한 후보의 검증은 여러 호출이다. 앞 호출이 정산된 뒤 뒤 호출이 거절되면, 이어 돌 때 정산된 호출을 다시 사지 않는다.
-    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
-    sent = []
+def test_resume_replays_a_pending_candidate_its_own_output_not_a_siblings_for_the_same_request(planned, api, monkeypatch):
+    # validation · held-out 묶음은 예산 묶음과 근거 본문이 같아 세 후보가 같은 검증기 요청을 보낸다.
+    # 같은 요청에도 출력은 다를 수 있으므로, 이어 돌 때 pending 후보는 형제의 출력이 아니라 자기 출력을 받아야 한다.
+    monkeypatch.setattr(generation, "WORKERS", 8)
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", *GENERATOR, *LIMITS)
+    lock, retrying, siblings = threading.Lock(), threading.Event(), threading.Barrier(3, timeout=5)
+    state = {"sent": []}
 
     def client(model, reasoning_effort, messages):
         user = messages[1]["content"]
-        if not (user.startswith("{") and "보증금" in user):
+        if not (user.startswith("{") and "사업 예산" in user):
             return api(model, reasoning_effort, messages)
-        sent.append(user)
-        if len(sent) == 2:
-            raise generation.BudgetExceeded("실험 상한")
-        # 첫 호출과 이어 돈 뒤의 첫 호출은 계약에 맞지 않는 출력이라 같은 요청을 한 번 더 보낸다.
-        text = "JSON 아님" if len(sent) in (1, 3) else json.dumps(VERDICTS["E2"], ensure_ascii=False)
-        return {"model": model, "text": text, "input_tokens": 10, "output_tokens": 10}
+        # 처음 온 요청의 스레드가 pending 이 될 후보다. 그 후보는 거절될 때까지 스레드를 놓지 않는다.
+        me = threading.get_ident()
+        with lock:
+            pending = state.setdefault("pending", me) == me
+            attempt = state["sent"].count(me)
+            state["sent"].append(me)
+        if not pending:
+            # 형제는 pending 후보의 첫 출력이 기록된 뒤에 유효한 판정을 받아(틀린 답이라) 거절된다.
+            siblings.wait()
+            retrying.wait(5)
+            return {"model": model, "text": json.dumps(VERDICTS["E1"], ensure_ascii=False), "input_tokens": 10, "output_tokens": 10}
+        if attempt == 0:
+            return {"model": model, "text": "JSON 아님", "input_tokens": 10, "output_tokens": 10}
+        retrying.set()
+        siblings.wait()
+        raise generation.BudgetExceeded("실험 상한")
 
     monkeypatch.setattr(cli, "api_client", lambda: nullcontext(client))
     golden("audit", "--topic", "numeric", "--method", "B", "--id", "b1", *VALIDATOR, *LIMITS)
+    run_dir = storage.OUTPUTS / "goldens/numeric/runs/B/b1"
+    [pending] = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))["pending"]
+    resumed = []
+
+    def resume_client(model, reasoning_effort, messages):
+        resumed.append(messages[1]["content"])
+        return {"model": model, "text": "JSON 아님", "input_tokens": 10, "output_tokens": 10}
+
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(resume_client))
     golden("resume", "--topic", "numeric", "--method", "B", "--id", "b1", *LIMITS)
 
-    # 정산된 첫 출력을 다시 쓰므로 이어 돌기는 거절된 두 번째 시도 하나만 보낸다. 그 출력도 어겨 출력 오류로 거절된다.
-    assert len(sent) == 3
-    rejected = read_jsonl(storage.OUTPUTS / "goldens/numeric/runs/B/b1/rejected.jsonl")
-    assert any("검증기 출력 오류" in row["state_history"][-1]["reason"] for row in rejected if "보증금" in row.get("question", ""))
+    # 자기 첫 출력(JSON 아님)을 다시 써서 거절된 두 번째 시도 하나만 보내고, 그것도 어겨 출력 오류로 거절된다.
+    assert len(resumed) == 1
+    [row] = [row for row in read_jsonl(run_dir / "rejected.jsonl") if row.get("candidate_id") == pending]
+    assert "검증기 출력 오류" in row["state_history"][-1]["reason"]
+    assert {call["candidate_id"] for call in json.loads((run_dir / "validation-2.json").read_text(encoding="utf-8"))["calls"]} == {pending}
 
 
 def test_a_refused_call_keeps_the_settled_sibling_calls_of_its_batch(planned, api, monkeypatch):

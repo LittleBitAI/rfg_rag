@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from collections import deque
 from decimal import Decimal
 from functools import lru_cache
 
@@ -86,11 +87,24 @@ def resume_validation(topic, method, run_id, config_path, client):
             survivors.setdefault(key, item["candidate_id"])
     pending = set(last["pending"])
     candidates = [item for item in storage._read_jsonl(run_dir / "candidates.jsonl") if item["candidate_id"] in pending]
-    # 앞 기록에 출력이 남은 호출: 한 후보의 검증 도중 거절되어 pending 이 된 후보의 이미 정산된 호출을 다시 사지 않는다.
-    settled = {(call["request_sha256"], call["attempt"]): call["text"]
-               for path in storage.validation_records(run_dir) for call in storage._read_json(path)["calls"] if "text" in call}
-    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, settled)
+    judged, info = _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, _settled_calls(run_dir, pending))
     return storage.continue_validation(topic, method, run_id, judged, info)
+
+
+def _settled_calls(run_dir, pending):
+    """pending 후보마다, 앞 기록에서 그 후보가 이미 정산한 호출의 출력: {후보: {(요청 SHA-256, 시도): [출력, ...]}}.
+
+    한 후보의 검증 도중 뒤 호출이 실험 장부에 거절되면 그 후보는 pending 이 되고 앞 호출의 출력은 기록에만 남는다.
+    같은 요청이라도 출력은 호출마다 다르므로, 열쇠에 후보를 넣어 다른 후보의 출력을 쓰지 않고,
+    한 후보 안의 같은 요청은 기록된 차례대로 꺼낸다 (한 후보의 호출은 한 스레드에서 차례로 간다).
+    """
+    settled = {}
+    for path in storage.validation_records(run_dir):
+        for call in storage._read_json(path)["calls"]:
+            if call.get("candidate_id") in pending:
+                key = (call["request_sha256"], call["attempt"])
+                settled.setdefault(call["candidate_id"], {}).setdefault(key, deque()).append(call["text"])
+    return settled
 
 
 def _criteria(record):
@@ -103,7 +117,8 @@ def _criteria(record):
 def _judge_run(run_dir, topic, method, config_path, client, candidates, survivors, settled):
     """candidates 를 차례로 검증해 (판정한 항목, 검증 기록) 을 돌려준다. 한도에 닿으면 남은 후보를 pending 에 남긴다.
 
-    settled 는 앞 검증 기록에 출력이 남은 호출 {(요청 SHA-256, 시도): 출력} 이다 (_reply).
+    settled 는 후보마다 앞 검증 기록에서 이미 정산한 호출의 출력이다 (_settled_calls). 검증기 · 판정기는 후보마다 만들어
+    그 후보의 출력만 다시 쓴다.
     """
     config, config_sha = generation._run_config(config_path)
     plan_id, planned, spec = _pinned_plan(run_dir, topic)
@@ -111,9 +126,16 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
     units = {item["candidate_id"]: evidence_units(item, bundles[item["bundle_id"]]) for item in candidates}
     documents = _documents(topic, planned, bundles, candidates)
     prompt_path = storage.PROMPTS / "validator.txt"
+    prompts = (prompt_path.read_text(encoding="utf-8"), (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"))
     calls = []
-    ask = _asker(client, config, prompt_path.read_text(encoding="utf-8"), calls, settled)
-    judge = _judger(client, config, (storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), calls, settled)
+
+    def verdict(item):
+        candidate_id = item["candidate_id"]
+        replay = settled.get(candidate_id, {})
+        ask = _asker(client, config, prompts[0], calls, candidate_id, replay)
+        judge = _judger(client, config, prompts[1], calls, candidate_id, replay)
+        return _verdict(item, spec, units[candidate_id], ask, judge, survivors, documents.get(candidate_id))
+
     free_rejects = _static_rejections(candidates, spec, units, survivors, documents)
     rejected_ids = {item["candidate_id"] for item in free_rejects}
     to_judge = [item for item in candidates if item["candidate_id"] not in rejected_ids]
@@ -126,8 +148,7 @@ def _judge_run(run_dir, topic, method, config_path, client, candidates, survivor
             needed = _calls_needed(rest[0], units[rest[0]["candidate_id"]], documents.get(rest[0]["candidate_id"]))
             status = generation.limit_reached(config, len(calls), generation._cost(config, calls), needed)
             break
-        verdicts = generation.parallel(lambda item: _verdict(
-            item, spec, units[item["candidate_id"]], ask, judge, survivors, documents.get(item["candidate_id"])), batch)
+        verdicts = generation.parallel(verdict, batch)
         judged += [_settle(item, verdict, units[item["candidate_id"]], survivors)
                    for item, verdict in zip(batch, verdicts) if verdict is not None]
         if None in verdicts:
@@ -299,7 +320,8 @@ def _screener(client, config, instructions, calls):
     def screen(item):
         content = json.dumps({"question": item["question"], "answer": item["answer"]}, ensure_ascii=False)
         # 출시는 한 번에 끝나야 쓰므로 이어 돌 앞 출력이 없다.
-        verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful, {})
+        verdict, error = _reply(client, config, instructions, content, calls, item["question"], [], _parse_useful,
+                                item["candidate_id"], {})
         return verdict if error is None else (False, None, f"판정기 출력 오류: {error}")
     return screen
 
@@ -924,15 +946,15 @@ def _survivors(topic, method, run_id):
     return survivors
 
 
-def _asker(client, config, instructions, calls, settled):
-    """질문과 근거 단위로 검증기를 부르고 (답, None) 또는 (None, 출력 오류) 를 돌려주는 함수."""
+def _asker(client, config, instructions, calls, candidate_id, replay):
+    """후보 candidate_id 의 질문과 근거 단위로 검증기를 부르고 (답, None) 또는 (None, 출력 오류) 를 돌려주는 함수."""
     def ask(question, units):
         content = json.dumps(validator_input(question, units), ensure_ascii=False)
-        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict, settled)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_verdict, candidate_id, replay)
     return ask
 
 
-def _judger(client, config, instructions, calls, settled):
+def _judger(client, config, instructions, calls, candidate_id, replay):
     """독립 답(answer_a)과 후보 답(answer_b)이 같은 답인지 판정기에 묻고 (참거짓, None) 또는 (None, 출력 오류) 를 돌려주는 함수.
 
     판정기는 질문 · 근거 · 두 답만 받는다. 독립 답은 후보 답을 보지 않고 나왔으므로, 판정기는 견주기만 한다.
@@ -940,25 +962,28 @@ def _judger(client, config, instructions, calls, settled):
     def judge(question, units, independent, answer):
         content = json.dumps({**validator_input(question, units), "answer_a": independent, "answer_b": answer},
                              ensure_ascii=False)
-        return _reply(client, config, instructions, content, calls, question, units, _parse_same, settled)
+        return _reply(client, config, instructions, content, calls, question, units, _parse_same, candidate_id, replay)
     return judge
 
 
-def _reply(client, config, instructions, content, calls, question, units, parse, settled):
+def _reply(client, config, instructions, content, calls, question, units, parse, candidate_id, replay):
     """한 번 부르고, 출력이 계약에 맞지 않으면 한 번 더 부른다. 두 번 다 어기면 (None, 출력 오류).
 
-    호출마다 요청의 SHA-256 · 몇 번째 시도인지 · 출력을 calls 에 남긴다. settled 는 앞 검증 기록에 남은
-    {(요청, 시도): 출력} 이다. 한 후보의 여러 호출 중 뒤 호출이 실험 장부에 거절되어 그 후보가 pending 으로 남으면,
-    이어 돌 때 이미 정산된 앞 호출은 다시 사지 않고 그 출력을 쓴다 (calls 에 다시 넣지 않아 비용도 두 번 세지 않는다).
+    호출마다 후보 · 요청의 SHA-256 · 몇 번째 시도인지 · 출력을 calls 에 남긴다. replay 는 이 후보가 앞 기록에서 이미
+    정산한 호출의 출력 {(요청, 시도): [출력, ...]} 이다 (_settled_calls). 남은 출력이 있으면 차례대로 꺼내 쓰고 다시 사지 않는다
+    (calls 에 다시 넣지 않아 비용도 두 번 세지 않는다).
     """
     messages = [{"role": "system", "content": instructions}, {"role": "user", "content": content}]
     request = hashlib.sha256(json.dumps(messages, ensure_ascii=False).encode("utf-8")).hexdigest()
     for attempt in range(2):
-        text = settled.get((request, attempt))
-        if text is None:
+        recorded = replay.get((request, attempt))
+        if recorded:
+            text = recorded.popleft()
+        else:
             response = client(model=config["model"], reasoning_effort=config["reasoning_effort"], messages=messages)
             text = response["text"]
             calls.append({
+                "candidate_id": candidate_id,
                 "question": question,
                 "labels": [unit["label"] for unit in units],
                 "model": response["model"],

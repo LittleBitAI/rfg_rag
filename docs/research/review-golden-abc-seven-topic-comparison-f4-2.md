@@ -119,7 +119,20 @@ Add one test next to tests/golden/test_cli.py:221, reusing the planned/api fixtu
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, not verified (draft). The experiment ran as `tests/golden/test_cli.py::test_resume_replays_a_pending_candidate_its_own_output_not_a_siblings_for_the_same_request`.
+
+Setup:
+- Unlike the proposal, it uses no hand-made duplicate candidates. Fixture plan p3's validation and held-out bundles copy the budget bundle's labels and text, so a B run without `--part` gives three budget candidates whose validator requests have the same SHA-256.
+- With `generation.WORKERS = 8`, the first thread to send that request becomes the pending candidate Y: attempt 0 returns 'JSON 아님', attempt 1 raises `BudgetExceeded`.
+- The two siblings X wait on a barrier until Y has retried, so their valid E1 verdicts (which reject X) are recorded after Y's attempt 0.
+- A first try with `threading.get_ident()` alone was flaky. Pool threads are reused, and after Y raised its thread picked up a sibling. The barrier keeps Y's thread busy until both siblings have arrived.
+
+Results:
+- On a97eb96 plus the test, `resume` sent 0 requests (`assert 0 == 1`): Y replayed a sibling's valid output instead of its own 'JSON 아님'. That confirms the hypothesis.
+- The fix, in the commit after a97eb96 titled "golden: replay settled validation outputs per candidate on resume", implements the proposal as written. `_reply` records `candidate_id`. ask/judge are built per candidate inside `_judge_run`'s parallel function. `_settled_calls` builds FIFO deques per (candidate_id, request_sha256, attempt) for `last['pending']` only, and `_reply` pops them in order.
+- After the fix: Y replays its own 'JSON 아님', sends exactly one new attempt-1 request, and ends rejected with '검증기 출력 오류'. The calls in validation-2.json carry `candidate_id`, and only Y's.
+- `test_resuming_a_candidate_refused_mid_verdict_reuses_its_settled_calls` passed after the fix too, but the test-cleanup pass then removed it. Unlike S5's suggestion to keep it, the new test asserts the same observation more strongly: had resume re-bought the candidate's own settled attempt 0, it would have sent 2 requests instead of 1.
+- The full gate was not run, because the task rules forbid whole-directory pytest during review repairs. The affected golden test files were run instead; their counts are in the commit message.
 
 ## Unresolved limits
 
