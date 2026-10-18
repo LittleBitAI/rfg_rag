@@ -119,7 +119,9 @@ In wiki-agent tool/test_recovery.py, patch recovery.ChatSession with a Host that
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Ran the experiment as a scratch test outside both repositories (`test_the_format_retry_prompt_carries_the_finding`). It imports wiki-agent `tool/test_recovery.py` read-only (wiki-agent at `f7b4bdf`, its worktree left clean), with `recovery.ChatSession` patched to its `Host`. The first reply's S1 url was `C:/outside/the/repo.md`, and the second reply was valid; `prepared()` ran for one F1 repeat trigger. Observed: two sessions with different ids. Prompt 1 began "Review research for issue `F1` (repeat, rounds [1, 2]), cycle 1 of 2" and quoted the finding. Prompt 2 was only "Your answer could not be read: 출처 `S1` 는 URL 도 저장소의 파일도 아니다: C:/outside/the/repo.md / Answer again, ending with exactly the `recovery-research` block." The assertion that the second prompt carries the issue and the finding failed, as predicted. The page was still accepted (phase `fixing`), so nothing checks that the retry's subject matches the issue. The transcript agrees: line 44 is the F6 retry prompt holding only the error, and line 45 is a new cell. The hypothesis holds on current code.
+
+The cause and its fix are in wiki-agent `tool/main/recovery.py` (lines 356 and 413), outside this task's repository, and were not changed here. In this repository: `review-golden-abc-seven-topic-comparison-f6-1.md` now carries a misfiled banner, as `f4-1.md` does. Its F6 research written before the fix is restored from transcript line 43 (ts 1792283995, before `9458840` and `f0ddd69`), with provenance. Two follow-ups from that research are done: the negative judge-call test `tests/golden/test_validation.py::test_a_settled_judge_call_does_not_count_as_a_paid_validator_call`, and shared `validation._single_units` so the counted and sent requests cannot drift. Results are in the commit that carries this page. Until recovery.py builds the retry from `asked()` plus the rejected answer, a format retry can misfile again.
 
 ## Unresolved limits
 

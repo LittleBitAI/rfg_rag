@@ -1,5 +1,6 @@
 """독립 검증 · 난도 · 출시. 생성은 가짜 생성기로, 검증은 가짜 검증기로 돌린다. API 호출은 없다."""
 import json
+from collections import deque
 
 import pytest
 
@@ -495,6 +496,19 @@ def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_agains
     assert [Validator.labels(messages) for messages in validator.requests] == [("E1", "E2"), ("E1",), ("E2",)]
     [item] = validated(run_dir).values()
     assert item["state"] == "auto_validated"
+
+
+def test_a_settled_judge_call_does_not_count_as_a_paid_validator_call(config):
+    # 판정기 요청은 같은 질문 · 근거에 두 답이 더 있어 검증기 요청과 SHA-256 이 다르다. 그 출력이 남아 있어도 검증기 호출 셋은 그대로 사야 한다.
+    planned = bundle("p2", "multi_hop")
+    item = {**MULTI_HOP, "primary_topic": "multi_hop", "evidence": [unit["ref"] for unit in planned["units"][:2]]}
+    units = validation.evidence_units(item, planned)
+    asked = validation.validator_input(item["question"], units)
+    judged = json.dumps({**asked, "answer_a": "2년", "answer_b": "2년"}, ensure_ascii=False)
+    judge = validation._request_sha256((storage.PROMPTS / "judge.txt").read_text(encoding="utf-8"), judged)
+    validator = (storage.PROMPTS / "validator.txt").read_text(encoding="utf-8")
+
+    assert validation._calls_left(item, units, None, {(judge, 0): deque(['{"same": true}'])}, validator) == 3
 
 
 def test_free_rejections_are_recorded_even_after_a_candidate_blocked_by_the_call_cap(config, tmp_path):

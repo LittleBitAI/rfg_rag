@@ -633,11 +633,8 @@ def _topic_rule(item, question, units):
 
 def _single_unit_verdict(item, units, full, ask, judge):
     """multi_hop 은 근거 단위를 하나씩만 줬을 때 어느 것으로도 독립 답이 나오지 않아야 한다 (머리글 행은 그 표 행에 붙여 준다)."""
-    headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
-    for unit in units:
-        if plan._table_row(unit) == 0:
-            continue
-        single, error = ask(item["question"], plan._with_headers([unit], headers))
+    for unit, asked in _single_units(units):
+        single, error = ask(item["question"], asked)
         if not error and single["answerable"]:
             same, error = _settled(item["question"], units, full["answer"], single["answer"], judge)
         if error:
@@ -1067,5 +1064,13 @@ def _validator_unit_lists(item, units, document):
         return document_batches(document)
     if item["primary_topic"] != "multi_hop":
         return [units]
+    return [units, *(asked for _, asked in _single_units(units))]
+
+
+def _single_units(units):
+    """multi_hop 에서 하나씩 묻는 근거: 머리글이 아닌 단위마다 (그 단위, 그 표의 머리글을 붙여 검증기에 줄 목록).
+
+    _single_unit_verdict 와 _calls_left 가 함께 써서, 한도에 세는 요청과 실제로 보내는 요청이 어긋나지 않게 한다.
+    """
     headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
-    return [units, *(plan._with_headers([unit], headers) for unit in units if plan._table_row(unit) != 0)]
+    return [(unit, plan._with_headers([unit], headers)) for unit in units if plan._table_row(unit) != 0]
