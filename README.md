@@ -253,9 +253,9 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 라벨은 위치별로 기록합니다. OCR 벤치마크는 합친 라벨의 1·2 위치를 사용하며, 01은 벤치마크가 저장한 전사 결과를 읽습니다.
 
 실행 — 저장소 최상위에서
-1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다. 문서 100개에 1분 남짓 걸립니다.
+1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다.
 2. 화면 열기: 질문 화면과 같은 실행기(`frontend\start.cmd` · `frontend/start.command`)를 더블클릭하고, 첫 화면 오른쪽 위 `설정` → `OCR 이미지 라벨링` 을 누릅니다 (`http://localhost:5173/ocr.html`). 실행기가 라벨링 화면의 API 서버(포트 8766)도 함께 띄웁니다.
-3. 묶음 고르기: 상단 바에서 맡은 `묶음 1` ~ `묶음 5` 를 누릅니다. 카드를 문서 이름 · 문서 안 위치 순서로 세워 다섯으로 고르게 자른 것이라(209 · 209 · 209 · 209 · 208곳), 같은 `data/rfp.zip` 으로 extract 했다면 누구 컴퓨터에서나 같은 묶음입니다. 고른 묶음은 주소(`?batch=2`)에 남아 새로고침해도 그대로입니다.
+3. 묶음 고르기: 상단 바에서 맡은 `묶음 1` ~ `묶음 5` 를 누릅니다. 카드를 문서 이름 · 문서 안 위치 순서로 세워 다섯으로 고르게 자르므로 같은 `data/rfp.zip` 으로 extract 했다면 누구 컴퓨터에서나 같은 묶음입니다. 고른 묶음은 주소(`?batch=2`)에 남아 새로고침해도 그대로입니다.
 4. 결과 내보내기: 다 매기면 상단 바의 `결과 내보내기` 를 눌러 `ocr_labels_batchN.jsonl` 을 내려받고, 합치는 사람에게 보냅니다. 저장 중인 라벨이 있으면 저장이 끝날 때까지 이 버튼이 잠기고, 진행 수는 저장을 마친 라벨만 셉니다.
 5. 합치기 (한 사람): 받은 파일을 모두 넘겨 `.venv\Scripts\python -m frontend.ocr_select.merge ocr_labels_batch1.jsonl ocr_labels_batch2.jsonl ...` 를 실행합니다. 묶음마다 매긴 수와 빠진 위치 수를 출력하고 `artifacts/ocr_labels/merged_labels.jsonl` 에 씁니다. 같은 위치를 두 사람이 매겼으면 `labelled_at` 이 늦은 라벨이 남습니다.
 
@@ -268,7 +268,7 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 ## OCR 결과 검토 화면
 
 기존 실행기(`frontend\start.cmd` · `frontend/start.command`)를 열고 질문 화면의 `설정` → `OCR 결과 검토`로 들어갑니다 (`http://localhost:5173/review.html`).
-`data/ocr_captions.jsonl`의 391개 위치를 그림 해시로 묶어 서로 다른 그림 320장을 한 장씩 검토합니다.
+저장된 캡션의 등장 위치를 그림 해시로 묶어 그림마다 한 장씩 검토합니다. 과거 논리 경로 `data/ocr_captions.jsonl`은 공통 로더가 무시된 `artifacts/local_inputs/ocr_captions.jsonl`로 연결합니다. 파일이 없으면 로컬 Git에서 복원하며, 얕은 clone에는 소유자가 제공한 비공개 묶음이 필요합니다. 아래 로컬 입력 복원 명령을 사용합니다.
 왼쪽에는 `artifacts/ocr_labels/images/`의 원본, 오른쪽에는 저장된 전사를 Markdown 표 · 제목 · 목록으로 표시합니다.
 엔진 · 이미지 유형과 모든 등장 위치(문서 이름, PDF 쪽 또는 HWP 그림 이름 · 표시 위치)를 함께 보여 줍니다.
 문서 · 이미지 유형 · 엔진 · 판정 상태(미검토 포함)로 거르고, 이전/다음 버튼 또는 ← → 키로 이동합니다.
@@ -386,9 +386,9 @@ write_jsonl(test_eval_set, ARTIFACTS / "test_eval_set.jsonl")
 고정한 02 설정으로 04를 한 번 실행하고, 05의 `ANSWERS`를 그 test 파일로 지정해 네 평가를 한 번 실행합니다.
 네 CSV와 제외율·사용량을 최종 결과로 보관합니다. test를 dev 검색 전용 재실행 셀에 넣지 않습니다.
 
-### 평가 데이터셋 (03 검증)
+### 로컬 평가 입력과 OCR 캡션 복원
 
-평가 자료는 Git에서 내려받지 않는다. 로컬 입력을 먼저 복원한다.
+평가 자료와 저장된 OCR 캡션은 Git의 현재 트리에서 내려받지 않는다. 로컬 입력을 먼저 복원한다.
 
 ```powershell
 .venv\Scripts\python -m rag.validation.local_inputs
@@ -402,7 +402,7 @@ write_jsonl(test_eval_set, ARTIFACTS / "test_eval_set.jsonl")
 .venv\Scripts\python -m rag.validation.local_inputs --from-directory C:/private/evaluation-bundle
 ```
 
-묶음 구조는 `golden/dev.jsonl`, `golden/test.jsonl`, `golden/manifest.json`, `eval_questions.yaml`이다. 파일은 무시된 `artifacts/local_inputs/`에 보관한다. 기존 config와 노트북의 논리 경로는 공통 로더가 이 로컬 경로로 연결하므로 기본 설정은 유지한다. test는 복원 중 바이트 지문만 검사하며 검색·튜닝하지 않는다. 자료가 없으면 복원 명령을 안내하고 멈춘다.
+평가 묶음 구조는 `golden/dev.jsonl`, `golden/test.jsonl`, `golden/manifest.json`, `eval_questions.yaml`이다. OCR 캡션은 묶음 루트의 `ocr_captions.jsonl`로 제공한다. 같은 `--from-directory` 명령으로 평가 전용·OCR 전용·둘 다 포함한 묶음을 복원할 수 있다. 평가 파일이 하나라도 있으면 평가 묶음 전체와 manifest 검증이 필요하다. 파일은 무시된 `artifacts/local_inputs/`에 보관한다. 기존 config의 논리 경로는 공통 로더가 이 로컬 경로로 연결하며, OCR 소비자는 평가 릴리스 없이 캡션만 복원한다. test는 복원 중 바이트 지문만 검사하며 검색·튜닝하지 않는다. 필요한 자료가 없으면 복원 명령을 안내하고 멈춘다.
 
 주제별 핵심 사실은 숫자·단위, 비교 선택, 조건 또는 표 칸 값에서 얻는다. 다중 근거는 독립적으로 확인 가능한 사실을 사용한다. 부분 라벨과 누락은 사유별로 분리하며 실제 질문·정답·개수·분할·측정값은 로컬 보고서에만 기록한다.
 
@@ -457,11 +457,10 @@ v11 출력은 요소 메타데이터의 원본 `sha256`·`doc_id`가 현재 청�
 벤치마크 첫 유료 호출과 전체 실행 전에는 모델별 토큰·단가 예상액을 보여 주고 승인을 기다립니다.
 실측 보고서와 엔진 선택 기록은 무시된 artifacts에만 보관한다. [OCR 비교 절차](docs/ocr_benchmark.md)를 따른다.
 
-`OCR = False`이고 `config.yaml`의 `paths.ocr_captions`(기본 `data/ocr_captions.jsonl`)가 있으면
-01은 그 파일을 읽어 그림 위치에 `[그림/도표 설명] …` 레코드를 넣습니다. 이 결과를 읽는 데 API 키나 호출은 필요 없습니다.
+`OCR = False`이면 01은 `config.yaml`의 `paths.ocr_captions`(기본 논리 경로 `data/ocr_captions.jsonl`)를 공통 로더로 복원·해석한 뒤 그림 위치에 `[그림/도표 설명] …` 레코드를 넣습니다. 이 결과를 읽는 데 API 키나 호출은 필요 없습니다.
 HWP 본문 표시가 없는 그림은 문서 끝에, PDF 그림은 해당 쪽의 이미지 위 본문 다음에 들어갑니다.
 기본 원본 입력(`PREPROCESSED = None`)에서는 설명 청크도 해당 위치에 넣고, 그림 경계에서 나뉜 짧은 본문도 유지합니다.
-결과 파일이 없으면 저장 OCR을 추가하지 않으며 기존 전처리 출력을 유지합니다.
+기본 캡션을 복원할 수 없으면 안내와 함께 멈추므로 설명이 조용히 빠지지 않습니다. 별도로 지정한 사용자 캡션 경로와 `OCR = True` 경로는 자동 복원 대상이 아닙니다. 01의 위치별 청킹도 복원 후의 실제 파일을 기준으로 결정합니다.
 
 `01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
 `True`에서는 저장 캡션 파일이 있어도 읽지 않고, 기존 Vision OCR·CRAFT 설정과 청크 분할 방식을 사용합니다.

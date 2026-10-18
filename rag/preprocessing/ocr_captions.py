@@ -7,11 +7,14 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from rag.config import read_jsonl
+from rag.config import ROOT, read_jsonl
+from rag.validation.local_inputs import local_input
 
 
 def load_captions(path: Path | None) -> dict[str, list[dict]]:
     by_document = defaultdict(list)
+    if path is not None:
+        path = local_input(ROOT, path)
     if path is not None and path.exists():
         seen = set()
         for row in read_jsonl(path):

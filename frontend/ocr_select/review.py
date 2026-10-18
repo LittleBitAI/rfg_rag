@@ -11,6 +11,8 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
+from rag.validation.local_inputs import local_input
+
 ROOT = Path(__file__).resolve().parents[2]
 CAPTIONS = ROOT / "data" / "ocr_captions.jsonl"
 IMAGES = ROOT / "artifacts" / "ocr_labels" / "images.jsonl"
@@ -28,6 +30,7 @@ class VerdictRequest(BaseModel):
 
 
 def read_rows(path: Path) -> list[dict]:
+    path = local_input(ROOT, path)
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 

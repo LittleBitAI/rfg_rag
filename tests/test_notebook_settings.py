@@ -103,17 +103,18 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
 def test_preprocessing_notebook_selects_input(tmp_path, package, captions_present, ocr):
     docs, chunks = [{"doc_id": "d1"}], [{"chunk_id": "c1"}]
     defaults = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    resolved_captions = tmp_path / "artifacts/local_inputs/ocr_captions.jsonl"
     if captions_present:
-        captions = tmp_path / defaults["paths"]["ocr_captions"]
-        captions.parent.mkdir(parents=True)
-        captions.write_text("", encoding="utf-8")
+        resolved_captions.parent.mkdir(parents=True)
+        resolved_captions.write_text("", encoding="utf-8")
     namespace = {"cfg": defaults, "ROOT": tmp_path, "ARTIFACTS": tmp_path / "artifacts",
                  "collect_inputs": MagicMock(return_value=["test.pdf"]),
                  "parse_documents": MagicMock(return_value=docs),
                  "chunk_documents": MagicMock(return_value=chunks),
                  "load_v11_package": MagicMock(return_value=(docs, chunks)),
                  "save_chunks": MagicMock(), "parsing_summary": MagicMock(),
-                 "chunk_summary": MagicMock(), "display": MagicMock()}
+                 "chunk_summary": MagicMock(), "display": MagicMock(),
+                 "local_input": MagicMock(return_value=resolved_captions)}
     _run_cell("01_preprocessing.ipynb", "PREPROCESSED =", namespace, PREPROCESSED=package, OCR=ocr)
     notebook = json.loads((ROOT / "01_preprocessing.ipynb").read_text(encoding="utf-8"))
     for cell in notebook["cells"]:
@@ -126,7 +127,11 @@ def test_preprocessing_notebook_selects_input(tmp_path, package, captions_presen
         namespace["collect_inputs"].assert_called_once()
         namespace["parse_documents"].assert_called_once_with(
             ["test.pdf"], defaults["parsing"], ocr=ocr, ocr_cfg=defaults["ocr"],
-            captions_path=tmp_path / defaults["paths"]["ocr_captions"])
+            captions_path=resolved_captions if not ocr else None)
+        if not ocr:
+            namespace["local_input"].assert_called_once_with(tmp_path, tmp_path / defaults["paths"]["ocr_captions"])
+        else:
+            namespace["local_input"].assert_not_called()
         namespace["chunk_documents"].assert_called_once_with(
             docs, defaults["chunking"], position_captions=captions_present and not ocr)
         namespace["load_v11_package"].assert_not_called()
@@ -134,3 +139,4 @@ def test_preprocessing_notebook_selects_input(tmp_path, package, captions_presen
         namespace["load_v11_package"].assert_called_once_with(tmp_path / package)
         for name in ["collect_inputs", "parse_documents", "chunk_documents", "parsing_summary"]:
             namespace[name].assert_not_called()
+        namespace["local_input"].assert_not_called()
