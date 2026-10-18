@@ -2,15 +2,16 @@
 import json
 import os
 import subprocess
-from contextlib import contextmanager
+import threading
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from golden_pipeline import cli, evidence, storage
+from golden_pipeline import adoption, cli, evidence, generation, storage
 from golden_pipeline.improvement import PREVENTION_RULES
-from golden_pipeline.plan import load_plan
+from golden_pipeline.plan import load_plan, topic_spec
 
 GENERATOR = ["--model", "generator-test", "--reasoning-effort", "low", "--price", "1", "4"]
 VALIDATOR = ["--model", "validator-test", "--reasoning-effort", "high", "--price", "1", "4"]
@@ -164,6 +165,179 @@ def test_a_b_and_c_run_through_audit_release_and_report(planned, api, tmp_path, 
     assert json.loads((run / "validation.json").read_text(encoding="utf-8"))["run_config"]["reasoning_effort"] == "high"
     table = capsys.readouterr().out
     assert "| 유효 문항률 | 2/6 = 33.3% | 1/5 = 20.0% | 2/4 = 50.0% |" in table
+
+
+def test_b_with_part_train_calls_only_the_bundles_a_round_one_calls(planned, api):
+    # B 가 validation · held-out 묶음까지 부르면 A 의 round 1 과 다른 묶음을 견주게 된다.
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
+
+    sent = json.loads((storage.OUTPUTS / "goldens/numeric/runs/B/b1/manifest.json").read_text(encoding="utf-8"))
+    assert sorted(sent["generation"]["bundle_ids"]) == sorted(planned.values())
+    with pytest.raises(SystemExit, match="B 만"):
+        golden("run", "--topic", "numeric", "--method", "A", "--plan", "p3", "--id", "l1", "--part", "train",
+               *GENERATOR, *LIMITS, *A_ONLY)
+
+
+def write_freeze(plan_sha=None):
+    """compare 가 읽는 실험 x1 의 고정 기록: 계획 p3 과 그 SHA-256, 지금의 프롬프트 · 주제 명세, numeric 의 몫, 승인 예산."""
+    planned_plan, sha = load_plan("p3")
+    parts = {part: [b["bundle_id"] for b in planned_plan["bundles"] if adoption.split(b["bundle_id"]) == part]
+             for part in ("train", "validation", "held_out")}
+    record = {"plan": {"plan_id": "p3", "sha256": plan_sha or sha}, "prompts": storage.snapshot(storage.PROMPTS),
+              "topic_specs": {"numeric": topic_spec("numeric")[1]}, "parts": {"numeric": parts}}
+    root = storage.OUTPUTS / "experiments/x1"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "freeze.json").write_text(json.dumps(record), encoding="utf-8")
+    (storage.CONFIGS / "experiments/x1.json").write_text(json.dumps({"ceiling_usd": 3, "max_output_tokens": 9, "prices": {}}),
+                                                         encoding="utf-8")
+    return root
+
+
+def test_compare_refuses_runs_outside_the_frozen_plan_or_train_assignment(planned, api):
+    # B 가 --part train 없이 validation · held-out 묶음까지 부르면 그 출력이 수용률 · 비용 · 검토 표본에 섞인다.
+    golden("--experiment", "x1", "run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", *GENERATOR, *LIMITS)
+    write_freeze()
+    for command in ("compare", "review-packets"):
+        with pytest.raises(ValueError, match="train 몫이 아닌"):
+            golden(command, "x1")
+
+    write_freeze(plan_sha="0" * 64)
+    with pytest.raises(ValueError, match="고정한 계획"):
+        golden("compare", "x1")
+
+
+def test_review_packets_refuse_a_plan_file_changed_after_the_freeze(planned, api):
+    # 실행 기록은 고정한 계획으로 만들어졌어도, 검토지가 나중에 바뀐 계획 파일의 근거를 인용하면 다른 근거를 판정하게 된다.
+    golden("--experiment", "x1", "run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train",
+           *GENERATOR, *LIMITS)
+    root = write_freeze()
+    path = storage.OUTPUTS / "plans/p3.json"
+    path.write_text(path.read_text(encoding="utf-8").replace("130,000,000원", "140,000,000원"), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="고정한 계획"):
+        golden("review-packets", "x1")
+    assert not (root / "review").exists()
+
+
+def test_resume_replays_a_pending_candidate_its_own_output_not_a_siblings_for_the_same_request(planned, api, monkeypatch):
+    # validation · held-out 묶음은 예산 묶음과 근거 본문이 같아 세 후보가 같은 검증기 요청을 보낸다.
+    # 같은 요청에도 출력은 다를 수 있으므로, 이어 돌 때 pending 후보는 형제의 출력이 아니라 자기 출력을 받아야 한다.
+    monkeypatch.setattr(generation, "WORKERS", 8)
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", *GENERATOR, *LIMITS)
+    lock, retrying, siblings = threading.Lock(), threading.Event(), threading.Barrier(3, timeout=5)
+    state = {"sent": []}
+
+    def client(model, reasoning_effort, messages):
+        user = messages[1]["content"]
+        if not (user.startswith("{") and "사업 예산" in user):
+            return api(model, reasoning_effort, messages)
+        # 처음 온 요청의 스레드가 pending 이 될 후보다. 그 후보는 거절될 때까지 스레드를 놓지 않는다.
+        me = threading.get_ident()
+        with lock:
+            pending = state.setdefault("pending", me) == me
+            attempt = state["sent"].count(me)
+            state["sent"].append(me)
+        if not pending:
+            # 형제는 pending 후보의 첫 출력이 기록된 뒤에 유효한 판정을 받아(틀린 답이라) 거절된다.
+            siblings.wait()
+            retrying.wait(5)
+            return {"model": model, "text": json.dumps(VERDICTS["E1"], ensure_ascii=False), "input_tokens": 10, "output_tokens": 10}
+        if attempt == 0:
+            return {"model": model, "text": "JSON 아님", "input_tokens": 10, "output_tokens": 10}
+        retrying.set()
+        siblings.wait()
+        raise generation.BudgetExceeded("실험 상한")
+
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(client))
+    golden("audit", "--topic", "numeric", "--method", "B", "--id", "b1", *VALIDATOR, *LIMITS)
+    run_dir = storage.OUTPUTS / "goldens/numeric/runs/B/b1"
+    [pending] = json.loads((run_dir / "validation.json").read_text(encoding="utf-8"))["pending"]
+    resumed = []
+
+    def resume_client(model, reasoning_effort, messages):
+        resumed.append(messages[1]["content"])
+        return {"model": model, "text": "JSON 아님", "input_tokens": 10, "output_tokens": 10}
+
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(resume_client))
+    golden("resume", "--topic", "numeric", "--method", "B", "--id", "b1", *LIMITS)
+
+    # 자기 첫 출력(JSON 아님)을 다시 써서 거절된 두 번째 시도 하나만 보내고, 그것도 어겨 출력 오류로 거절된다.
+    assert len(resumed) == 1
+    [row] = [row for row in read_jsonl(run_dir / "rejected.jsonl") if row.get("candidate_id") == pending]
+    assert "검증기 출력 오류" in row["state_history"][-1]["reason"]
+    assert {call["candidate_id"] for call in json.loads((run_dir / "validation-2.json").read_text(encoding="utf-8"))["calls"]} == {pending}
+
+
+def test_a_refused_call_keeps_the_settled_sibling_calls_of_its_batch(planned, api, monkeypatch):
+    # 실험 장부가 함께 보낸 호출 하나를 거절해도, 이미 정산한 다른 호출의 출력 · 판정은 run 에 남아야 한다.
+    monkeypatch.setattr(generation, "WORKERS", 2)
+    refuse = {"text": "5%"}
+
+    def client(model, reasoning_effort, messages):
+        if refuse["text"] in messages[1]["content"]:
+            raise generation.BudgetExceeded("실험 상한")
+        return api(model, reasoning_effort, messages)
+
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(client))
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
+    sent = json.loads((storage.OUTPUTS / "goldens/numeric/runs/B/b1/manifest.json").read_text(encoding="utf-8"))["generation"]
+    called = [call["bundle_id"] for call in sent["calls"]]
+    assert sent["status"] == "ceiling" and planned["budget"] in called and planned["bond"] not in called
+    assert len(called) == len(api.requests)
+
+    refuse["text"] = "보증금"
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(api))
+    golden("run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b2", "--part", "train", *GENERATOR, *LIMITS)
+    monkeypatch.setattr(cli, "api_client", lambda: nullcontext(client))
+    before = len(api.requests)
+    golden("audit", "--topic", "numeric", "--method", "B", "--id", "b2", *VALIDATOR, *LIMITS)
+    record = json.loads((storage.OUTPUTS / "goldens/numeric/runs/B/b2/validation.json").read_text(encoding="utf-8"))
+    ids = {item["bundle_id"]: item["candidate_id"] for item in read_jsonl(storage.OUTPUTS / "goldens/numeric/runs/B/b2/candidates.jsonl")}
+    assert record["status"] == "ceiling" and len(record["calls"]) == len(api.requests) - before > 0
+    assert record["pending"] == [ids[planned["bond"]]]
+    # 출시는 판정을 다 해야 쓰므로, 장부가 중간에 거절할 수 있는 실험에서는 시작하지 않는다.
+    with pytest.raises(SystemExit, match="출시하지 않습니다"):
+        golden("--experiment", "x1", "release", "--topic", "numeric", "--version", "v1", "--run", "B:b2", *VALIDATOR, *LIMITS)
+
+
+def test_experiment_comparison_counts_missing_and_malformed_outputs_and_samples_blinded_strata(planned, api, tmp_path):
+    x = ("--experiment", "x1")
+    golden(*x, "run", "--topic", "numeric", "--method", "B", "--plan", "p3", "--id", "b1", "--part", "train", *GENERATOR, *LIMITS)
+    golden(*x, "audit", "--topic", "numeric", "--method", "B", "--id", "b1", *VALIDATOR, *LIMITS)
+    golden(*x, "run", "--topic", "numeric", "--method", "A", "--plan", "p3", "--id", "a1", *GENERATOR, *LIMITS, *A_ONLY)
+    # C 는 표 묶음을 내지 않았고, JSON 이 아닌 줄을 하나 냈다.
+    export, sidecar = export_c(tmp_path, [(planned["budget"], BUDGET), (planned["bond"], BOND), "JSON 아님"])
+    golden(*x, "import", "--topic", "numeric", "--plan", "p3", "--id", "c1", "--export", export, "--sidecar", sidecar)
+    golden(*x, "audit", "--topic", "numeric", "--method", "C", "--id", "c1", *VALIDATOR, *LIMITS)
+    root = write_freeze()
+
+    golden("review-packets", "x1")
+    review = (root / "review/judgments.csv").read_text(encoding="utf-8-sig").splitlines()
+    filled = [review[0]] + [f"{line.split(',')[0]},Y,{'N' if n == 1 else 'Y'},Y,Y," for n, line in enumerate(review[1:], 1)]
+    (root / "review/judgments.csv").write_text("\n".join(filled) + "\n", encoding="utf-8-sig")
+    golden("compare", "x1")
+
+    result = json.loads((root / "comparison.json").read_text(encoding="utf-8"))
+    first = result["topics"]["numeric"]["first_attempt"]
+    # 받아들인 비율의 분모는 JSON 이 아닌 출력까지 모든 출력이고, 전달 완결성은 출력이 하나라도 온 묶음이다.
+    assert (first["B"]["output_acceptance"], first["B"]["delivery_completeness"]) == (ratio(1, 3), ratio(3, 3))
+    assert first["B"]["rejections"] == {"answer_mismatch": 1, "output_format": 1}
+    assert (first["C"]["output_acceptance"], first["C"]["delivery_completeness"]) == (ratio(2, 3), ratio(2, 3))
+    assert first["A"]["usable_bundle_coverage"] == ratio(1, 3)
+    assert result["topics"]["numeric"]["a_full"]["usable_bundle_coverage"] == ratio(2, 3)
+    costs = result["topics"]["numeric"]["costs"]
+    assert costs["C"]["total_usd"] == costs["C"]["per_unique_valid_question"]["value"] == "unobserved"
+    assert costs["B"]["per_unique_valid_question"]["value"] == pytest.approx(costs["B"]["total_usd"])
+    # 검토 표본: A · B 는 통과 하나 · 거절 하나, C 는 거절이 없어 통과 둘. 검토지에는 방식 · run 이 보이지 않는다.
+    key = json.loads((root / "review/key.json").read_text(encoding="utf-8"))["entries"]
+    strata = {method: sorted(e["stratum"] for e in key if e["method"] == method) for method in "ABC"}
+    assert strata == {"A": ["auto_validated", "rejected"], "B": ["auto_validated", "rejected"],
+                      "C": ["auto_validated", "auto_validated"]}
+    packet = (root / "review/packet.md").read_text(encoding="utf-8")
+    assert not any(run_id in packet for run_id in ("a1-r1", "b1", "c1"))
+    human = result["human"]
+    assert sum(cell["denominator"] for name, cell in human["cells"].items() if name.endswith("· all")) == 6
+    assert sum(cell["numerator"] for name, cell in human["cells"].items() if name.endswith("· all")) == 5
 
 
 def test_c_unobserved_cost_and_tokens_are_reported_as_unobserved_not_zero(planned, api, tmp_path, capsys):

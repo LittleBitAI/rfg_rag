@@ -102,6 +102,8 @@ def outputs(monkeypatch, tmp_path):
     monkeypatch.setattr(storage, "OUTPUTS", root / "outputs")
     monkeypatch.setattr(storage, "CONFIGS", root / "configs")
     monkeypatch.setattr(storage, "PROMPTS", root / "prompts")
+    # cli --experiment 가 모듈 값을 바꾸므로 테스트마다 되돌린다.
+    monkeypatch.setattr(storage, "EXPERIMENT", None)
     return root
 
 

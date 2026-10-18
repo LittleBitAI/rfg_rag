@@ -15,6 +15,9 @@ PACKAGE = Path(__file__).resolve().parent
 OUTPUTS = PACKAGE / "outputs"
 CONFIGS = PACKAGE / "configs"
 PROMPTS = PACKAGE / "prompts"
+# 비교 실험(cli --experiment)의 id. 실험은 카탈로그 · run · 실패 기록 · loop 를 outputs/experiments/{id} 에 따로 둔다.
+# 지난 실패 기록 · 통과 항목 · 근거 묶음 소유가 어느 방식을 돕거나 막지 않게 하려는 것이다. 근거 run · 계획은 함께 읽는다.
+EXPERIMENT = None
 STATE_FILES = {"auto_validated": "accepted.jsonl", "rejected": "rejected.jsonl"}
 # generation.with_document 가 질문 앞에 붙인 문서 이름: "기관의 「사업 이름」 사업에서 ".
 DOCUMENT_PREFIX = re.compile(r"^.*?」 사업에서 ")
@@ -68,7 +71,7 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
         "counts": {name: _count_lines(run_dir / name) for name in ("candidates.jsonl", *STATE_FILES.values())},
         "generation": info,
     })
-    _append_jsonl(OUTPUTS / "catalog.jsonl", entries)
+    _append_jsonl(state_root() / "catalog.jsonl", entries)
     return run_dir
 
 
@@ -221,7 +224,7 @@ def read_release(topic, version):
 
 
 def read_catalog():
-    path = guard(OUTPUTS / "catalog.jsonl")
+    path = guard(state_root() / "catalog.jsonl")
     return _read_jsonl(path) if path.exists() else []
 
 
@@ -311,7 +314,12 @@ def _catalog_entry(item):
 def _topic_dir(topic):
     if topic not in TOPICS:
         raise ValueError(f"topic 은 {TOPICS} 중 하나여야 합니다: {topic!r}")
-    return guard(OUTPUTS / "goldens" / topic)
+    return guard(state_root() / "goldens" / topic)
+
+
+def state_root():
+    """카탈로그와 주제 폴더가 놓이는 곳: 실험이면 outputs/experiments/{id}, 아니면 outputs."""
+    return _child(OUTPUTS / "experiments", EXPERIMENT) if EXPERIMENT else guard(OUTPUTS)
 
 
 def _child(parent, name):

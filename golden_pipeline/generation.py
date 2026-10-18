@@ -15,6 +15,7 @@ from string import Template
 
 from kiwipiepy import Kiwi
 
+from golden_pipeline import adoption
 from golden_pipeline import plan as plans
 from golden_pipeline import storage
 from golden_pipeline.schema import SchemaError, validate_item
@@ -37,7 +38,11 @@ WORKERS = 8
 _KIWI_LOCK = threading.Lock()
 
 
-def generate(method, topic, plan_id, run_id, config_path, client, revision=None):
+class BudgetExceeded(RuntimeError):
+    """실험 장부(experiment.Ledger)가 보내기 전에 거절한 호출. 보내지 않았으므로 청구되지 않았다."""
+
+
+def generate(method, topic, plan_id, run_id, config_path, client, revision=None, part=None):
     """A 또는 B 로 계획의 근거 묶음마다 한 번 호출해 후보를 만든다.
 
     client(model=..., reasoning_effort=..., messages=[...]) 는 {"model", "text", "input_tokens", "output_tokens"} 를 돌려준다.
@@ -45,6 +50,7 @@ def generate(method, topic, plan_id, run_id, config_path, client, revision=None)
     revision 은 A 의 자기 개선 round 가 준다: {"parents": {묶음 id: 이전 거절 후보 id 또는 None}, "prevention", "notes", "policy"}.
     그 묶음만 다시 부르고, 프롬프트 뒤에 예방 규칙 글(prevention)을, 묶음의 컨텍스트 뒤에 그 묶음의 지난 실패(notes)를 붙이며,
     policy 를 매니페스트에 남긴다.
+    part 를 주면 그 몫(adoption.split)의 묶음만 부른다. B 를 A 의 round 1 과 같은 train 묶음으로 견줄 때 쓴다.
     """
     if method not in ("A", "B"):
         raise ValueError(f"generate 는 A · B 만 받습니다. C 는 import_c 를 씁니다: {method!r}")
@@ -61,6 +67,8 @@ def generate(method, topic, plan_id, run_id, config_path, client, revision=None)
     )
     prompt_sha = storage._sha256(prompt_path)
     bundles, parents, notes = _bundles(plan, topic), {}, {}
+    if part is not None:
+        bundles = [bundle for bundle in bundles if adoption.split(bundle["bundle_id"]) == part]
     if revision is not None:
         instructions += revision["prevention"]
         parents, notes = revision["parents"], revision["notes"]
@@ -407,6 +415,7 @@ def _call_all(client, config, instructions, bundles, notes):
     """호출 수 한도와 예산 안에서 묶음마다 한 번 호출한다. 한도에 닿으면 멈추고 그 이유를 status 로 남긴다.
 
     WORKERS 개씩 함께 보내고 한도는 그 사이에서 본다. 출력은 묶음 차례대로 남는다.
+    실험 장부가 호출을 거절하면 함께 끝난 출력은 남기고 ceiling 으로 멈춘다. 거절된 묶음은 출력이 없다.
     """
     calls, outputs = [], []
     while len(outputs) < len(bundles):
@@ -415,7 +424,10 @@ def _call_all(client, config, instructions, bundles, notes):
             return calls, outputs, stop
         size = min(WORKERS, config["max_calls"] - len(calls))
         batch = bundles[len(outputs):len(outputs) + size]
-        for bundle, response in zip(batch, parallel(lambda b: _ask(client, config, instructions, b, notes), batch)):
+        responses = parallel(lambda b: _ask(client, config, instructions, b, notes), batch)
+        for bundle, response in zip(batch, responses):
+            if response is None:
+                continue
             calls.append({
                 "bundle_id": bundle["bundle_id"],
                 "model": response["model"],
@@ -423,6 +435,8 @@ def _call_all(client, config, instructions, bundles, notes):
                 "output_tokens": response["output_tokens"],
             })
             outputs.append((bundle, response["text"]))
+        if None in responses:
+            return calls, outputs, "ceiling"
     return calls, outputs, "complete"
 
 
@@ -433,9 +447,17 @@ def _ask(client, config, instructions, bundle, notes):
 
 
 def parallel(work, items):
-    """items 마다 work 를 WORKERS 개까지 함께 돌려, 결과를 items 차례대로 돌려준다."""
+    """items 마다 work 를 WORKERS 개까지 함께 돌려, 결과를 items 차례대로 돌려준다.
+
+    실험 장부가 어느 호출을 거절하면 그 자리만 None 이다. 함께 보낸 다른 호출은 이미 정산됐으므로 그 결과를 버리지 않는다.
+    """
+    def attempt(item):
+        try:
+            return work(item)
+        except BudgetExceeded:
+            return None
     with ThreadPoolExecutor(max(1, min(WORKERS, len(items)))) as pool:
-        return list(pool.map(work, items))
+        return list(pool.map(attempt, items))
 
 
 def limit_reached(config, calls, cost, needed=1):

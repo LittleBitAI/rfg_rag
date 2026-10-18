@@ -7,18 +7,19 @@ import argparse
 import json
 import sys
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import openai
 from dotenv import load_dotenv
 
-from golden_pipeline import evidence, generation, improvement, plan, report, split, storage, validation
+from golden_pipeline import adoption, comparison, evidence, experiment, generation, improvement, plan, report, split, storage, validation
 from golden_pipeline.schema import TOPICS
 
 
 def main(argv=None):
     args = _parser().parse_args(argv)
+    storage.EXPERIMENT = args.experiment
     # 출력을 파일로 돌리면 Windows 는 cp949 로 써서, 근거의 '∙' 같은 글자에서 끝난 loop 가 오류로 끝난다.
     sys.stdout.reconfigure(encoding="utf-8")
     print(args.handler(args))
@@ -32,15 +33,19 @@ def api_client():
     거절 · 길이 초과로 본문이 없으면 빈 글을 돌려줘, run 을 멈추지 않고 그 출력을 거절 행으로 남긴다.
     생성기 · 검증기 · 판정기의 출력 계약은 모두 JSON 객체 하나라 JSON 모드로 부른다.
     호출을 여러 개 함께 보내 속도 제한(429)에 닿을 수 있어 다시 시도를 넉넉히 둔다.
+    실험(--experiment)에서는 모든 호출이 실험 장부를 거치고 출력 토큰(추론 포함)에 상한을 둔다.
+    다시 시도도 장부가 맡는다. SDK 가 안에서 다시 보내면 청구됐을 수 있는 호출을 장부가 세지 못한다.
     """
     load_dotenv(storage.PACKAGE.parent / ".env")
-    with openai.OpenAI(max_retries=8) as client:
-        def call(model, reasoning_effort, messages):
+    book = experiment.ledger(storage.EXPERIMENT) if storage.EXPERIMENT else nullcontext()
+    with book as book, openai.OpenAI(max_retries=0 if book else 8) as client:
+        def call(model, reasoning_effort, messages, max_output_tokens=None):
+            limit = {"max_completion_tokens": max_output_tokens} if max_output_tokens else {}
             response = client.chat.completions.create(model=model, reasoning_effort=reasoning_effort, messages=messages,
-                                                      response_format={"type": "json_object"})
+                                                      response_format={"type": "json_object"}, **limit)
             return {"model": response.model, "text": response.choices[0].message.content or "",
                     "input_tokens": response.usage.prompt_tokens, "output_tokens": response.usage.completion_tokens}
-        yield call
+        yield book.guard(call) if book else call
 
 
 def _evidence(args):
@@ -61,7 +66,9 @@ def _run(args):
         if args.max_rounds or args.validator_model or args.validator_reasoning_effort or args.validator_price:
             raise SystemExit("--max-rounds · --validator-model · --validator-reasoning-effort · --validator-price 는 A 만 받습니다")
         with _config_file({**generator, **limits}) as path, api_client() as call:
-            return generation.generate("B", args.topic, args.plan, args.id, path, call)
+            return generation.generate("B", args.topic, args.plan, args.id, path, call, part=args.part)
+    if args.part:
+        raise SystemExit("--part 는 B 만 받습니다. A 의 loop 는 몫을 스스로 나눕니다")
     if not (args.max_rounds and args.validator_model and args.validator_reasoning_effort and args.validator_price):
         raise SystemExit("A 는 --max-rounds · --validator-model · --validator-reasoning-effort · --validator-price 도 받아야 시작합니다")
     validator = _priced(args.validator_model, args.validator_reasoning_effort, args.validator_price)
@@ -102,6 +109,9 @@ def _audit(args):
 
 
 def _release(args):
+    # 출시는 쓸모 판정을 다 해야 쓰므로, 실험 장부가 중간에 호출을 거절하면 이미 낸 판정 비용이 기록 없이 남는다.
+    if storage.EXPERIMENT:
+        raise SystemExit("비교 실험(--experiment)은 출시하지 않습니다")
     runs = [tuple(run.split(":", 1)) for run in args.run]
     config = {**_priced(args.model, args.reasoning_effort, args.price), "max_calls": args.max_calls, "budget_usd": args.budget}
     with _config_file(config) as path, api_client() as call:
@@ -151,6 +161,7 @@ def _json(data):
 
 def _parser():
     parser = argparse.ArgumentParser(prog="golden", description="골든 데이터 파이프라인 (golden_pipeline/README.md)")
+    parser.add_argument("--experiment", help="비교 실험 id: 실험 폴더의 카탈로그 · run · 실패 기록과 실험 장부를 씀")
     commands = parser.add_subparsers(dest="command", required=True)
     _prepare_commands(commands)
     _paid_commands(commands)
@@ -176,12 +187,36 @@ def _prepare_commands(commands):
                          help="질문이 묻는 문서가 분할 SPLIT 의 PART(dev · test)에 있는 묶음만 고름")
     command.set_defaults(handler=_plan)
 
+    command = commands.add_parser("freeze", help="큰 계획에서 주제마다 train 6 · validation 2 · held-out 2 묶음을 골라 실험 계획으로 고정 (API 호출 없음)")
+    command.add_argument("experiment_id")
+    command.add_argument("pool_plan", help="고를 묶음이 든 계획 id")
+    command.set_defaults(handler=lambda args: experiment.freeze(args.experiment_id, args.pool_plan))
+
+    command = commands.add_parser("estimate", help="고정한 실험 계획과 지난 A run 의 토큰 기록으로 호출 수 · 비용 어림 (API 호출 없음)")
+    command.add_argument("experiment_id")
+    command.add_argument("--price", nargs=2, type=float, required=True, metavar=("IN", "OUT"), help="단가 (USD / 100만 토큰)")
+    command.set_defaults(handler=lambda args: _json(experiment.estimate(args.experiment_id, *args.price)))
+
+    command = commands.add_parser("review-packets", help="방식 · 주제마다 첫 시도 출력 둘을 고른 눈가림 검토지 (API 호출 없음)")
+    command.add_argument("experiment_id")
+    command.set_defaults(handler=lambda args: comparison.review_packets(args.experiment_id))
+
+    command = commands.add_parser("compare", help="비교 실험의 지표 · 비용 · 장부 대조 · 사람 판정 (API 호출 없음)")
+    command.add_argument("experiment_id")
+    command.set_defaults(handler=lambda args: comparison.write(args.experiment_id))
+
+    command = commands.add_parser("pro-packets", help="주제마다 Pro 채팅에 붙여 넣을 C 프롬프트와 빈 sidecar (API 호출 없음)")
+    command.add_argument("experiment_id")
+    command.set_defaults(handler=lambda args: experiment.pro_packets(args.experiment_id))
+
 
 def _paid_commands(commands):
     command = commands.add_parser("run", help="A 자기 개선 loop 또는 B 생성 (유료 호출)")
     _target(command, ("A", "B"))
     command.add_argument("--plan", required=True)
     _limits(command)
+    command.add_argument("--part", choices=[name for name, _ in adoption.SPLITS],
+                         help="B 만: 이 몫(adoption.split)의 묶음만 부름. A 의 round 1 과 같은 train 묶음으로 견줄 때")
     command.add_argument("--max-rounds", type=int, help="A 만: 최대 round 수")
     command.add_argument("--validator-model", help="A 만: 검증기 모델")
     command.add_argument("--validator-reasoning-effort", help="A 만: 검증기 추론 강도 (예: low · medium · high)")

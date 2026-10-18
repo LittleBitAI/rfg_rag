@@ -25,6 +25,8 @@ A 만의 자기 개선(실패 기록과 round), 이 모두를 부르는 CLI 와 
 | `improvement.py` | A 의 자기 개선: round 반복 (`improve`), 실패 기록 (`record_failures`), 관련 실패 찾기 (`related_failures`) |
 | `adoption.py` | 자기 개선의 채택 하한과 held-out: 묶음 나눔 (`split`), 짝지은 부트스트랩 하한 (`paired_gain`) |
 | `report.py` | A · B · C 비교 보고서 (`compare`, `write_report`, `render`) |
+| `comparison.py` | 비교 실험의 결과: 주제 · 방식별 지표와 비용, 장부 대조 (`compare`), 눈가림 사람 검토 표본 (`review_packets`) |
+| `experiment.py` | 비교 실험: 층화 계획 고정 (`freeze`), 실험 장부 (`ledger`), 비용 어림 (`estimate`), Pro 프롬프트 (`pro_packets`). 실험 abc7 은 `experiment_abc7.md` |
 | `cli.py` | 하나뿐인 CLI (`python -m golden_pipeline.cli`)와 OpenAI 호출 (`api_client`) |
 | `golden.cmd` · `golden.command` | Windows · macOS 실행기. 둘 다 받은 인자를 그대로 `cli.py` 에 넘깁니다 |
 | `configs/` | 설정 파일. `topics/{topic}.json` 은 주제 명세입니다. run 마다 파일별 SHA-256 이 매니페스트에 남습니다 |
@@ -50,6 +52,11 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `rename` | 출시본들을 합쳐 질문 앞 문서 이름만 지금 `data/data_list.csv` 의 이름으로 바꾼 새 출시본으로. 쓸모 판정은 다시 하지 않습니다 | 없음 |
 | `split` | 주제들의 출시본을 문서 단위 dev 30% · test 70% 로, 또는 앞 분할(`--base`)을 그대로 두고 새 주제를 더함 (아래 dev · test 나누기) | 없음 |
 | `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
+| `freeze` · `estimate` · `pro-packets` · `review-packets` · `compare` | 비교 실험의 계획 고정, 비용 어림, Pro 프롬프트, 눈가림 검토지, 결과 (`experiment_abc7.md`) | 없음 |
+
+- 맨 앞의 `--experiment <id>` 는 카탈로그 · run · 실패 기록 · loop 를 `outputs/experiments/<id>/` 에 따로 두고,
+  모든 API 호출을 그 실험의 장부(지출 상한)로 보냅니다. 자세한 것은 `experiment_abc7.md` 2 · 3절입니다.
+- `run --method B --part train` 은 계획에서 그 몫(`adoption.split`)의 묶음만 부릅니다.
 
 ```
 golden_pipeline\golden.cmd evidence v11-20261014 "<내려받은 압축>\RFP_Preprocessing_Final_v11_Team\RFP_Preprocessing_Final_v11_Team"
@@ -360,6 +367,7 @@ run 설정(JSON 파일)은 아래 여섯 값을 모두 가져야 하고, 빠지�
 
 호출 수가 `max_calls` 에 닿거나 누적 비용이 `budget_usd` 에 닿으면 남은 묶음을 부르지 않고 `status` 에 `call_cap` · `budget` 을 남깁니다.
 예산은 호출 사이에만 보므로 마지막 호출 하나만큼 넘을 수 있습니다.
+비교 실험(`--experiment`)에서 실험 장부가 호출을 거절하면 함께 끝난 출력은 남기고 `ceiling` 으로 멈춥니다.
 
 C 의 sidecar(JSON)는 `model_label` (화면에 보인 모델 표시), `run_date`, `provided_files`, `tool_use`, `input_limits` 만 받습니다.
 없거나 비어 있는 값은 `unobserved` 로 남기고, API 모델과 같다고 추정하지 않습니다. 다른 필드가 있으면 멈춥니다.
@@ -589,7 +597,7 @@ loop 설정(JSON)은 아래를 기본값 없이 모두 가져야 합니다.
 loop 안 run 의 생성 · 검증은 loop 한도에서 이미 쓴 호출 · 비용을 뺀 run 설정(`loops/{loop_id}/{name}-*.json`)으로 돕니다.
 채택 · held-out 을 재는 호출도 같은 한도에서 빠집니다.
 쓴 호출 · 비용은 호출이 돌아올 때마다 `calls.jsonl` 에 남기므로, 생성 · 검증이 도중에 끊겨도 이어 돌 때 그만큼 한도에서 빠집니다.
-멈춘 이유는 `max_rounds` · `call_cap` · `budget` · `no_open_bundles` 중 하나로 `report.json` 에 남습니다.
+멈춘 이유는 `max_rounds` · `call_cap` · `budget` · `ceiling` (실험 장부) · `no_open_bundles` 중 하나로 `report.json` 에 남습니다.
 생성이나 검증이 한도에 닿아 끝나지 않은 round 가 있으면 그 round 에서 멈추고, 검증 전에 한도에 닿은 round 는 `not_validated` 로 남습니다.
 
 멈춘 loop 를 같은 인자로 다시 부르면 이어 돕니다. 생성 run · `validation.json` · 실패 기록이 이미 있는 단계는 건너뛰므로
