@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import random
 import shutil
-import subprocess
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
@@ -13,7 +12,8 @@ from rag.evaluation.ir import exclusion_report
 from rag.validation.evidence import _chunk_label, _context_labels, normalize_evidence
 from rag.validation.validation import load_eval_items
 
-from .common import MODEL_IGNORE_PATTERNS, OUT, RECORD, ROOT, SEED, WEIGHTS, digest, models, protected_files, save_json
+from .common import (MODEL_IGNORE_PATTERNS, OUT, RECORD, ROOT, SEED, WEIGHTS, digest, models,
+                     protected_files, save_json, source_identity, verify_source)
 from .full_dev import load_full_dev
 
 
@@ -104,6 +104,7 @@ def freeze_inputs():
     manifest_path = RECORD / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        verify_source(manifest)
         assert manifest["protected_before"] == protected_files()
         assert models() == manifest["models"], "Pinned model specifications changed"
         for name in ("questions", "split", "models"):
@@ -112,6 +113,7 @@ def freeze_inputs():
         for name, fingerprint in manifest["inputs"].items():
             assert digest(OUT / "input" / name) == fingerprint
         return manifest
+    identity = source_identity()
     destination = OUT / "input"
     destination.mkdir(parents=True, exist_ok=True)
     sources = {"original_eval.jsonl": "artifacts/eval_set.jsonl", "chunks.jsonl": "artifacts/chunks.jsonl",
@@ -132,15 +134,16 @@ def freeze_inputs():
     split = grouped_split(mapped)
     save_json(split, RECORD / "split.json")
     exclusion_report(mapped).to_csv(RECORD / "exclusions.csv", index=False, encoding="utf-8")
-    manifest = make_manifest(sources, mapped, chunks, split)
+    manifest = make_manifest(sources, mapped, chunks, split, identity)
+    verify_source(manifest)
     save_json(manifest, manifest_path)
     print("FROZEN", len(rows), "questions;", len(chunks), "chunks; partitions", split["topic_counts"], flush=True)
     return manifest
 
 
-def make_manifest(sources, rows, chunks, split):
-    return {"version": 2, "frozen_at_utc": datetime.now(timezone.utc).isoformat(),
-            "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+def make_manifest(sources, rows, chunks, split, identity):
+    return {"version": 3, "frozen_at_utc": datetime.now(timezone.utc).isoformat(),
+            "base_commit": identity["source_commit"], "source_hashes": identity["source_hashes"],
             "inputs": {name: digest(OUT / "input" / name) for name in sources}, "source_paths": sources,
             "questions_sha256": digest(RECORD / "questions.jsonl"), "split_sha256": digest(RECORD / "split.json"),
             "models_sha256": digest(RECORD / "models.json"), "models": models(),

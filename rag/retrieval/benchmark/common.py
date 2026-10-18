@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -36,8 +37,24 @@ def models():
 
 def source_fingerprints():
     paths = list((ROOT / "rag/retrieval").rglob("*.py"))
-    paths += [ROOT / name for name in ("rag/config.py", "rag/evaluation/ir.py", "rag/validation/evidence.py")]
+    paths += list((ROOT / "rag/validation").rglob("*.py"))
+    paths += [ROOT / name for name in ("rag/config.py", "rag/evaluation/ir.py")]
     return {str(path.relative_to(ROOT)).replace("\\", "/"): digest(path) for path in sorted(paths)}
+
+
+def source_identity():
+    paths = ["rag/retrieval", "rag/validation", "rag/config.py", "rag/evaluation/ir.py"]
+    status = subprocess.check_output(["git", "status", "--porcelain", "--", *paths], cwd=ROOT, text=True)
+    assert not status.strip(), "Benchmark source has uncommitted changes"
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    return {"source_commit": commit, "source_hashes": source_fingerprints()}
+
+
+def verify_source(manifest):
+    identity = source_identity()
+    assert identity["source_commit"] == manifest["base_commit"], "Benchmark source commit changed"
+    assert identity["source_hashes"] == manifest.get("source_hashes"), "Benchmark source hashes changed or missing"
+    return identity
 
 
 def offline_environment():

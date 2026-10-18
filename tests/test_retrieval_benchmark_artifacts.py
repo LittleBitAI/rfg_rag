@@ -6,11 +6,10 @@ import random
 import pytest
 
 from rag.config import write_jsonl
-from rag.evaluation.ir import ir_scores
-from rag.retrieval.benchmark import summarize, verify
+from rag.retrieval.benchmark import common, prepare, summarize, verify
 from rag.retrieval.benchmark.common import SEED, digest, save_json
 from rag.retrieval.benchmark.prepare import grouped_split
-from rag.retrieval.benchmark.run import configurations
+from rag.retrieval.benchmark.run import configurations, measurement_files
 
 
 def write_gzip(path, rows):
@@ -23,12 +22,16 @@ def write_gzip(path, rows):
 def synthetic_result(question, partition, weight):
     evidence = question["evidence"][0]
     row = {"id": question["id"], "partition": partition, "route": "ordinary",
+           "primary_topic": question["primary_topic"], "coverage_group": "single_evidence", "code_query": False,
            "doc_label_state": "fully_labelled", "chunk_label_state": "fully_labelled",
-           "context_chunk_ids": [evidence["chunk_id"]], "context_sha256": ["0" * 64],
+           "context_chunk_ids": ["non-gold-chunk"], "context_sha256": ["0" * 64],
            "ranked_candidates": [{"doc_id": evidence["doc_id"], "chunk_id": evidence["chunk_id"],
                                   "fused_rank": 1, "dense_rank": None if weight == 0 else 1,
-                                  "bm25_rank": None if weight == 1 else 1, "exact_code_match": False}]}
-    return {**row, "scores": ir_scores({**question, **row})}
+                                  "bm25_rank": None if weight == 1 else 1, "exact_code_match": False},
+                                 {"doc_id": "synthetic-other", "chunk_id": "non-gold-chunk", "fused_rank": 2,
+                                  "dense_rank": None if weight == 0 else 2,
+                                  "bm25_rank": None if weight == 1 else 2, "exact_code_match": False}]}
+    return row
 
 
 def synthetic_timings(questions, partitions):
@@ -48,17 +51,26 @@ def write_model(record, spec, manifest, questions, split):
                 "test_split_executed": False, "frozen_questions_sha256": manifest["questions_sha256"],
                 "frozen_split_sha256": manifest["split_sha256"], "machine_before": {"gpu": "RTX 3080"},
                 "indexing": {"chunks": manifest["counts"]["chunks"]}}
+    complete.update(source_commit=manifest["base_commit"], source_hashes=manifest["source_hashes"])
     save_json(complete, folder / "complete.json")
     for sparse, weight in configurations(spec):
         for mode in ("isolated", "integrated"):
             name = summarize.config_name(mode, sparse, weight)
             rows = [synthetic_result(q, partitions[q["id"]], weight) for q in questions]
             write_gzip(folder / f"{name}.jsonl.gz", rows)
-            write_gzip(folder / f"{name}-latency.jsonl.gz", synthetic_timings(questions, partitions))
+            write_jsonl(synthetic_timings(questions, partitions), folder / f"{name}-latency.jsonl")
+    seal_model(folder, spec)
 
 
-@pytest.fixture(params=(1, 2), ids=("archived_format", "current_format"))
-def local_record(tmp_path, monkeypatch, request):
+def seal_model(folder, spec):
+    path = folder / "complete.json"
+    complete = json.loads(path.read_text(encoding="utf-8"))
+    complete["artifact_sha256"] = {name: digest(folder / name) for name in measurement_files(spec)}
+    save_json(complete, path)
+
+
+@pytest.fixture
+def local_record(tmp_path, monkeypatch):
     spec = {"key": "kure", "id": "synthetic/model"}
     questions = [{"id": f"q-{i}", "question": f"synthetic question {i}", "primary_topic": "numeric",
                   "answerable": True, "bundle_id": f"bundle-{i}", "evidence": [
@@ -70,7 +82,10 @@ def local_record(tmp_path, monkeypatch, request):
     split = grouped_split(questions)
     save_json(split, record / "split.json")
     save_json([spec], record / "models.json")
-    manifest = {"version": request.param, "counts": {"questions": len(questions), "chunks": len(questions)}}
+    identity = {"source_commit": "a" * 40, "source_hashes": {"search.py": "b" * 64}}
+    manifest = {"version": 3, "counts": {"questions": len(questions), "chunks": len(questions) + 1},
+                "base_commit": identity["source_commit"], "source_hashes": identity["source_hashes"],
+                "models": [spec], "protected_before": {}, "inputs": {}}
     for name, suffix in (("questions", "jsonl"), ("split", "json"), ("models", "json")):
         manifest[f"{name}_sha256"] = digest(record / f"{name}.{suffix}")
     save_json(manifest, record / "manifest.json")
@@ -78,6 +93,11 @@ def local_record(tmp_path, monkeypatch, request):
     release.parent.mkdir(parents=True)
     write_jsonl([{"candidate_id": q["id"]} for q in questions], release)
     monkeypatch.setattr(verify, "ROOT", tmp_path)
+    monkeypatch.setattr(common, "source_identity", lambda: identity)
+    monkeypatch.setattr(prepare, "RECORD", record)
+    monkeypatch.setattr(prepare, "OUT", record.parent)
+    monkeypatch.setattr(prepare, "models", lambda: [spec])
+    monkeypatch.setattr(prepare, "protected_files", lambda: {})
     monkeypatch.setattr(verify, "models", lambda: [spec])
     monkeypatch.setattr(summarize, "models", lambda: [spec])
     write_model(record, spec, manifest, questions, split)
@@ -90,21 +110,25 @@ def test_local_artifact_verification_accepts_complete_synthetic_records(local_re
     verify.verify_record(local_record)
 
 
-@pytest.mark.parametrize("damage", ("score", "rank", "context", "pass", "position", "duration", "sample_count"))
+@pytest.mark.parametrize("damage", ("rank", "context", "pass", "position", "duration", "sample_count"))
 def test_local_artifact_verification_rejects_corrupted_records(local_record, damage):
     latency = damage in ("pass", "position", "duration", "sample_count")
     suffix = "-latency" if latency else ""
-    path = local_record / f"results/kure/isolated-kiwi-0.6{suffix}.jsonl.gz"
-    rows = summarize.load_results(path)
-    if damage == "score":
-        rows[0]["scores"]["chunk_fused_recall_at_10"] = 0.0
-    elif damage == "rank":
+    extension = ".jsonl" if latency else ".jsonl.gz"
+    path = local_record / f"results/kure/isolated-kiwi-0.6{suffix}{extension}"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if latency else summarize.load_results(path)
+    if damage == "rank":
         rows[0]["ranked_candidates"][0]["fused_rank"] = 2
     elif damage == "context":
         rows[0]["context_sha256"] = []
     else:
         corrupt_timing(rows, damage)
-    write_gzip(path, rows)
+    if latency:
+        write_jsonl(rows, path)
+    else:
+        write_gzip(path, rows)
+    # 소스 파일 지문 검사와 별개로 행·패스 의미 검증도 계속 지킨다.
+    seal_model(path.parent, {"key": "kure"})
     with pytest.raises(AssertionError):
         verify.verify_record(local_record)
 

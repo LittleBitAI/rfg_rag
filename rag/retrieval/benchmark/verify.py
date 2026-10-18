@@ -1,35 +1,27 @@
 """로컬 측정 산출물을 검사하며 저장소 테스트에는 실제 데이터가 필요하지 않다."""
-import gzip
 import json
 import math
 import random
 
 from rag.config import read_jsonl
-from rag.evaluation.ir import ir_scores, label_state
+from rag.evaluation.ir import label_state
 
-from .common import ROOT, SEED, digest, models
+from .common import ROOT, SEED, digest, models, verify_source
 from .prepare import evidence_groups, grouped_split
-from .run import configurations
+from .run import configurations, measurement_files
 from .summarize import choose_weights, config_name, load_results
 
 
-def verify_scores(record, question):
+def verify_result(record, question):
     for level in ("doc", "chunk"):
         assert record[f"{level}_label_state"] == label_state(question, level)
-    expected = ir_scores({**question, **record})
-    assert set(record["scores"]) == set(expected)
-    for metric, value in expected.items():
-        if math.isnan(value):
-            assert record["scores"][metric] is None
-        else:
-            assert math.isclose(record["scores"][metric], value, rel_tol=1e-9, abs_tol=1e-12)
     assert [c["fused_rank"] for c in record["ranked_candidates"]] == list(
         range(1, len(record["ranked_candidates"]) + 1))
     assert len(record["context_chunk_ids"]) == len(record["context_sha256"])
 
 
 def verify_timing(path, questions, partitions):
-    with gzip.open(path, "rt", encoding="utf-8") as stream:
+    with path.open(encoding="utf-8") as stream:
         times = [json.loads(line) for line in stream]
     assert len(times) == 3 * len(questions)
     for pass_id in range(3):
@@ -48,9 +40,9 @@ def verify_partition(record, manifest):
         assert digest(record / f"{name}.{suffix}") == manifest[f"{name}_sha256"]
     rows = read_jsonl(record / "questions.jsonl")
     split = json.loads((record / "split.json").read_text(encoding="utf-8"))
-    if manifest["version"] == 2:
-        assert grouped_split(rows) == split
-        assert {r["id"] for r in rows} == {r["candidate_id"] for r in read_jsonl(ROOT / "eval/golden/dev.jsonl")}
+    assert manifest["version"] == 3, "Unbound historical records require a new measured run"
+    assert grouped_split(rows) == split
+    assert {r["id"] for r in rows} == {r["candidate_id"] for r in read_jsonl(ROOT / "eval/golden/dev.jsonl")}
     partitions = {qid: name for name, ids in split["ids"].items() for qid in ids}
     assert all(len({partitions[r["id"]] for r in group}) == 1 for group in evidence_groups(rows))
     assert len(partitions) == sum(map(len, split["ids"].values())) == len(rows) == manifest["counts"]["questions"]
@@ -64,7 +56,7 @@ def verify_configuration(folder, name, questions, partitions, mode, weight):
     for row in rows:
         assert row["partition"] == partitions[row["id"]]
         assert row["route"] == "ordinary"
-        verify_scores(row, by_id[row["id"]])
+        verify_result(row, by_id[row["id"]])
     candidates = [c for row in rows for c in row["ranked_candidates"]]
     if mode == "isolated":
         assert not any(c["exact_code_match"] for c in candidates)
@@ -72,12 +64,17 @@ def verify_configuration(folder, name, questions, partitions, mode, weight):
         assert all(c["dense_rank"] is None for c in candidates)
     if weight == 1:
         assert all(c["bm25_rank"] is None for c in candidates)
-    verify_timing(folder / f"{name}-latency.jsonl.gz", questions, partitions)
+    verify_timing(folder / f"{name}-latency.jsonl", questions, partitions)
 
 
-def verify_model(record, spec, manifest, questions, partitions):
-    folder = record / "results" / spec["key"]
+def verify_completion(folder, spec, manifest):
     complete = json.loads((folder / "complete.json").read_text(encoding="utf-8"))
+    assert complete["source_commit"] == manifest["base_commit"], "Model source commit differs from frozen source"
+    assert complete["source_hashes"] == manifest["source_hashes"], "Model source hashes differ from frozen source"
+    expected = set(measurement_files(spec))
+    assert set(complete.get("artifact_sha256", {})) == expected, "Missing or unexpected measurement artifact seals"
+    assert all((folder / name).is_file() and digest(folder / name) == complete["artifact_sha256"][name]
+               for name in expected), "Measurement artifact changed after completion"
     assert complete["model"] == spec
     assert complete["protected_unchanged"] and complete["network_attempts"] == []
     assert complete["test_split_executed"] is False
@@ -85,6 +82,12 @@ def verify_model(record, spec, manifest, questions, partitions):
     assert complete["frozen_split_sha256"] == manifest["split_sha256"]
     assert "RTX 3080" in complete["machine_before"]["gpu"]
     assert complete["indexing"]["chunks"] == manifest["counts"]["chunks"]
+    return complete
+
+
+def verify_model(record, spec, manifest, questions, partitions):
+    folder = record / "results" / spec["key"]
+    verify_completion(folder, spec, manifest)
     for sparse, weight in configurations(spec):
         for mode in ("isolated", "integrated"):
             verify_configuration(folder, config_name(mode, sparse, weight), questions, partitions, mode, weight)
@@ -92,6 +95,7 @@ def verify_model(record, spec, manifest, questions, partitions):
 
 def verify_record(record):
     manifest = json.loads((record / "manifest.json").read_text(encoding="utf-8"))
+    verify_source(manifest)
     questions, partitions = verify_partition(record, manifest)
     for spec in models():
         verify_model(record, spec, manifest, questions, partitions)

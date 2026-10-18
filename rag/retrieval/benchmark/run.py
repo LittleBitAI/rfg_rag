@@ -7,7 +7,6 @@ import json
 import os
 import random
 import shutil
-import subprocess
 import time
 
 import faiss
@@ -20,7 +19,7 @@ from rag.evaluation.ir import coverage_group, label_state
 from rag.retrieval.indexing import KiwiTokenizer, find_codes
 from rag.retrieval.retrieval import FilterHits
 
-from .common import OUT, RECORD, ROOT, SEED, WEIGHTS, digest, no_network, protected_files, save_json, source_fingerprints
+from .common import OUT, RECORD, ROOT, SEED, WEIGHTS, digest, no_network, protected_files, save_json, verify_source
 from .embedding import LocalEmbedder, snapshot
 from .prepare import freeze_inputs
 from .resources import ResourceMonitor, machine
@@ -158,6 +157,12 @@ def measure_queries(index, spec, folder):
     return index.embedder.truncation_report([r["question"] for r in rows], query=True)
 
 
+def measurement_files(spec):
+    return [f"{mode}-{sparse}-{weight:.1f}{suffix}"
+            for sparse, weight in configurations(spec) for mode in ("isolated", "integrated")
+            for suffix in (".jsonl.gz", "-latency.jsonl")]
+
+
 def run_model(spec):
     manifest = freeze_inputs()
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
@@ -185,15 +190,16 @@ def run_model(spec):
         after = protected_files()
         assert after == manifest["protected_before"], "Protected application artifacts changed"
         assert not attempts, attempts
+        identity = verify_source(manifest)
         result = {"model": spec, "machine_before": before, "model_load_seconds": embedder.load_seconds,
-                  "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+                  **identity,
                   "model_load_resources": loading_resources,
                   "search_setup_seconds": search_setup_seconds, "indexing": build, "query_resources": resources,
                   "query_truncation": query_truncation, "raw_vector_dtypes": sorted(embedder.raw_dtypes),
                   "network_attempts": attempts, "protected_unchanged": True, "test_split_executed": False,
                   "frozen_questions_sha256": digest(RECORD / "questions.jsonl"),
                   "frozen_split_sha256": digest(RECORD / "split.json"),
-                  "source_hashes": source_fingerprints(),
+                  "artifact_sha256": {name: digest(folder / name) for name in measurement_files(spec)},
                   "model_file_hashes": model_file_hashes(spec)}
         save_json(result, folder / "complete.json")
         print("COMPLETE", spec["id"], "protected files unchanged; zero network attempts", flush=True)

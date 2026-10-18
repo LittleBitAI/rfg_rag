@@ -10,8 +10,9 @@ import pandas as pd
 from rag.config import read_jsonl
 from rag.evaluation.ir import ir_scores
 
-from .common import OUT, RECORD, WEIGHTS, digest, models, save_json
-from .run import configurations
+from .common import OUT, RECORD, WEIGHTS, models, save_json
+from .prepare import freeze_inputs
+from .run import measurement_files
 
 
 def load_results(path):
@@ -161,28 +162,16 @@ def export_raw(spec):
     target = RECORD / "results" / spec["key"]
     target.mkdir(parents=True, exist_ok=True)
     source = OUT / spec["key"]
-    questions = {row["id"]: row for row in read_jsonl(RECORD / "questions.jsonl")}
-    for sparse, weight in configurations(spec):
-        for mode in ("isolated", "integrated"):
-            name = config_name(mode, sparse, weight)
-            rows = scored_rows(load_results(source / f"{name}.jsonl.gz"), questions)
-            with gzip.open(target / f"{name}.jsonl.gz", "wt", encoding="utf-8") as stream:
-                for row in rows:
-                    stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
-            with (source / f"{name}-latency.jsonl").open("rb") as inp, \
-                    gzip.open(target / f"{name}-latency.jsonl.gz", "wb") as out:
-                shutil.copyfileobj(inp, out)
-    shutil.copyfile(source / "complete.json", target / "complete.json")
+    for name in [*measurement_files(spec), "complete.json"]:
+        shutil.copyfile(source / name, target / name)
 
 
 def summarize():
+    from .verify import verify_completion, verify_record
+
+    manifest = freeze_inputs()
     specs = models()
-    resources = []
-    for spec in specs:
-        complete = json.loads((OUT / spec["key"] / "complete.json").read_text(encoding="utf-8"))
-        assert complete["protected_unchanged"] and not complete["network_attempts"]
-        assert complete["frozen_split_sha256"] == digest(RECORD / "split.json")
-        resources.append(complete)
+    resources = [verify_completion(OUT / spec["key"], spec, manifest) for spec in specs]
     questions = {row["id"]: row for row in read_jsonl(RECORD / "questions.jsonl")}
     choices = {s["key"]: choose_weights(s, OUT, questions) for s in specs}
     choice_path = RECORD / "chosen_weights.json"
@@ -202,7 +191,5 @@ def summarize():
     pd.DataFrame(validation).to_csv(RECORD / "validation_per_question.csv", index=False, encoding="utf-8")
     pd.DataFrame(paired_differences(validation)).to_csv(RECORD / "paired_differences.csv", index=False, encoding="utf-8")
     save_json(resources, RECORD / "resources.json")
-    from .verify import verify_record
-
     verify_record(RECORD)
     print("SUMMARIZED all seven models; choices frozen before validation aggregation", flush=True)
