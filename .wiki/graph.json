@@ -137,6 +137,16 @@
    "a": "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
    "b": "docs/research/review-golden-abc-seven-topic-comparison-f4-2.md",
    "kind": "link"
+  },
+  {
+   "a": "docs/research/review-golden-abc-seven-topic-comparison-f5-1.md",
+   "b": "docs/research/review-golden-abc-seven-topic-comparison-f6-1.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/research/review-golden-abc-seven-topic-comparison-f6-1.md",
+   "b": "docs/research/review-golden-abc-seven-topic-comparison-f5-1.md",
+   "kind": "link"
   }
  ],
  "orphans": [
@@ -152,14 +162,13 @@
   "docs/research/review-feature-golden-data-validation-f1-1.md",
   "docs/research/review-feature-golden-data-validation-f1-2.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f2-1.md",
-  "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
-  "docs/research/review-golden-abc-seven-topic-comparison-f6-1.md"
+  "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md"
  ],
  "counts": {
-  "docs": 30,
-  "linked": 16,
+  "docs": 31,
+  "linked": 18,
   "read": 0,
-  "orphans": 14,
+  "orphans": 13,
   "pages": 1,
   "decisions": 55,
   "injectable_decisions": 12
