@@ -114,6 +114,25 @@ def test_a_freeze_killed_while_writing_the_plan_publishes_no_plan_and_a_retry_fr
     assert record["plan"]["sha256"] == storage._sha256(plan_path)
 
 
+def test_a_second_freeze_of_the_same_id_while_one_is_publishing_is_refused_and_the_first_stays_whole(outputs, monkeypatch):
+    # 함께 고정하면 뒤 명령이 앞 고정 기록을 거두고 제 기록을 남겨, 계획과 고정 기록이 서로 다른 실험을 가리킨다.
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
+    real, overlapped = storage.publish, []
+
+    def publish(path, data):
+        real(path, data)
+        if path.name == "freeze.json" and not overlapped:
+            overlapped.append(path)
+            with pytest.raises(RuntimeError, match="다른 명령이"):
+                experiment.freeze("x1", "pool")
+
+    monkeypatch.setattr(storage, "publish", publish)
+    record = json.loads(experiment.freeze("x1", "pool").read_text(encoding="utf-8"))
+
+    assert overlapped and record["plan"]["sha256"] == storage._sha256(outputs / "outputs/plans/x1.json")
+
+
 def test_a_reader_never_sees_a_partly_written_plan(outputs, monkeypatch):
     order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
     monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)

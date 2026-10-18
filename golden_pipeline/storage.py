@@ -15,6 +15,11 @@ from pathlib import Path
 
 from golden_pipeline.schema import ITEM_FIELDS, METHODS, TOPICS, validate_item
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 PACKAGE = Path(__file__).resolve().parent
 OUTPUTS = PACKAGE / "outputs"
 CONFIGS = PACKAGE / "configs"
@@ -361,6 +366,31 @@ def _read_json(path):
 def _read_jsonl(path):
     with path.open(encoding="utf-8") as f:
         return [json.loads(line) for line in f]
+
+
+@contextlib.contextmanager
+def exclusive(path):
+    """잠금 파일 path 를 OS 잠금으로 쥔 동안만 들어간다. 다른 명령이 쥐고 있으면 기다리지 않고 멈춘다.
+
+    잠금은 파일이 있는지가 아니라 OS 가 쥔 것이라, 프로세스가 끊기면 OS 가 풀어 준다. 그래서 끊긴 명령도 다음 실행을 막지 않는다.
+    """
+    with guard(path).open("a+b") as f:
+        f.seek(0)
+        try:
+            if os.name == "nt":
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise RuntimeError(f"다른 명령이 같은 작업을 하고 있습니다. 끝난 뒤 다시 실행하세요: {path}") from None
+        try:
+            yield
+        finally:
+            f.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def publish(path, data):

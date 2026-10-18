@@ -64,16 +64,24 @@ def freeze(experiment_id, pool_plan_id):
     plan_path = storage._child(storage.OUTPUTS / "plans", f"{experiment_id}.json")
     root = storage._child(storage.OUTPUTS / "experiments", experiment_id)
     root.mkdir(parents=True, exist_ok=True)
-    freeze_path = root / "freeze.json"
+    # 같은 실험 id 를 두 명령이 함께 고정하면 서로의 고정 기록을 거둬 계획과 기록이 서로 다른 실험을 가리킬 수 있다.
+    # 있는지 보기부터 내놓기까지를 OS 잠금 안에서 한다. 끊긴 명령의 잠금은 OS 가 풀어 다음 고정을 막지 않는다.
+    with storage.exclusive(root / "freeze.lock"):
+        return _publish_freeze(experiment_id, root / "freeze.json", plan_path,
+                               (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8"), plan_bytes)
+
+
+def _publish_freeze(experiment_id, freeze_path, plan_path, record_bytes, plan_bytes):
+    """고정 기록을 먼저, 계획을 맨 나중에 다 쓴 파일로만 내놓는다 (storage.publish). 그래서 계획이 있으면 온전한 고정 기록도 있다.
+
+    계획 없는 고정 기록은 앞 고정이 계획을 내놓기 전에 끊긴 것이고 어떤 명령도 그것만으로는 쓰지 못하므로, 거두고 다시 고정한다.
+    잠금 안에서만 부르므로 그 기록이 지금 고정 중인 다른 명령의 것일 수는 없다.
+    """
     if plan_path.exists():
         raise FileExistsError(f"계획 {experiment_id} 가 이미 있습니다. 덮지 않습니다: {plan_path}")
-    # 읽을 것은 다 읽은 뒤에 쓴다. 둘 다 storage.publish 로 다 쓴 파일만 한 번에 내놓고, 다른 명령이 읽는 계획을 맨 나중에 내놓는다.
-    # 그래서 계획이 있으면 온전한 고정 기록도 있다. 계획 없는 고정 기록은 앞 고정이 계획을 내놓기 전에 끊긴 것이고
-    # 어떤 명령도 그것만으로는 쓰지 못하므로, 거두고 다시 고정한다.
-    # ponytail: 같은 실험 id 를 두 명령이 함께 고정하면 서로의 기록을 거둘 수 있다. 함께 고정하면 장부처럼 잠금 파일을 둔다.
     if freeze_path.exists():
         freeze_path.unlink()
-    storage.publish(freeze_path, (json.dumps(record, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    storage.publish(freeze_path, record_bytes)
     try:
         storage.publish(plan_path, plan_bytes)
     except BaseException:
