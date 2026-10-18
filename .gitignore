@@ -1,6 +1,15 @@
 .env
 .venv/
+.venv-benchmark*/
 artifacts/
+# Raw benchmark records and existing local archives remain ignored.
+/docs/benchmarks/seven_model/*
+!/docs/benchmarks/seven_model/protocol.md
+!/docs/benchmarks/seven_model/models.json
+/eval/golden/
+/eval/eval_questions.yaml
+/docs/kiwi_bm25_metrics.csv
+/tests/fixtures/craft_selection50.json
 data/
 hf_cache/
 __pycache__/

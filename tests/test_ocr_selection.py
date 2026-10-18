@@ -85,20 +85,6 @@ def test_bad_pdf_blob_is_persistent_review(selector):
     selector.delegate.lazy_parse.assert_not_called()
 
 
-def test_fifty_saved_classifications_forward_safely(selector):
-    from pathlib import Path
-    fixture = Path(__file__).parent / 'fixtures' / 'craft_selection50.json'
-    rows = json.loads(fixture.read_text())
-    assert len(rows) == 50
-    for row in rows:
-        selector.delegate.reset_mock()
-        selector.detector.classify = lambda *args, state=row['classification']: decision(state)
-        text = selector._analyze_image(Image.new('RGB', (10, 10)))
-        assert bool(text) == (row['classification'] == 'OCR_CANDIDATE')
-        if row['classification'] != 'OCR_CANDIDATE':
-            selector.delegate._analyze_image.assert_not_called()
-
-
 def test_on_wraps_existing_vision_parser(monkeypatch, tmp_path):
     delegate = object()
     make_parser = Mock(return_value=delegate)

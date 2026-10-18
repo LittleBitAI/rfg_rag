@@ -1,0 +1,9 @@
+[
+  {"key":"kure","id":"nlpai-lab/KURE-v1","revision":"8b418a58414668e75532ed045c22d9ca018ae2b2","dtype":"float16","max_length":2048,"dimensions":1024,"pooling":"cls","query_prompt":null,"document_prompt":null,"license":"MIT","batch_size":8},
+  {"key":"nemotron","id":"nvidia/Nemotron-3-Embed-1B-BF16","revision":"c0c9fea93ea424587517f2c59e20db9f1d6bf615","dtype":"bfloat16","max_length":32768,"dimensions":2048,"pooling":"mean","query_prompt":"query","document_prompt":"document","license":"OpenMDW-1.1 (LICENSE; card metadata uses other)","batch_size":4},
+  {"key":"harrier","id":"microsoft/harrier-oss-v1-0.6b","revision":"f9b9dc8d367d443f2479d27aa5d8d2850c0774ee","dtype":"bfloat16","max_length":32768,"dimensions":1024,"pooling":"lasttoken","query_prompt":"web_search_query","document_prompt":null,"license":"MIT","batch_size":4},
+  {"key":"jina","id":"jinaai/jina-embeddings-v5-text-small","revision":"dd76d535f5447ca3897a9c893fb1e612ead98192","dtype":"bfloat16","max_length":32768,"dimensions":1024,"pooling":"lasttoken","query_prompt":"query","document_prompt":"document","task":"retrieval","license":"CC-BY-NC-4.0; noncommercial only","batch_size":4},
+  {"key":"pplx","id":"perplexity-ai/pplx-embed-v1-0.6b","revision":"2c4d510dd4a732063c31a0f70193e35067b51fd8","dtype":"float32","max_length":32768,"dimensions":1024,"pooling":"mean","query_prompt":null,"document_prompt":null,"license":"MIT","batch_size":2},
+  {"key":"dragonkue","id":"dragonkue/BGE-m3-ko","revision":"7074d66aa46562342193ca4feb3d89bf9dad71b4","dtype":"float16","max_length":8192,"dimensions":1024,"pooling":"cls","query_prompt":null,"document_prompt":null,"license":"Apache-2.0","batch_size":8},
+  {"key":"upskyy","id":"upskyy/bge-m3-korean","revision":"069ae0627320935e4b2879522edbb54650b59bf5","dtype":"float16","max_length":8192,"dimensions":1024,"pooling":"mean","query_prompt":null,"document_prompt":null,"license":"UNRESOLVED: no model-card license or LICENSE file","batch_size":8}
+]

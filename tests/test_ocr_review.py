@@ -15,15 +15,15 @@ def write_rows(path, rows):
 @pytest.fixture
 def saved_results(tmp_path, monkeypatch):
     captions = []
-    for index in range(391):
-        image = index % 320
-        location = {"format": "pdf", "page": index + 1, "image_index": 0, "xref": index} if index < 49 else {
+    for index in range(7):
+        image = index % 5
+        location = {"format": "pdf", "page": index + 1, "image_index": 0, "xref": index} if index < 3 else {
             "format": "hwp", "image_name": f"BIN{index}.png", "marker_start": None if index % 5 == 0 else index * 10}
         captions.append({"image_sha256": f"image-{image}", "text": f"# 전사 {image}\n\n| A | B |\n| --- | --- |\n| 1 | 2 |",
                          "engine": "saved-engine", "image_type": "table" if image % 2 else "diagram", "label": 1,
                          "doc_id": f"doc-{index}", "document_sha256": f"document-{index}",
                          "source": f"문서 {index}.{location['format']}", **location})
-    images = [{"image_sha256": f"image-{i}", "file": f"image-{i}.png"} for i in range(320)]
+    images = [{"image_sha256": f"image-{i}", "file": f"image-{i}.png"} for i in range(5)]
     monkeypatch.setattr(review, "CAPTIONS", tmp_path / "captions.jsonl")
     monkeypatch.setattr(review, "IMAGES", tmp_path / "images.jsonl")
     monkeypatch.setattr(review, "REVIEWS", tmp_path / "reviews.jsonl")
@@ -35,13 +35,13 @@ def saved_results(tmp_path, monkeypatch):
         yield client, captions
 
 
-def test_391_places_become_320_cards_with_all_places_and_unchanged_transcriptions(saved_results):
+def test_shared_images_group_with_all_places_and_unchanged_transcriptions(saved_results):
     client, captions = saved_results
     response = client.get("/ocr-api/review")
     assert response.status_code == 200
     cards = response.json()
-    assert len(cards) == len({card["image_sha256"] for card in cards}) == 320
-    assert sum(len(card["occurrences"]) for card in cards) == 391
+    assert len(cards) == len({card["image_sha256"] for card in cards}) == 5
+    assert sum(len(card["occurrences"]) for card in cards) == 7
     for card in cards:
         originals = [row for row in captions if row["image_sha256"] == card["image_sha256"]]
         assert card["occurrences"] == [{key: value for key, value in row.items()
