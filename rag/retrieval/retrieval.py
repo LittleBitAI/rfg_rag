@@ -17,11 +17,13 @@ from langfuse import observe
 from rank_bm25 import BM25Okapi
 
 from ..config import ROOT, read_jsonl
-from .indexing import Embedder, KiwiTokenizer, find_codes
+from .indexing import Embedder, KiwiTokenizer, find_codes, search_texts, texts_digest
 from .quantity_filter import choose_values, content_query, introduction, project_condition, substantive
 
 
 _DUP_RATIO = 0.8
+_TABLE_LINK_MAX = 6  # 한 표가 이 개수 이하 청크로 나뉘었을 때만 같은 표 청크를 함께 담는다 (요구사항 목록표처럼 긴 표는 제외)
+_LINK_TOKENS = 600  # 찾은 청크 하나에 함께 담는 연결 청크의 토큰 상한 — 연결 청크가 토큰 예산을 다 차지하지 않게
 
 
 class FilterHits(list):
@@ -55,9 +57,44 @@ def _minmax(d: dict[int, float]) -> dict[int, float]:
     return {k: (v - lo) / (hi - lo) for k, v in d.items()}
 
 
+def _link_index(chunks: list[dict]) -> tuple[dict[str, set[int]], list[list[int]]]:
+    """(요구사항 코드 → 청크들, 청크마다 함께 담을 연결 청크들 — 문서 순서).
+    전처리 패키지의 연결 정보를 쓴다.
+    - 요구사항 소속(requirement_key · requirement_ids): 요구사항 ID 와 상세 내용이 다른 청크로 나뉘어 상세 청크 본문에
+      ID 가 없어도 그 ID 로 정확 일치하고, 같은 요구사항의 다른 청크(ID · 명칭 / 상세 내용)를 연결 청크로 둔다.
+    - 표 연결(table_refs): 한 표가 여러 청크로 나뉘었으면 같은 표의 다른 청크를 연결 청크로 둔다.
+    01 에서 직접 청크를 나눈 경우엔 연결 정보가 없어 본문 속 코드만 쓴다."""
+    code_chunks: dict[str, set[int]] = defaultdict(set)
+    groups: dict[tuple, list[int]] = defaultdict(list)
+    for i, chunk in enumerate(chunks):
+        member_of = find_codes(" ".join([*chunk.get("requirement_ids", []), chunk.get("requirement_key") or ""]))
+        for code in find_codes(chunk["text"]) | member_of:
+            code_chunks[code].add(i)
+        if chunk.get("requirement_key"):
+            groups[("requirement", chunk["doc_id"], chunk["requirement_key"])].append(i)
+        for table in chunk.get("table_refs", []):
+            groups[("table", table)].append(i)
+    links: list[set[int]] = [set() for _ in chunks]
+    for group, members in groups.items():
+        if group[0] == "requirement" or len(members) <= _TABLE_LINK_MAX:
+            for i in members:
+                links[i].update(members)
+    return code_chunks, [sorted(linked - {i}) for i, linked in enumerate(links)]
+
+
+def _check_index(index_dir: Path, texts: list[str]):
+    """색인이 지금 청크의 검색 글로 만들어졌는지 확인한다. 01 을 다시 돌렸거나 검색 글 만드는 방식(요구사항 머리말)이
+    바뀌었는데 색인을 그대로 두면, 벡터 · BM25 순서가 청크와 어긋나 엉뚱한 청크가 찾힌다."""
+    digest = index_dir / "texts.sha256"
+    if not digest.exists() or digest.read_text(encoding="utf-8").strip() != texts_digest(texts):
+        raise ValueError("검색 색인이 지금 청크(artifacts/chunks.jsonl)와 맞지 않습니다 — "
+                         "02 의 build_index 셀을 다시 실행하세요")
+
+
 class HybridIndex:
     """final = w·Dense + (1-w)·BM25 — 두 후보군을 각각 min-max 정규화한 뒤 가중합 (w = dense_weight, 0=BM25만, 1=Dense만).
-    질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter)."""
+    질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter).
+    찾은 청크에 연결 청크(같은 요구사항의 ID · 명칭 / 상세 내용, 같은 표의 나뉜 부분)가 있으면 바로 뒤에 함께 담는다."""
 
     def __init__(self, artifacts: Path, cfg: dict):
         self.tokenizer = KiwiTokenizer()
@@ -66,11 +103,9 @@ class HybridIndex:
             raise ValueError("BM25 tokenizer mismatch or missing fingerprint. "
                              "Rebuild the index with 02_retrieval.ipynb's build_index cell before searching.")
         self.chunks = read_jsonl(artifacts / "chunks.jsonl")
+        _check_index(artifacts / "index", search_texts(self.chunks))
         self.doc_ids = np.array([c["doc_id"] for c in self.chunks])
-        self.code_chunks: dict[str, set[int]] = defaultdict(set)
-        for i, chunk in enumerate(self.chunks):
-            for code in find_codes(chunk["text"]):
-                self.code_chunks[code].add(i)
+        self.code_chunks, self.links = _link_index(self.chunks)
         self.faiss = faiss.read_index(str(artifacts / "index" / "faiss.index"))
         self.bm25 = BM25Okapi(stored["tokens"], k1=float(cfg["bm25"]["k1"]), b=float(cfg["bm25"]["b"]))
         self.embedder = Embedder(cfg["embedding"])
@@ -189,13 +224,25 @@ class HybridIndex:
         top = np.argsort(-scores)[: int(self.rcfg["candidate_k"])]
         return {int(i): float(scores[i]) for i in top if scores[i] > 0}
 
+    def _with_links(self, ranked: list[tuple[int, float]]):
+        """각 청크 바로 뒤에 연결 청크를 문서 순서대로 붙인다 (점수는 찾은 청크와 같게).
+        찾은 청크 하나에 붙이는 연결 청크는 _LINK_TOKENS 토큰까지 — 넘치는 연결 청크는 건너뛴다"""
+        for i, score in ranked:
+            yield i, score
+            spent = 0
+            for j in self.links[i]:
+                cost = self.embedder.token_counts([self.chunks[j]["body"]])[0]
+                if spent + cost <= _LINK_TOKENS:
+                    spent += cost
+                    yield j, score
+
     def _pack(self, ranked: list[tuple[int, float]]) -> list[dict]:
         """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크는 제외한다.
-        긴 청크는 건너뛰되 첫 청크는 예산을 넘어도 담아 빈 컨텍스트를 막는다."""
+        연결 청크(같은 요구사항 · 같은 표)는 함께 담는다. 긴 청크는 건너뛰되 첫 청크는 예산을 넘어도 담아 빈 컨텍스트를 막는다."""
         budget = int(self.rcfg["token_budget"])
         picked: list[tuple[int, float, set[str]]] = []
         used = 0
-        for i, score in ranked:
+        for i, score in self._with_links(ranked):
             words = set(self.chunks[i]["body"].split())
             if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(words, seen))
                    for j, _, seen in picked):

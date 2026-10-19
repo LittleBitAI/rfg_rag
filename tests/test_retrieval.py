@@ -1,13 +1,12 @@
 """요구사항 코드·토큰 예산·중복 제거·기관 라우팅의 회귀를 확인한다."""
-from collections import defaultdict
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from rag.preprocessing import parsing
-from rag.retrieval.indexing import Embedder, KiwiTokenizer, find_codes
-from rag.retrieval.retrieval import DocRouter, HybridIndex, read_csv_orgs
+from rag.retrieval.indexing import Embedder, KiwiTokenizer, find_codes, search_texts, texts_digest
+from rag.retrieval.retrieval import DocRouter, HybridIndex, _check_index, _link_index, read_csv_orgs
 
 
 def ranked(pairs):
@@ -16,16 +15,16 @@ def ranked(pairs):
             for rank, (i, score) in enumerate(pairs, 1)]
 
 
-def make_index(bodies, costs, budget=2500, doc_ids=None):
+def make_index(bodies, costs, budget=2500, doc_ids=None, requirements=None, tables=None):
     index = HybridIndex.__new__(HybridIndex)
     doc_ids = doc_ids or ["doc-a"] * len(bodies)
-    index.chunks = [{"chunk_id": f"c{i}", "doc_id": doc, "text": body, "body": body}
-                    for i, (body, doc) in enumerate(zip(bodies, doc_ids))]
+    requirements = requirements or [None] * len(bodies)
+    tables = tables or [[] for _ in bodies]
+    index.chunks = [{"chunk_id": f"c{i}", "doc_id": doc, "text": body, "body": body,
+                     "requirement_key": req, "requirement_ids": [req] if req else [], "table_refs": table}
+                    for i, (body, doc, req, table) in enumerate(zip(bodies, doc_ids, requirements, tables))]
     index.doc_ids = np.array(doc_ids)
-    index.code_chunks = defaultdict(set)
-    for i, body in enumerate(bodies):
-        for code in find_codes(body):
-            index.code_chunks[code].add(i)
+    index.code_chunks, index.links = _link_index(index.chunks)
     index.rcfg = {"token_budget": budget, "dense_weight": 0.6, "candidate_k": 50}
     index.chunk_file = "fixture/chunks.jsonl"
     index.embedder = MagicMock()
@@ -268,3 +267,75 @@ def test_csv_case_only_collision_does_not_choose_an_organization():
     docs = [{"doc_id": "a", "source": "RFP_A.pdf", "title": "사업", "cover_text": "", "head_text": ""}]
     router = DocRouter(docs, {"RFP_A.pdf": "기관가공사", "rfp_a.pdf": "기관나공사"})
     assert router.route("기관가공사와 기관나공사 요구사항") == {}
+
+
+# 요구사항 ID · 명칭 청크와 상세 내용 청크가 나뉜 전처리 패키지 사례 (서민금융진흥원 SER-001)
+_SPLIT_REQUIREMENT = ["요구사항 고유번호 | SER-001 / 요구사항 명칭 | 보안관리 및 규정 준수",
+                      "요구사항 상세내용 | 누출금지 대상정보는 내·외부 IP주소 현황, 정보통신망 구성도",
+                      "다른 요구사항 상세 내용", "다른 문서의 같은 코드 상세 내용"]
+
+
+def test_detail_chunk_without_id_text_matches_its_requirement_code():
+    index = make_index(_SPLIT_REQUIREMENT, [5, 5, 5, 5], doc_ids=["a", "a", "a", "b"],
+                       requirements=["SER-001", "SER-001", None, "SER-001"])
+    index.router.route.return_value = {"서민금융진흥원": {"a"}}
+    index._dense = MagicMock(return_value={2: 1.0})
+    index._sparse = MagicMock(return_value={2: 1.0})
+
+    hits = index.search("서민금융진흥원 SER-001 누출금지 대상정보")
+
+    assert [hit["chunk_id"] for hit in hits] == ["c0", "c1", "c2"]  # 다른 문서(b)의 SER-001 은 라우팅으로 제외
+
+
+@pytest.mark.parametrize("found", [0, 1])
+def test_pack_adds_other_chunks_of_the_same_requirement_right_after_the_found_one(found):
+    index = make_index(_SPLIT_REQUIREMENT, [5, 5, 5, 5], doc_ids=["a", "a", "a", "b"],
+                       requirements=["SER-001", "SER-001", None, "SER-001"])
+
+    hits = index._pack([(found, 0.9), (2, 0.5)])
+
+    assert [hit["chunk_id"] for hit in hits] == [f"c{found}", f"c{1 - found}", "c2"]
+    assert hits[1]["score"] == 0.9
+
+
+def test_requirement_chunks_still_respect_token_budget():
+    index = make_index(_SPLIT_REQUIREMENT, [5, 30, 5, 5], budget=12, doc_ids=["a", "a", "a", "b"],
+                       requirements=["SER-001", "SER-001", None, "SER-001"])
+
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (2, 0.5)])] == ["c0", "c2"]
+
+
+def test_split_table_chunks_are_linked_but_long_tables_are_not():
+    tables = [["t1"], ["t1"], *[["long"]] * 7]
+    index = make_index([f"표 {i}" for i in range(9)], [1] * 9, tables=tables)
+
+    assert index.links[0] == [1] and index.links[1] == [0]
+    assert all(index.links[i] == [] for i in range(2, 9))
+    assert [hit["chunk_id"] for hit in index._pack([(1, 0.9)])] == ["c1", "c0"]
+
+
+def test_linked_chunks_stop_at_link_token_cap():
+    index = make_index(["ID 청크", "상세 하나", "상세 둘"], [5, 400, 400], requirements=["SER-001"] * 3)
+
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9)])] == ["c0", "c1"]  # 400 + 400 > 600
+
+
+_REQUIREMENT_CHUNKS = [
+    {"doc_id": "a", "text": "요구사항 고유번호 | SER-001\n요구사항 명칭 | 보안관리 및 규정 준수", "requirement_key": "SER-001"},
+    {"doc_id": "a", "text": "요구사항 상세내용 | 누출금지 대상정보는 IP주소 현황", "requirement_key": "SER-001"},
+    {"doc_id": "a", "text": "일반 본문", "requirement_key": None}]
+
+
+def test_search_texts_label_detail_chunks_with_their_requirement_id_and_name():
+    assert search_texts(_REQUIREMENT_CHUNKS) == [
+        _REQUIREMENT_CHUNKS[0]["text"],  # ID · 명칭이 이미 있으면 그대로
+        "[요구사항 SER-001 보안관리 및 규정 준수]\n요구사항 상세내용 | 누출금지 대상정보는 IP주소 현황",
+        "일반 본문"]
+
+
+def test_index_built_from_other_texts_is_rejected(tmp_path):
+    texts = search_texts(_REQUIREMENT_CHUNKS)
+    (tmp_path / "texts.sha256").write_text(texts_digest(texts), encoding="utf-8")
+    _check_index(tmp_path, texts)
+    with pytest.raises(ValueError, match="02"):
+        _check_index(tmp_path, [c["text"] for c in _REQUIREMENT_CHUNKS])

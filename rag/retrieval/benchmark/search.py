@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
 
 import faiss
 import numpy as np
 from rank_bm25 import BM25Okapi
 
 from rag.config import read_jsonl
-from rag.retrieval.indexing import KiwiTokenizer, find_codes
-from rag.retrieval.retrieval import DocRouter, HybridIndex, read_csv_orgs
+from rag.retrieval.indexing import KiwiTokenizer
+from rag.retrieval.retrieval import DocRouter, HybridIndex, _link_index, read_csv_orgs
 
 from .common import OUT
 
@@ -23,10 +22,7 @@ class BenchmarkIndex(HybridIndex):
         self.chunks = read_jsonl(OUT / "input/chunks.jsonl")
         self.chunk_file = str((OUT / "input/chunks.jsonl").resolve())
         self.doc_ids = np.array([c["doc_id"] for c in self.chunks])
-        self.code_chunks = defaultdict(set)
-        for i, chunk in enumerate(self.chunks):
-            for code in find_codes(chunk["text"]):
-                self.code_chunks[code].add(i)
+        self.code_chunks, self.links = _link_index(self.chunks)
         self.faiss = faiss.read_index(str(folder / "faiss.index"))
         self.kiwi = KiwiTokenizer()
         tokens = json.loads((OUT / "kiwi_tokens.json").read_text(encoding="utf-8"))
