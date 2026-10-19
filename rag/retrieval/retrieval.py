@@ -63,6 +63,7 @@ def _link_index(chunks: list[dict]) -> tuple[dict[str, set[int]], list[list[int]
     - 요구사항 소속(requirement_key · requirement_ids): 요구사항 ID 와 상세 내용이 다른 청크로 나뉘어 상세 청크 본문에
       ID 가 없어도 그 ID 로 정확 일치하고, 같은 요구사항의 다른 청크(ID · 명칭 / 상세 내용)를 연결 청크로 둔다.
     - 표 연결(table_refs): 한 표가 여러 청크로 나뉘었으면 같은 표의 다른 청크를 연결 청크로 둔다.
+    두 연결 모두 같은 문서 안에서만 묶는다 — 연결 청크가 기관 라우팅(DocRouter)을 벗어나지 않게.
     01 에서 직접 청크를 나눈 경우엔 연결 정보가 없어 본문 속 코드만 쓴다."""
     code_chunks: dict[str, set[int]] = defaultdict(set)
     groups: dict[tuple, list[int]] = defaultdict(list)
@@ -73,7 +74,7 @@ def _link_index(chunks: list[dict]) -> tuple[dict[str, set[int]], list[list[int]
         if chunk.get("requirement_key"):
             groups[("requirement", chunk["doc_id"], chunk["requirement_key"])].append(i)
         for table in chunk.get("table_refs", []):
-            groups[("table", table)].append(i)
+            groups[("table", chunk["doc_id"], table)].append(i)
     links: list[set[int]] = [set() for _ in chunks]
     for group, members in groups.items():
         if group[0] == "requirement" or len(members) <= _TABLE_LINK_MAX:

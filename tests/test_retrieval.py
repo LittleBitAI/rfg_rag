@@ -314,6 +314,13 @@ def test_split_table_chunks_are_linked_but_long_tables_are_not():
     assert [hit["chunk_id"] for hit in index._pack([(1, 0.9)])] == ["c1", "c0"]
 
 
+def test_same_table_ref_in_another_document_is_not_linked():
+    """표 참조가 같아도 다른 문서의 청크는 연결하지 않는다 — 라우팅된 문서 밖 청크가 담기지 않게"""
+    index = make_index(["A 표", "B 표"], [1, 1], doc_ids=["doc-a", "doc-b"], tables=[["t1"], ["t1"]])
+
+    assert [hit["doc_id"] for hit in index._pack([(0, 0.9)])] == ["doc-a"]
+
+
 def test_linked_chunks_stop_at_link_token_cap():
     index = make_index(["ID 청크", "상세 하나", "상세 둘"], [5, 400, 400], requirements=["SER-001"] * 3)
 
