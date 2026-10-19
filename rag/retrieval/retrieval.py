@@ -22,7 +22,6 @@ from .quantity_filter import choose_values, content_query, introduction, project
 
 
 _DUP_RATIO = 0.8
-_TABLE_LINK_MAX = 6  # 한 표가 이 개수 이하 청크로 나뉘었을 때만 같은 표 청크를 함께 담는다 (요구사항 목록표처럼 긴 표는 제외)
 _LINK_TOKENS = 600  # 찾은 청크 하나에 함께 담는 연결 청크의 토큰 상한 — 연결 청크가 토큰 예산을 다 차지하지 않게
 
 
@@ -58,8 +57,9 @@ def _minmax(d: dict[int, float]) -> dict[int, float]:
 
 
 def _link_index(chunks: list[dict]) -> tuple[dict[str, set[int]], list[list[int]]]:
-    """(요구사항 코드 → 청크들, 청크마다 함께 담을 연결 청크들 — 문서 순서).
-    전처리 패키지의 연결 정보를 쓴다.
+    """(요구사항 코드 → 청크들, 청크마다 함께 담을 연결 청크들 — 담을 우선순위 순서).
+    전처리 패키지의 연결 정보를 쓴다. 우선순위는 묶음의 첫 청크(표 머리글 · 요구사항 ID 와 명칭 — v11 의 이어지는 표
+    청크엔 머리글이 없기도 하다), 그다음 찾은 청크에 가까운 청크 순이다 — 긴 표에서도 이어지는 행이 담기게.
     - 요구사항 소속(requirement_key · requirement_ids): 요구사항 ID 와 상세 내용이 다른 청크로 나뉘어 상세 청크 본문에
       ID 가 없어도 그 ID 로 정확 일치하고, 같은 요구사항의 다른 청크(ID · 명칭 / 상세 내용)를 연결 청크로 둔다.
     - 표 연결(table_refs): 한 표가 여러 청크로 나뉘었으면 같은 표의 다른 청크를 연결 청크로 둔다.
@@ -75,12 +75,19 @@ def _link_index(chunks: list[dict]) -> tuple[dict[str, set[int]], list[list[int]
             groups[("requirement", chunk["doc_id"], chunk["requirement_key"])].append(i)
         for table in chunk.get("table_refs", []):
             groups[("table", chunk["doc_id"], table)].append(i)
-    links: list[set[int]] = [set() for _ in chunks]
-    for group, members in groups.items():
-        if group[0] == "requirement" or len(members) <= _TABLE_LINK_MAX:
-            for i in members:
-                links[i].update(members)
-    return code_chunks, [sorted(linked - {i}) for i, linked in enumerate(links)]
+    return code_chunks, _link_priority(groups.values(), len(chunks))
+
+
+def _link_priority(groups, size: int) -> list[list[int]]:
+    """청크마다 같은 묶음의 다른 청크를 (묶음의 첫 청크가 아님, 거리, 위치) 순으로 늘어놓는다"""
+    priority: list[dict[int, tuple]] = [{} for _ in range(size)]
+    for members in groups:
+        for i in members:
+            for j in members:
+                if j != i:
+                    key = (j != members[0], abs(j - i), j)
+                    priority[i][j] = min(key, priority[i].get(j, key))
+    return [sorted(linked, key=linked.get) for linked in priority]
 
 
 def _check_index(index_dir: Path, texts: list[str]):
@@ -226,16 +233,19 @@ class HybridIndex:
         return {int(i): float(scores[i]) for i in top if scores[i] > 0}
 
     def _with_links(self, ranked: list[tuple[int, float]]):
-        """각 청크 바로 뒤에 연결 청크를 문서 순서대로 붙인다 (점수는 찾은 청크와 같게).
-        찾은 청크 하나에 붙이는 연결 청크는 _LINK_TOKENS 토큰까지 — 넘치는 연결 청크는 건너뛴다"""
+        """각 청크 바로 뒤에 연결 청크를 붙인다 (점수는 찾은 청크와 같게).
+        찾은 청크 하나에 붙이는 연결 청크는 _LINK_TOKENS 토큰까지 우선순위 순서로 고르고 — 넘치는 연결 청크는 건너뛴다 —
+        고른 청크는 문서 순서대로 붙인다"""
         for i, score in ranked:
             yield i, score
-            spent = 0
+            spent, chosen = 0, []
             for j in self.links[i]:
                 cost = self.embedder.token_counts([self.chunks[j]["body"]])[0]
                 if spent + cost <= _LINK_TOKENS:
                     spent += cost
-                    yield j, score
+                    chosen.append(j)
+            for j in sorted(chosen):
+                yield j, score
 
     def _pack(self, ranked: list[tuple[int, float]]) -> list[dict]:
         """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크는 제외한다.

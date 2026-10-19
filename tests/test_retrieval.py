@@ -305,13 +305,11 @@ def test_requirement_chunks_still_respect_token_budget():
     assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (2, 0.5)])] == ["c0", "c2"]
 
 
-def test_split_table_chunks_are_linked_but_long_tables_are_not():
-    tables = [["t1"], ["t1"], *[["long"]] * 7]
-    index = make_index([f"표 {i}" for i in range(9)], [1] * 9, tables=tables)
+def test_long_table_chunk_packs_the_table_head_and_its_nearest_row_in_document_order():
+    """9청크 표의 가운데(c5)를 찾으면 600토큰 안에서 머리글이 있는 첫 청크와 가장 가까운 청크를 문서 순서로 담는다"""
+    index = make_index([f"표 {i}" for i in range(9)], [300] * 9, tables=[["t1"]] * 9)
 
-    assert index.links[0] == [1] and index.links[1] == [0]
-    assert all(index.links[i] == [] for i in range(2, 9))
-    assert [hit["chunk_id"] for hit in index._pack([(1, 0.9)])] == ["c1", "c0"]
+    assert [hit["chunk_id"] for hit in index._pack([(5, 0.9)])] == ["c5", "c0", "c4"]
 
 
 def test_same_table_ref_in_another_document_is_not_linked():
