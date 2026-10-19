@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import math
 import os
 import re
@@ -14,6 +15,7 @@ import unicodedata
 import zipfile
 from collections import Counter
 from itertools import groupby
+from pathlib import Path
 
 from rag.preprocessing.ocr_selection import SelectionParser
 
@@ -596,10 +598,36 @@ def _patch_pymupdf_image_extraction():
 # ====================================================================================================
 # 문서 → 레코드
 # ====================================================================================================
-def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, captions_path=None) -> list[dict]:
+def _cache_file(cache_dir: Path, path: str, pcfg: dict, ocr: bool, ocr_cfg: dict, saved_rows) -> Path:
+    """문서 하나의 파싱 결과 파일. 원본 내용 · 파싱 설정 · OCR 설정 · 저장 캡션이 모두 같을 때만 같은 이름이 되므로,
+    원본 파일이나 설정을 바꾸면 옛 결과를 쓰지 않는다 (단가는 결과에 영향이 없어 뺀다)"""
+    ocr_key = {k: ocr_cfg[k] for k in ("model", "max_tokens", "reasoning_effort")} if ocr else None
+    key = json.dumps({"file": hashlib.sha256(Path(path).read_bytes()).hexdigest(), "parsing": pcfg, "ocr": ocr_key,
+                      "captions": saved_rows}, sort_keys=True, ensure_ascii=False)
+    return cache_dir / f"{make_doc_id(path)}_{hashlib.sha1(key.encode()).hexdigest()[:8]}.json"
+
+
+def _parse_or_load(path: str, pcfg: dict, image_parser, saved_rows, cache_file: Path | None) -> dict:
+    """저장된 결과가 있으면 읽고, 없으면 파싱해서 저장한다. 임시 파일에 쓴 뒤 바꿔치기해서,
+    쓰는 도중 컴퓨터가 꺼져도 반쯤 쓰인 파일이 남지 않는다"""
+    if cache_file is not None and cache_file.exists():
+        return json.loads(cache_file.read_text(encoding="utf-8"))
+    doc = _parse_file(path, pcfg, image_parser, saved_rows)
+    if cache_file is not None:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(cache_file)
+    return doc
+
+
+def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, captions_path=None,
+                    cache_dir: Path | None = None) -> list[dict]:
     """문서마다 {doc_id, source, title, doc_type, cover_text, head_text, records}.
     ocr=False 면 저장 캡션을 읽고 그림을 API 로 보내지 않는다.
-    True 면 저장 캡션 대신 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다."""
+    True 면 저장 캡션 대신 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다.
+    cache_dir 를 주면 문서 하나를 끝낼 때마다 저장하므로, 중간에 끊겨도 다시 실행하면 끝낸 문서는 건너뛰고
+    (OCR 비용도 다시 들지 않음) 이어서 한다. 오류가 난 문서는 저장하지 않아 다음 실행에서 다시 시도한다."""
     from .ocr_captions import load_captions
 
     saved = {} if ocr else load_captions(captions_path)
@@ -611,15 +639,17 @@ def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, capt
     for i, path in enumerate(files, 1):
         if callback is not None:
             callback.subject = os.path.basename(path)
+        saved_rows = saved.get(make_doc_id(path))
+        cache_file = _cache_file(cache_dir, path, pcfg, ocr, ocr_cfg, saved_rows) if cache_dir else None
+        reused = " (저장된 결과)" if cache_file and cache_file.exists() else ""
         try:
-            saved_rows = saved.get(make_doc_id(path))
-            docs.append(_parse_file(path, pcfg, image_parser, saved_rows))
+            docs.append(_parse_or_load(path, pcfg, image_parser, saved_rows, cache_file))
         except Exception as e:  # noqa: BLE001  손상된 문서 하나 때문에 나머지 문서 파싱을 버리지 않는다
             if saved_rows is not None:
                 raise
             print(f"({i}/{len(files)}) ❌ {os.path.basename(path)}: {type(e).__name__}: {e}")
             continue
-        print(f"({i}/{len(files)}) {docs[-1]['source']}: 블록 {len(docs[-1]['records'])}개")
+        print(f"({i}/{len(files)}) {docs[-1]['source']}: 블록 {len(docs[-1]['records'])}개{reused}")
     return docs
 
 
