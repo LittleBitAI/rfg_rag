@@ -49,7 +49,7 @@ def api_client():
 
 
 def _evidence(args):
-    return evidence.run(args.run_id, args.copy)
+    return evidence.run(args.run_id)
 
 
 def _plan(args):
@@ -170,9 +170,8 @@ def _parser():
 
 
 def _prepare_commands(commands):
-    command = commands.add_parser("evidence", help="v11 근거 어댑터 (API 호출 없음)")
+    command = commands.add_parser("evidence", help="v12 근거 어댑터 (API 호출 없음)")
     command.add_argument("run_id")
-    command.add_argument("copy", help="내려받은 압축의 안쪽 RFP_Preprocessing_Final_v11_Team 폴더")
     command.set_defaults(handler=_evidence)
 
     command = commands.add_parser("plan", help="주제별 개수 · 근거 묶음을 고정한 분포 계획 (API 호출 없음)")
@@ -187,7 +186,7 @@ def _prepare_commands(commands):
                          help="질문이 묻는 문서가 분할 SPLIT 의 PART(dev · test)에 있는 묶음만 고름")
     command.set_defaults(handler=_plan)
 
-    command = commands.add_parser("freeze", help="큰 계획에서 주제마다 train 6 · validation 2 · held-out 2 묶음을 골라 실험 계획으로 고정 (API 호출 없음)")
+    command = commands.add_parser("freeze", help="큰 계획에서 주제마다 train 6 · validation 30 · held-out 30 묶음을 골라 실험 계획으로 고정 (API 호출 없음)")
     command.add_argument("experiment_id")
     command.add_argument("pool_plan", help="고를 묶음이 든 계획 id")
     command.set_defaults(handler=lambda args: experiment.freeze(args.experiment_id, args.pool_plan))

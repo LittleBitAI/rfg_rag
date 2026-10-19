@@ -509,7 +509,7 @@ def _plan_info(plan_id, plan, plan_sha, topic, bundles):
         "plan_id": plan_id,
         "plan_sha256": plan_sha,
         "evidence_run": plan["evidence_run"],
-        "v11_manifest_sha256": plan["v11_manifest_sha256"],
+        "package_manifest_sha256": plan["package_manifest_sha256"],
         "topic_spec_sha256": plan["topic_specs"][topic],
         "bundle_ids": [bundle["bundle_id"] for bundle in bundles],
         "document_scope": sorted({bundle["doc_sha"] for bundle in bundles}),

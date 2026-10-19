@@ -4,7 +4,7 @@
 ③ 검증 파이프라인에 속하고 담당자도 같지만, `rag/validation/validation.py` 와는 일부러 분리했습니다
 (`CLAUDE.md` · `AGENTS.md` 4절).
 항목 스키마, 주제별 저장 규약, run·버전·상태 모델, 출력 경로 보호,
-v11 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C 후보 생성, 독립 검증 · 난도 판정 · 출시,
+v12 패키지를 읽기만 하는 근거 어댑터, 분포 계획과 A · B · C 후보 생성, 독립 검증 · 난도 판정 · 출시,
 A 만의 자기 개선(실패 기록과 round), 이 모두를 부르는 CLI 와 두 실행기, A · B · C 비교 보고서를 담습니다.
 
 - `rag/` 에서 아무것도 import 하지 않고, `rag/`·`artifacts/`·`data/`·`eval/` 에 쓰지 않습니다. 노트북과 질문 화면 서버도 실행하지 않습니다.
@@ -18,7 +18,7 @@ A 만의 자기 개선(실패 기록과 round), 이 모두를 부르는 CLI 와 
 | `schema.py` | 항목 스키마와 검증 (`validate_item`) |
 | `state.py` | 상태 전이와 전이 기록 (`transition`) |
 | `storage.py` | run · release 저장, 공유 카탈로그, 출력 경로 보호 (`write_run`, `write_release`, `guard`) |
-| `evidence.py` | v11 근거 어댑터: 패키지 SHA 고정, 청크 → 요소 → 레코드 → 원문 단위 연결, 근거 단위별 eligible / held 판정 (`run`) |
+| `evidence.py` | v12 근거 어댑터: 패키지 SHA 고정, 청크 하나를 근거 단위 하나로, 단위별 eligible / held 판정 (`run`) |
 | `plan.py` | 분포 계획: 주제별 개수 · 문서 범위 · 근거 묶음을 고정한 파일 (`make_plan`, `load_plan`) |
 | `generation.py` | 후보 생성: A · B (`generate`), C 가져오기 (`import_c`), 주제 구조 검사 (`check_structure`) |
 | `validation.py` | 독립 검증 (`validate`), 난도 판정 (`difficulty`), 출시 (`release`) |
@@ -42,7 +42,7 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 
 | 명령 | 하는 일 | API 호출 |
 |---|---|---|
-| `evidence` | v11 근거 어댑터 run (아래 v11 근거 어댑터) | 없음 |
+| `evidence` | v12 근거 어댑터 run (아래 v12 근거 어댑터) | 없음 |
 | `plan` | 주제 · 목표 개수를 정한 분포 계획 (아래 분포 계획) | 없음 |
 | `run` | A: 자기 개선 loop (생성 → 검증 → 실패 기록을 round 마다). B: 고정 프롬프트 생성만 | 유료 |
 | `import` | C 가져오기 | 없음 |
@@ -59,7 +59,7 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 - `run --method B --part train` 은 계획에서 그 몫(`adoption.split`)의 묶음만 부릅니다.
 
 ```
-golden_pipeline\golden.cmd evidence example-input "<내려받은 압축>\RFP_Preprocessing_Final_v11_Team\RFP_Preprocessing_Final_v11_Team"
+golden_pipeline\golden.cmd evidence example-input
 golden_pipeline\golden.cmd plan p1 example-input --count numeric 20 --count table 20 --max-context-chars 4000
 
 golden_pipeline\golden.cmd run --topic numeric --method A --plan p1 --id a1 --model <모델> --reasoning-effort low --price <입력 단가> <출력 단가> --max-calls 200 --budget 5 --max-rounds 3 --validator-model <모델> --validator-reasoning-effort high --validator-price <입력 단가> <출력 단가>
@@ -118,10 +118,10 @@ golden_pipeline\golden.cmd report --topic numeric --id cmp1 --a a1 --b b1 --c c1
 | 필드 | 값 |
 |---|---|
 | `doc_sha` | 원문 문서 SHA-256 |
-| `chunk_id` · `element_id` · `record_id` | v11 청크 · 요소 · 레코드 id |
+| `chunk_id` · `element_id` · `record_id` | 패키지 청크 id, 그 청크 첫 표 span(없으면 첫 span)의 요소 · 레코드 id |
 | `location` | `{"kind": "char", "start", "end"}` 또는 `{"kind": "table", "grid", "row", "cell"}` |
 | `location.grid` | `logical_restored` (마크다운 논리 행으로 복원한 표) · `original_verified` (원본 격자를 확인한 표) · `original_reference` (검증되지 않은 원본 격자 참고 파일의 셀). 세 종류는 섞지 않습니다 |
-| `page` | 1 이상의 정수 또는 `null` (v11 청크는 대부분 쪽 번호가 없음) |
+| `page` | 1 이상의 정수 또는 `null` (청크는 대부분 쪽 번호가 없음) |
 | `requirement_ids` | `SFR-001` 같은 요구사항 id 리스트 |
 | `image_sha` · `ocr_scope` | 이미지 근거일 때 둘 다: SHA-256 과 `full_visible_text` (보이는 글자 전체 검증) · `partial_region` (선언한 영역만 검증) · `hold` (검증 범위 없음). 아니면 둘 다 `null` |
 
@@ -182,63 +182,48 @@ golden_pipeline/outputs/
   질문·답·근거·방법·run 을 바꿔 끼우면 `CatalogError` 로 거절합니다.
 - `golden_pipeline/outputs` 밖(`data/`, `artifacts/`, `eval/` 포함)으로 가는 경로는 `OutputPathError` 로 거절합니다.
 
-## v11 근거 어댑터
+## v12 근거 어댑터
 
-`evidence.py` 는 `data/RFP_Preprocessing_Final_v11_Team` 을 읽기만 합니다.
-패키지를 고치지 않고, 패키지의 `verify_package.py` · `load_retriever_inputs.py` 를 import 하거나 실행하지 않으며, OCR 을 다시 돌리지 않습니다.
-`artifacts/docs.jsonl` · `artifacts/chunks.jsonl` 은 입력으로 쓰지 않습니다.
+`evidence.py` 는 `data/Golden_Dev396_v12_Team_Package` 를 읽기만 합니다.
+전처리 담당자에게 받은 압축을 풀고, `manifest.json` 과 `corpus/` 가 바로 들어 있는 폴더를 그 경로에 둡니다.
+패키지를 고치지 않고, 패키지의 `prepare.py` · `scripts/` 를 import 하거나 실행하지 않습니다.
 
 ```
-golden_pipeline\golden.cmd evidence <run_id> "<내려받은 압축>/RFP_Preprocessing_Final_v11_Team/RFP_Preprocessing_Final_v11_Team"
+golden_pipeline\golden.cmd evidence <run_id>
 ```
 
 실행 순서와 멈추는 조건은 다음과 같습니다.
 
-1. 두 사본(`data/` 와 내려받은 압축의 안쪽 폴더)의 `manifest.json`, `final_chunks/elements/records.jsonl`,
-   `validation/source_status_merged.csv`, `validation/복구표_원본그리드_참고.jsonl` 을 SHA-256 으로 해시합니다.
-   두 사본이 다르거나 `manifest.json` 의 `files` 선언과 다르면 멈춥니다.
-2. 파일에서 센 문서 · 레코드 · 요소 · 청크 수와 검색 입력 청크 수를 `manifest.json` 과 비교하고, 다르면 멈춥니다.
-   검색 입력에서 빠지는 청크는 본문이 `[IMAGE]` 표시뿐인 것이며, id 와 이유를 매니페스트에 남깁니다.
-3. 근거 단위를 만들고 단위마다 판정을 남깁니다 (아래).
-4. `artifacts/raw` 파일은 SHA-256 이 v11 문서 SHA 와 같을 때만 잇습니다. 이름만 같은 파일은 `unlinked_filename_only` 로 표시하고 잇지 않습니다.
+1. `manifest.json`, `corpus/chunks.jsonl`, `corpus/docs.jsonl`, `data/data_list.csv` 를 SHA-256 으로 해시합니다.
+   `manifest.json` 의 `files` 선언과 다르면 멈춥니다.
+2. 파일에서 센 청크 · 문서 수를 `manifest.json` 의 `counts`(`v12_search_chunks`, `v12_documents`)와 비교하고, 다르면 멈춥니다.
+3. 청크마다 근거 단위 하나와 판정 하나를 남깁니다 (아래).
 
 출력은 `golden_pipeline/outputs/evidence/{run_id}/` 에 쓰고, 이미 있는 `run_id` 는 거절합니다.
 
 | 파일 | 내용 |
 |---|---|
-| `units.jsonl` | 근거 단위. 데이터에서 읽은 연결만 담습니다 |
+| `units.jsonl` | 근거 단위. 데이터에서 읽은 연결과 청크 본문(`text`)을 담습니다 |
 | `judgments.jsonl` | 단위마다 `eligible` · `held` 판정과 보류 이유. 원본과 따로 둔 판정 기록입니다 |
-| `raw_links.jsonl` | `artifacts/raw` 파일별 SHA-256, 연결된 문서 SHA, 상태 |
-| `manifest.json` | 고정한 SHA, 개수, 제외 청크, 원본 그리드 파일 판정, raw 연결 수, 단위·판정 수, 코드 커밋 |
+| `manifest.json` | 고정한 SHA, 개수, 단위·판정 수, 코드 커밋 |
 
-근거 단위는 세 종류입니다.
+근거 단위는 검색 입력 청크 하나입니다 (`chunk:{청크}`). v12 는 요소 · 레코드 · 원문 단위 파일을 주지 않고,
+표 청크는 칸 안 줄바꿈 때문에 줄을 표 행으로 되돌릴 수 없어 청크보다 잘게 나눌 근거가 없습니다.
+`location` 은 청크의 첫 표 span 이면 `table` (`grid = logical_restored`, `row` 는 그 span 의 첫 행, `cell = null`),
+표 span 이 없으면 첫 span 의 `char` 입니다. 본문은 청크의 `body` 전체이고, 표는 행을 줄로 · 칸을 ` | ` 로 잇습니다.
 
-| 단위 | 출처 | `location` |
-|---|---|---|
-| `chunk:{청크}:{요소}:char:{start}-{end}` | 청크의 글자 span | `char` (요소 `search_text` 기준) |
-| `chunk:{청크}:{요소}:row:{행}` | 청크의 표 행 span | `table`, `grid = logical_restored`, `cell = null` |
-| `grid:{문서 SHA}:{stream}:{표 컨트롤}:{행}:{열}` | 원본 그리드 참고 파일의 셀 | `table`, `grid = original_reference` |
-
-단위의 필드는 `unit_id`, `doc_sha`, `chunk_id`, `element_id`, `record_id`, `location`, `page`, `raw_start`, `raw_end`,
-`requirement_ids`, `image_sha`, `ocr_scope`, `source_units`, `ids_linked`, `meaning_verified` 입니다.
+단위의 필드는 `unit_id`, `doc_sha`, `chunk_id`, `element_id`, `record_id`, `location`, `page`,
+`requirement_ids`, `image_sha`, `ocr_scope`, `text`, `ids_linked`, `meaning_verified` 입니다.
 `ids_linked` (ID 가 모두 이어짐)와 `meaning_verified` (원문 의미가 검증됨)는 따로 계산하고, 연결만으로 검증이 참이 되지 않습니다.
 `eligible` 은 둘 다 참이고 보류 이유가 없을 때뿐입니다.
 
 | 보류 이유 | 조건 |
 |---|---|
-| 연결 오류 | 요소 · 레코드 id 가 없음, 요소와 레코드의 문서 SHA 가 다름, 레코드 SHA 가 `doc_id` 와 다름, span 이 본문 · 표 밖 |
-| `UNVERIFIED` 원문 단위 | `source_status_merged.csv` 에서 이 단위에 걸린 원문 단위 중 하나라도 `UNVERIFIED` |
-| 근거 없음 | 이 단위를 덮는 원문 단위가 없음 |
-| 같은 사실의 값이 다름 | 청크의 `requirement_key` 가 레코드 · 요소의 `requirement_ids` 에 없음 |
-| 이미지 | 이미지 SHA 가 없음, OCR 범위 `hold`, 본문 줄이 검증 전사(`verified_region_text`) 밖 |
-| 원본 그리드 미검증 | 원본 그리드 참고 파일의 모든 셀 |
+| 연결 오류 | 청크 문서가 `docs.jsonl` 에 없음, `source_sha256` 이나 원본 위치의 문서 SHA 가 `doc_id` 와 다름 |
+| 원본 대조 예외 | 청크의 원본 위치 중 하나라도 `review_status` 가 `예외 검토 필요` (띄어 쓴 단어 후보 · 빈 작성 칸 · 독음 미확정 한자 등) |
+| OCR 범위 `hold` | 이미지 청크의 `image_source.scope` 선언이 없음 |
 
-- 청크 단위의 원문 단위는 그 요소에 걸리고 청크 id 가 이 청크이거나 비어 있는 것입니다. 원문 단위에 표 행 번호가 없어서 표 행은 요소 · 청크 단위로 판단합니다.
-- 그리드 셀의 원문 단위는 셀 텍스트 레코드의 `source_unit_id` 로 바로 찾습니다.
-- 이미지 OCR 은 `source_status_merged.csv` 의 분모에 들어가지 않으므로 레코드의 `image_source.scope` 로만 판단합니다.
-  `FULL_VISIBLE_TEXT` → `full_visible_text`, `PARTIAL_REGION(S)` → `partial_region`, 범위 선언이 없으면 `hold` 입니다.
-- 원본 그리드 참고 파일은 레코드에 검증 상태 필드가 없고 패키지 노트북 7절이 원본 구조를 증명하지 않는 참고 근거라고 적어,
-  검증되지 않은 것으로 매니페스트 `original_grid_file` 에 기록합니다.
+이미지 청크는 `image_source.scope` 로 `FULL_VISIBLE_TEXT` → `full_visible_text`, `PARTIAL_REGION(S)` → `partial_region`, 선언이 없으면 `hold` 입니다.
 
 Actual dataset records and evidence remain in ignored local outputs. Aggregate counts, validation rates, cost, and other measurements may be published without the underlying records.
 
@@ -253,21 +238,21 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 
 1. 근거 어댑터 run 의 `manifest.json` 에 고정된 파일 SHA-256 과 지금 패키지 파일이 같은지 확인하고, 다르면 멈춥니다.
 2. `judgments.jsonl` 에서 `eligible` 인 단위만 씁니다. `held` 단위는 어떤 묶음에도 들어가지 않습니다.
-   단위 본문은 패키지 `final_elements.jsonl` 에서 읽습니다 (글자 span 은 그 구간, 표 행은 칸을 ` | ` 로 이은 것).
+   단위 본문은 근거 어댑터가 `units.jsonl` 에 남긴 청크 본문입니다.
 3. 주제 순서(`numeric` → `table` → `condition` → `comparison` → `multi_hop` → `unanswerable` → `false_premise`)대로, 주제 명세의 `pattern` · `table_only` 에 맞는 단위를
    문서마다 패키지 순서로 `bundle_units` 개씩 묶습니다. 컨텍스트가 `--max-context-chars` 를 넘는 묶음은 버립니다.
    multi_hop 은 청크 둘 이상에 걸친 묶음만 냅니다 (`_spanning`). 이어진 단위는 대개 한 표의 이웃 행이라
    같은 청크만 반복 인용하지 않도록 청크 구분을 컨텍스트 라벨에 보존한다.
    한 단위는 한 주제의 묶음에만 들어갑니다 (카탈로그가 같은 근거를 두 주제에 두지 않기 때문).
-   표 행이 든 묶음에는 그 표의 머리글 행(논리 표 0행)을 맨 앞에 붙입니다. 열 이름 없이는 칸을 가리킬 수 없기 때문입니다.
-   머리글 행이 `eligible` 이 아니거나 앞 주제의 묶음이 이미 가졌으면 그 묶음을 버립니다.
+   표 중간 행부터 시작하는 청크가 든 묶음에는 그 표의 머리글 행(논리 표 0행)부터 시작하는 청크를 맨 앞에 붙입니다.
+   열 이름 없이는 칸을 가리킬 수 없기 때문입니다. 그 청크가 `eligible` 이 아니거나 앞 주제의 묶음이 이미 가졌으면 그 묶음을 버립니다.
    줄의 절반 이상이 쪽 번호로 끝나는 목차 줄(`1. 용역개요 02`)인 단위는 묶지 않습니다. 목차로 만든 질문은 RFP 내용을 묻지 않습니다.
 4. 문서를 돌아가며 하나씩 골라 개수를 채웁니다. 모자라면 기준을 낮추지 않고 `planned` 에 실제 개수를 남깁니다.
    그래서 한 문서에 묶음이 몰리지 않습니다.
    unanswerable 묶음은 문서 A 의 단위로 묶되 질문은 다른 문서 B 에 하므로, 묶음의 `doc_sha` · `doc` 는 B 입니다 (`_borrowed`).
    B 는 문서를 SHA 차례로 늘어놓은 고리에서 A 의 맞은편 문서라 늘 같게 골라집니다.
-5. 묶음마다 문서 이름 `doc` (`agency`, `title`)을 남깁니다. 발주 기관은 패키지 옆 `data_list.csv` 의 정리된 `발주기관` 을
-   v11 레코드의 원본 파일 이름으로 찾고, 사업 이름은 파일 이름의 `_` 뒤에서 `[재공고]` 같은 앞 표시를 뺀 것입니다.
+5. 묶음마다 문서 이름 `doc` (`agency`, `title`)을 남깁니다. 발주 기관은 패키지 `data/data_list.csv` 의 정리된 `발주기관` 을
+   `corpus/docs.jsonl` 의 원본 파일 이름(`source`)으로 찾고, 사업 이름은 파일 이름의 `_` 뒤에서 `[재공고]` 같은 앞 표시를 뺀 것입니다.
    원본 파일 이름 일부는 한글 자모가 풀린 NFD 라 두 이름 모두 NFC 로 맞춘 뒤 찾습니다.
 
 묶음은 늘 같은 순서로 고르므로, 같은 개수로 새 계획을 만들면 앞 계획의 묶음이 다시 뽑힙니다.
@@ -282,7 +267,7 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 
 | 필드 | 값 |
 |---|---|
-| `evidence_run` · `v11_manifest_sha256` | 근거 어댑터 run 과 v11 `manifest.json` SHA-256 |
+| `evidence_run` · `package_manifest_sha256` | 근거 어댑터 run 과 패키지 `manifest.json` SHA-256 |
 | `topic_specs` | 주제 명세 파일별 SHA-256. 생성 때 명세가 바뀌었으면 멈춥니다 |
 | `skipped_plans` | 단위를 뺀 앞 계획 id → 그 계획 파일 SHA-256 (없으면 `{}`) |
 | `side` | `--side` 의 `{"split", "part", "manifest_sha256"}`, 주지 않았으면 `null` |
@@ -363,7 +348,7 @@ run 매니페스트의 `generation`:
 
 | 필드 | A · B | C |
 |---|---|---|
-| `plan_id` · `plan_sha256` · `evidence_run` · `v11_manifest_sha256` · `topic_spec_sha256` | 같음 | 같음 |
+| `plan_id` · `plan_sha256` · `evidence_run` · `package_manifest_sha256` · `topic_spec_sha256` | 같음 | 같음 |
 | `bundle_ids` · `document_scope` | 실제로 보낸 묶음과 그 문서 SHA | 행이 가리킨 묶음과 그 문서 SHA |
 | 모델 | `model_requested` (설정), `model_reported` (응답) | `model.observed_label` (관측값 또는 `unobserved`) |
 | 프롬프트 · 설정 | `prompt_file`, `prompt_sha256`, `run_config`, `run_config_sha256` | `observed`, `sidecar_sha256`, `exports` (파일별 SHA-256) |
@@ -403,7 +388,7 @@ validate(topic, method, run_id, config_path, client)
 | 4 | 검증기 출력이 계약에 맞음 (어기면 한 번 다시 부름) | `rejected` `검증기 출력 오류` |
 | 5 | 검증기가 근거 충돌을 알리지 않음 | `rejected` `근거 충돌` |
 | 6 | 검증기가 근거만으로 답할 수 있음 | `rejected` |
-| 6 | unanswerable: 4 · 5 · 6 대신, 묻는 문서 B 의 모든 근거 단위(eligible · held)를 문서 차례대로 6만 자 안팎씩 나눠 받은 검증기가 어느 묶음에서도 답하지 못하고 근거 충돌도 알리지 않음. 묶음은 저마다 따로 읽히므로 한 표의 행은 한 묶음에 넣고, 한 묶음보다 큰 표는 행 경계에서 나눠 이어지는 묶음마다 그 표의 머리글(0행)을 다시 줍니다. 원본 그리드는 셀이 단위라, 먼저 세로로 합친 칸이 걸친 행들을 한 단위(행 띠)로 묶어 행 이름 칸과 값 칸이 갈리지 않게 합니다. 새 묶음은 앞 묶음 끝 2천 자도 다시 받아, 표 밖 소제목과 그 아래 글이 경계로 갈리지 않게 합니다. 묶음마다 한 번 부르고, 답하거나 충돌을 알리면 거기서 멈춥니다. 일부 단위만 보면 그 밖의 단위에 다른 말로 적힌 답을 놓치기 때문입니다. 여기서 끝나며 7 이후는 보지 않습니다 | `rejected` `대상 문서에 있음` · `근거 충돌` · `검증기 출력 오류` |
+| 6 | unanswerable: 4 · 5 · 6 대신, 묻는 문서 B 의 모든 근거 단위(eligible · held)를 문서 차례대로 6만 자 안팎씩 나눠 받은 검증기가 어느 묶음에서도 답하지 못하고 근거 충돌도 알리지 않음. 묶음은 저마다 따로 읽히므로 한 표의 청크는 한 묶음에 넣고, 한 묶음보다 큰 표는 청크 경계에서 나눠 이어지는 묶음마다 그 표의 머리글(0행) 청크를 다시 줍니다. 새 묶음은 앞 묶음 끝 2천 자도 다시 받아, 표 밖 소제목과 그 아래 글이 경계로 갈리지 않게 합니다. 묶음마다 한 번 부르고, 답하거나 충돌을 알리면 거기서 멈춥니다. 일부 단위만 보면 그 밖의 단위에 다른 말로 적힌 답을 놓치기 때문입니다. 여기서 끝나며 7 이후는 보지 않습니다 | `rejected` `대상 문서에 있음` · `근거 충돌` · `검증기 출력 오류` |
 | 7 | numeric · false_premise: 독립 답에 수 · 단위가 있고, 후보 구조의 값 · 단위(false_premise 는 `actual`)가 독립 답에 있음 | `rejected` `유형 불일치` · `독립 답과 다릅니다` |
 | 8 | 질문에 독립 답이 이미 들어 있지 않음. 비교 질문이 선택지로 든 대상 이름 하나를 답하는 것은 예외 | `rejected` `복사형` |
 | 9 | 독립 답이 후보 답과 같음 (아래 정규화, 정하지 못하면 판정기). 비교는 대상별 값 · 고른 대상이 같음 | `rejected` `독립 답과 다릅니다` |
@@ -411,9 +396,8 @@ validate(topic, method, run_id, config_path, client)
 | 10 | multi_hop: 근거 단위를 하나씩만 준 검증기 답이 어느 것도 독립 답과 같지 않음 | `rejected` `multi_hop 아님` |
 
 unanswerable · false_premise 의 2번 검사는 근거 묶음이 아니라 질문이 묻는 문서 전체를 읽습니다 (`plan.document_units`).
-근거 어댑터 run 의 `units.jsonl` 에서 그 문서의 모든 단위를 eligible · held 가리지 않고 읽고,
-글자 span · 표 행은 패키지 요소에서, 원본 그리드 셀은 원본 그리드 참고 파일에서 본문을 가져옵니다.
-묶음만 보면 문서의 다른 곳에 있는 답을 "문서에 없다" 고 내고, eligible 만 보면 `UNVERIFIED` OCR · 원본 그리드 셀에 든 답을 놓칩니다.
+근거 어댑터 run 의 `units.jsonl` 에서 그 문서의 모든 단위를 eligible · held 가리지 않고 본문과 함께 읽습니다.
+묶음만 보면 문서의 다른 곳에 있는 답을 "문서에 없다" 고 내고, eligible 만 보면 원본 대조 예외 · 범위 없는 OCR 청크에 든 답을 놓칩니다.
 읽기 전에 패키지가 근거 어댑터 run 에 고정된 SHA 와 같은지 봅니다.
 핵심어 검사는 글자로만 맞추므로, 같은 속성을 다른 말로 쓴 근거(`하자보수` · `하자담보책임`)는 6번의 검증기가 찾습니다.
 

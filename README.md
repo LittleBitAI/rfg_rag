@@ -573,7 +573,7 @@ rag/
   validation/              ③ validation.py
   generation/              ④ generation.py
   evaluation/              ⑤ evaluation.py
-golden_pipeline/           ③ 주제별 골든 데이터 스키마 · 상태 · 저장 규약 · v11 근거 어댑터 (테스트는 tests/golden/)
+golden_pipeline/           ③ 주제별 골든 데이터 스키마 · 상태 · 저장 규약 · v12 근거 어댑터 (테스트는 tests/golden/)
 frontend/                  ⑥ 질문 화면
   server.py                POST /api/ask — answer_question 을 감싸는 FastAPI
   web/                     React + Vite 화면 (/api 는 server.py, /ocr-api 는 ocr_select/server.py 로 프록시; ocr.html 은 라벨링, review.html 은 저장 OCR 결과 검토)
