@@ -1037,7 +1037,7 @@ def _calls_left(item, units, document, replay, instructions):
 
 
 def _validator_unit_lists(item, units, document):
-    """검증기에 묻는 근거 단위 목록들: 독립 답 한 번, multi_hop 이면 근거 단위마다 (그 표의 머리글 줄을 붙여) 한 번 더.
+    """검증기에 묻는 근거 단위 목록들: 독립 답 한 번, multi_hop 이면 근거 단위마다 (그 표 머리글 청크의 첫 줄을 붙여) 한 번 더.
     unanswerable 은 독립 답 대신 대상 문서의 묶음마다 한 번이다 (_verdict 가 묻는 차례와 같다).
     """
     if item["primary_topic"] == "unanswerable":
@@ -1051,7 +1051,9 @@ def _single_units(units):
     """multi_hop 에서 하나씩 묻는 근거: 단위마다 (그 단위, 검증기에 줄 목록).
 
     v12 의 0행 청크는 머리글 행과 데이터 행을 함께 담아 그 자체로 답이 나올 수 있으므로 함께 묻는다.
-    표 중간 행 청크에는 머리글 청크 전체가 아니라 머리글 줄만 붙인다. 청크 전체를 붙이면 두 근거를 함께 묻는 셈이다.
+    표 중간 행 청크에는 머리글 청크 전체가 아니라 그 첫 줄만 붙인다. 청크 전체를 붙이면 두 근거를 함께 묻는 셈이다.
+    첫 줄은 0행(머리글)이거나 표 앞 제목이라 다른 청크의 데이터 행이 섞이지 않는다.
+    ponytail: 제목 줄이 앞에 있는 표는 열 이름이 빠져 단독 검사가 느슨해진다. 청크에 행 범위를 줄 단위로 남기면 0행을 정확히 고를 수 있다.
     _single_unit_verdict 와 _calls_left 가 함께 써서, 한도에 세는 요청과 실제로 보내는 요청이 어긋나지 않게 한다.
     """
     headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
@@ -1060,5 +1062,4 @@ def _single_units(units):
 
 def _with_header_line(unit, headers):
     header = headers.get(unit["ref"]["element_id"]) if plan._table_row(unit) else None
-    rows = header and _table_lines(header["text"])
-    return [{**header, "text": " | ".join(rows[0])}, unit] if rows else [unit]
+    return [{**header, "text": header["text"].split("\n")[0]}, unit] if header else [unit]

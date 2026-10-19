@@ -735,3 +735,17 @@ def test_multi_hop_asks_a_header_chunk_alone_and_gives_later_chunks_only_the_hea
     assert validation._single_unit_verdict({"question": "A시스템의 하자담보책임기간은?"}, [first, later],
                                            verdict("12개월"), ask, None) == (
         "rejected", "multi_hop 아님: 근거 E1 하나로 답이 나옵니다")
+
+
+def test_a_one_cell_header_row_does_not_lend_the_next_data_row_to_a_single_unit_check():
+    # 한 칸짜리 0행을 건너뛰고 칸이 둘 이상인 첫 줄을 붙이면, 다른 청크의 데이터 행이 단독 검사에 섞였다.
+    first = {**table_chunk(0, "연계\nA사업 | 운영팀"), "label": "E1"}
+    later = {**table_chunk(2, "운영팀 | 코드 Z9"), "label": "E2"}
+
+    def ask(question, units):
+        text = "\n".join(unit["text"] for unit in units)
+        both = "A사업 | 운영팀" in text and "운영팀 | 코드 Z9" in text
+        return verdict("Z9" if both else "", answerable=both), None
+
+    assert validation._single_unit_verdict({"question": "A사업 담당 팀의 코드는?"}, [first, later],
+                                           verdict("Z9"), ask, None)[0] == "auto_validated"
