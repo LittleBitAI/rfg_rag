@@ -40,6 +40,13 @@ def _row(**fields) -> dict:
     # 답의 두 번째 문장은 정답에 없어 정밀도 0.5, 정답 문장은 답에 있어 재현율 1 → F1 2/3
     ("end_to_end", _row(reference="하자보수 기간은 1년입니다.", answer="하자보수 기간은 1년입니다. 추가로 교육을 2회 실시합니다."),
      {"factual_correctness": pytest.approx(2 / 3, abs=1e-4)}),
+    # 짧은 정답('180일')도 채점한다 — 근거에 글자 그대로 있으면 리랭커 점수가 낮아도 지지 (예전엔 문장에서 빠져 늘 0점)
+    ("retrieval", _row(reference="180일", contexts=["무관한 내용", "사업기간 : 착수일로부터 180 일"]),
+     {"context_precision": 0.5, "context_recall": 1.0}),
+    ("end_to_end", _row(reference="180일", answer="180일"), {"factual_correctness": 1.0}),
+    # 짧은 정답이 답 문장 안에 있으면 지지 (리랭커 점수는 0) — 근거에 없는 둘째 문장만 정밀도에서 빠진다
+    ("end_to_end", _row(reference="180일", answer="사업기간은 착수일로부터 180 일입니다. 추가로 교육을 2회 실시합니다."),
+     {"factual_correctness": pytest.approx(2 / 3, abs=1e-4)}),
     ("generation", _row(answer="답변"), {"answer_relevancy": pytest.approx(0.6)}),
     ("generation", _row(answer=" "), {"answer_relevancy": 0.0}),
 ])

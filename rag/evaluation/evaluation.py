@@ -258,15 +258,29 @@ def _sentences(text: str) -> list[str]:
     return out
 
 
+def _claims(text: str) -> list[str]:
+    """채점할 문장. 문장 거르기(_sentences)에서 모두 빠지는 짧은 글('180일' · '1식' · '12개월')은 글 전체를 한 문장으로 —
+    빼면 짧은 정답의 질문은 검색 · 생성을 잘해도 늘 0점이 된다 (dev 484문항 중 70문항). '답 없음' 문장은 그대로 뺀다"""
+    whole = _LIST_MARK.sub("", _CITATION.sub("", text).replace("|", " ").replace("**", "")).strip()
+    return _sentences(text) or ([whole] if re.search(r"\w", whole) and _NO_ANSWER not in whole else [])
+
+
 def _numbers(text: str) -> set[str]:
     """단위까지 맞춘 숫자 · 날짜 토큰 ('3 초' = '3초', '5천만 원' = '5,000만원')"""
     return {token for _, _, token in _semantic_spans(text)}
 
 
 def _relevance(claims: list[str], passages: list[str], cfg: dict) -> list[list[float]]:
-    """claims × passages 리랭커 점수"""
+    """claims × passages 리랭커 점수. 문장이 근거에 글자 그대로(띄어쓰기 · 숫자 표기 차이는 무시) 있거나, 근거가 문장으로
+    거르면 남지 않는 짧은 값('180일' · '1식')이고 그 값이 문장 안에 있으면 1 — 리랭커는 짧은 글의 관련도를 낮게 매긴다.
+    정답이 '180일' 이고 답이 '사업기간은 180일입니다' 이면 그 답 문장은 정답으로 지지된다"""
     reranker = _local_model("reranker", cfg)
-    return [reranker.scores(claim, passages) for claim in claims]
+    return [[1.0 if _contains(claim, passage) else score
+             for passage, score in zip(passages, reranker.scores(claim, passages))] for claim in claims]
+
+
+def _contains(claim: str, passage: str) -> bool:
+    return _key_fact_ratio([claim], passage) == 1 or (not _sentences(passage) and _key_fact_ratio([passage], claim) == 1)
 
 
 def _supported(claims: list[str], passages: list[str], scores: list[list[float]], question: str) -> list[bool]:
@@ -289,7 +303,7 @@ def _average_precision(relevant: list[bool]) -> float:
 
 
 def _local_retrieval(row: dict, cfg: dict) -> dict:
-    references, contexts = _sentences(row["reference"]), [c for c in row["contexts"] if c.strip()]
+    references, contexts = _claims(row["reference"]), [c for c in row["contexts"] if c.strip()]
     if not references or not contexts:
         return {"context_precision": 0.0, "context_recall": 0.0}
     scores = _relevance(references, contexts, cfg)
@@ -307,7 +321,7 @@ def _local_generation(row: dict, cfg: dict) -> dict:
 
 def _local_grounding(row: dict, cfg: dict) -> dict:
     """답에 채점할 문장이 없으면(빈 답 · '답 없음'만) RAGAS 처럼 NaN"""
-    claims, contexts = _sentences(row["answer"]), [c for c in row["contexts"] if c.strip()]
+    claims, contexts = _claims(row["answer"]), [c for c in row["contexts"] if c.strip()]
     if not claims or not contexts:
         return {"faithfulness": math.nan if not claims else 0.0}
     scores = _relevance(claims, contexts, cfg)
@@ -320,7 +334,7 @@ def _windows(sentences: list[str], size: int = 3) -> list[str]:
 
 
 def _local_end_to_end(row: dict, cfg: dict) -> dict:
-    answer, references = _sentences(row["answer"]), _sentences(row["reference"])
+    answer, references = _claims(row["answer"]), _claims(row["reference"])
     if not answer or not references:
         return {"factual_correctness": 0.0}
     reference = [" ".join(references)]
