@@ -16,13 +16,15 @@ SEED = 20261015
 PARTS = ("dev", "test")
 
 
-def split(version, base=None):
+def split(version, base=None, replace=()):
     """출시본 version 들을 splits/{version}/ 의 dev.jsonl · test.jsonl 로 나누고, 칸별 개수를 매니페스트에 남긴다.
 
     base 가 없으면 모든 주제의 출시본 version 을 새로 나눈다. base 가 있으면 splits/{base} 를 그대로 두고
-    base 에 없는 주제의 출시본 version 만 더한다 (_extend).
+    base 에 없는 주제와 replace 의 주제의 출시본 version 을 더한다 (_extend).
     """
-    parts, sources = _extend(version, base) if base else _fresh(version)
+    if replace and not base:
+        raise ValueError("replace 는 앞 분할(base)의 주제를 바꿀 때만 씁니다")
+    parts, sources = _extend(version, base, replace) if base else _fresh(version)
     split_dir = storage._child(storage.OUTPUTS / "splits", version)
     split_dir.mkdir(parents=True, exist_ok=False)
     for name, rows in parts.items():
@@ -55,11 +57,12 @@ def _fresh(version):
     return parts, sources
 
 
-def _extend(version, base):
+def _extend(version, base, replace):
     """splits/{base} 의 dev · test 를 차례 그대로 두고, base 에 없는 주제의 출시본 version 의 질문을 뒤에 붙인다.
 
     새 질문은 그 질문이 묻는 문서가 base 에서 간 쪽으로 간다. 문서가 쪽을 바꾸면 팀이 dev 로 맞춰 온 test 가 더는 held-out 이 아니다.
     base 에 없는 문서의 질문은 갈 쪽이 정해지지 않아 멈춘다.
+    replace 의 주제는 출시본 version 으로 바꾼다. 그 출시본에 없는 base 질문은 빼고, 남는 질문은 같은 쪽 같은 차례에 둔다.
     """
     manifest = storage._read_json(_split_dir(base) / "manifest.json")
     parts = {}
@@ -70,10 +73,17 @@ def _extend(version, base):
         parts[name] = storage._read_jsonl(path)
     sides = {_doc(item): name for name in PARTS for item in parts[name]}
     sources = dict(manifest["sources"])
-    for topic in (topic for topic in TOPICS if topic not in manifest["sources"]):
+    unknown = set(replace) - set(manifest["sources"])
+    if unknown:
+        raise ValueError(f"바꿀 주제 {sorted(unknown)} 가 분할 {base} 에 없습니다")
+    for topic in (topic for topic in TOPICS if topic not in manifest["sources"] or topic in replace):
         released, release_manifest = storage.read_release(topic, version)
         sources[topic] = release_manifest["golden_sha256"]
-        for item in released:
+        kept = {item["candidate_id"] for item in released}
+        for name in PARTS:
+            parts[name] = [item for item in parts[name] if item["primary_topic"] != topic or item["candidate_id"] in kept]
+        present = {item["candidate_id"] for name in PARTS for item in parts[name]}
+        for item in (item for item in released if item["candidate_id"] not in present):
             if _doc(item) not in sides:
                 raise ValueError(f"{item['candidate_id']} 이 묻는 문서 {_doc(item)} 가 분할 {base} 에 없습니다")
             parts[sides[_doc(item)]].append(item)

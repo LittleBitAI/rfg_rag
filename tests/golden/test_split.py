@@ -82,6 +82,25 @@ def test_adding_topics_keeps_the_base_split_and_sends_each_question_to_its_docum
     assert set(manifest["sources"]) == set(TOPICS) and manifest["base"]["version"] == "v1"
 
 
+def test_replacing_a_topic_drops_its_missing_questions_and_sends_new_ones_to_their_documents_side(outputs, make_item):
+    # 규칙으로 뺀 비교 문항을 다시 만들어 채울 때, 다른 질문이 쪽을 바꾸면 dev 로 맞춰 온 test 가 더는 held-out 이 아니다.
+    release(make_item, TOPICS, "v1")
+    base = read_parts(split.split("v1"))
+    side = {item["evidence"][0]["doc_sha"]: name for name, rows in base.items() for item in rows}
+    old, _ = storage.read_release("comparison", "v1")
+    added = release(make_item, ["comparison"], "v2")
+    new, _ = storage.read_release("comparison", "v2")
+    storage.write_release("comparison", "v3", old[1:] + new, [("A", "v1"), ("A", "v2")])
+
+    parts = read_parts(split.split("v3", base="v1", replace=["comparison"]))
+
+    for name in parts:
+        kept = [item for item in base[name] if item["candidate_id"] != old[0]["candidate_id"]]
+        assert parts[name][:len(kept)] == kept
+        assert all(side[added[item["candidate_id"]]] == name for item in parts[name][len(kept):])
+    assert sum(len(rows) for rows in parts.values()) == sum(len(rows) for rows in base.values()) - 1 + len(new)
+
+
 def test_adding_a_topic_refuses_a_question_on_a_document_the_base_split_lacks(outputs, make_item, monkeypatch):
     monkeypatch.setattr(split, "TOPICS", ORIGINAL)
     release(make_item, ORIGINAL, "v1")

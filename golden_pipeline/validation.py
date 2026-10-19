@@ -297,6 +297,8 @@ def rename(topic, version, sources):
     """이미 낸 출시본들을 쓸모 판정 없이 합쳐, 질문 앞 문서 이름만 지금 data_list.csv 의 이름으로 바꿔 releases/{version}/ 로 낸다.
 
     팀이 기관 이름을 고친 뒤 판정을 다시 사지 않으려는 것이다. 항목 내용은 write_release 가 카탈로그 기록과 대조한다.
+    규칙 검사(rule_reason)는 돈이 들지 않으므로 다시 본다. 규칙이 생기기 전에 낸 출시본도 같은 기준으로 내기 위해서다.
+    빠진 항목은 release 처럼 매니페스트의 dropped 에 남아 improvement.record_screen 이 실패 기록으로 옮긴다.
     """
     items, runs, golden = [], set(), {}
     for source in sources:
@@ -304,11 +306,30 @@ def rename(topic, version, sources):
         items += released
         runs.update(tuple(run.split("/", 1)) for run in manifest["runs"])
         golden[source] = manifest["golden_sha256"]
+    units = _planned_units(topic, items)
+    ruled = {item["candidate_id"]: rule for item in items if (rule := rule_reason(item, units[item["candidate_id"]]))}
+    dropped = [{"candidate_id": item["candidate_id"], "method": item["method"], "run_id": item["run_id"],
+                "question": item["question"], "code": None, "reason": ruled[item["candidate_id"]]}
+               for item in items if item["candidate_id"] in ruled]
+    items = [item for item in items if item["candidate_id"] not in ruled]
     docs = {item["candidate_id"]: plan.asked_document(item) for item in items}
     items = _current_names(items, docs)
     # 이름이 같아진 뒤에 견준다. 옛 이름 · 새 이름 질문은 앞머리만 달라 이름을 바꾸기 전에는 같은 질문으로 보이지 않는다.
     _refuse_duplicates(items)
-    return storage.write_release(topic, version, items, runs, {"renamed_from": golden})
+    return storage.write_release(topic, version, items, runs, {"renamed_from": golden, "dropped": dropped})
+
+
+def _planned_units(topic, items):
+    """candidate_id → 그 항목을 만든 run 의 고정 계획에서 읽은 인용 근거 단위 (출시 때 규칙 검사가 읽는 것과 같다)."""
+    bundles = {}
+    for method, run_id in {(item["method"], item["run_id"]) for item in items}:
+        generated = storage._read_json(storage.run_path(topic, method, run_id) / "manifest.json")["generation"]
+        planned, sha = plan.load_plan(generated["plan_id"])
+        if sha != generated["plan_sha256"]:
+            raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_id} 을 만든 뒤 바뀌었습니다")
+        bundles[method, run_id] = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
+    return {item["candidate_id"]: evidence_units(item, bundles[item["method"], item["run_id"]][item["bundle_id"]])
+            for item in items}
 
 
 def _current_names(items, docs):
@@ -622,14 +643,41 @@ def _topic_rule(item, question, units):
         return "빈 칸 표: 인용한 표 행이나 머리글에 빈 칸으로 시작하거나 빈 칸이 이어진 행이 있습니다"
     if topic == "condition" and "(조건:" in item["answer"]:
         return "답 덧붙임: 답에 '(조건: …)' 이 붙었습니다"
-    # 생성 검사도 choice 를 요구하지만, 그 전에 검증한 run 을 출시할 때 여기서 걸러진다.
-    if topic == "comparison" and item["structure"].get("choice") is None:
-        return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
+    if topic == "comparison" and (reason := _comparison_rule(item, units)):
+        return reason
     if topic == "multi_hop" and len({ref["chunk_id"] for ref in item["evidence"]}) < 2:
         return "multi_hop 아님: 인용한 근거가 모두 한 청크 안에 있습니다"
     if topic == "unanswerable" and EVIDENCE_LABEL.search(question):
         return "근거 지칭: 질문에 'E1' · '머리글 행' 같은 근거 라벨이 있습니다"
     return None
+
+
+def _comparison_rule(item, units):
+    # 생성 검사도 choice 를 요구하지만, 그 전에 검증한 run 을 출시할 때 여기서 걸러진다.
+    if item["structure"].get("choice") is None:
+        return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
+    if _field_comparison(item, units):
+        return "칸 비교: 요구사항 표의 서로 다른 칸 이름(고유번호 · 명칭 · 분류 등)을 대상으로 견줍니다"
+    return None
+
+
+def _field_comparison(item, units):
+    """요구사항 표의 근거에서 대상마다 '대상 | 값' 이 이웃한 칸이면 참. 한 요구사항의 칸끼리 견준 꼴이다.
+
+    요구사항 표는 '요구사항 고유번호 | SFR-001' 처럼 칸 이름과 값이 이웃한다. 이런 질문(분류와 명칭 중 어느 쪽이 '필수'인가)은
+    RFP 를 읽는 사람이 묻지 않는데, 값은 근거와 맞아 검증을 통과한다. 세부 내용 글 안의 두 기능을 견주면 대상이 칸이 아니라 걸리지 않는다.
+    """
+    if not all(ref["requirement_ids"] for ref in item["evidence"]):
+        return False
+    pairs = set()
+    for unit in units:
+        # v12 청크는 한 줄이 한 행이고, v11 행은 칸 안에 줄바꿈이 있을 수 있어 두 방식으로 모두 칸을 나눈다.
+        for row in [unit["text"], *unit["text"].splitlines()]:
+            cells = [re.sub(r"\s", "", cell) for cell in row.split("|")]
+            pairs.update(zip(cells, cells[1:]))
+    values = item["structure"]["values"]
+    return all((re.sub(r"\s", "", name), re.sub(r"\s", "", str(values.get(name, "")))) in pairs
+               for name in item["structure"]["entities"])
 
 
 def _single_unit_verdict(item, units, full, ask, judge):

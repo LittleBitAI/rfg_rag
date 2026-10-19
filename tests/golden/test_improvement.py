@@ -219,13 +219,32 @@ def test_an_item_the_release_screen_drops_becomes_a_failure_the_next_loop_can_tr
 def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_failure_code(topic, field, value, code):
     # 검증은 답이 근거와 맞는지만 봐서 이 꼴은 통과하지만 평가에 쓸 수 없었다. 코드가 없으면 다음 생성이 배우지 못한다.
     item = {"primary_topic": topic, "question": "사업 예산은 얼마인가?", "answer": "1억원",
-            "context": "[E1]\n예산 | 1억원", "evidence": [{"chunk_id": "c1"}, {"chunk_id": "c2"}],
+            "context": "[E1]\n예산 | 1억원",
+            "evidence": [{"chunk_id": "c1", "requirement_ids": []}, {"chunk_id": "c2", "requirement_ids": []}],
             "structure": {"choice": "A안"}}
     units = [{"text": "예산 | 1억원", "ref": {"location": {"kind": "table", "row": 1}}}]
     assert rule_reason(item, units) is None
     if field == "table_text":
         units[0]["text"] = value
     assert improvement.failure_code(rule_reason({**item, field: value}, units)) == code
+
+
+@pytest.mark.parametrize("requirement_ids, entities, values, code", [
+    # 한 요구사항의 칸 이름끼리 견줬다. 값은 근거와 맞아 검증을 통과했지만 RFP 를 읽는 사람은 이렇게 묻지 않는다.
+    (["QUR-003"], ["요구사항 분류", "응낙수준"], {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "invalid_comparison"),
+    # 세부 내용 글에 나오는 두 기능은 칸이 아니라 같은 종류의 대상이다.
+    (["QUR-003"], ["실명 인증", "로그인"], {"실명 인증": "휴대폰", "로그인": "아이디"}, None),
+    # 요구사항 표가 아닌 표의 행 이름(메뉴)끼리 견주는 것은 같은 종류의 비교다.
+    ([], ["목표경영", "과제관리"], {"목표경영": "42", "과제관리": "103"}, None),
+])
+def test_a_comparison_between_fields_of_one_requirement_is_ruled_out(requirement_ids, entities, values, code):
+    item = {"primary_topic": "comparison", "question": "어느 쪽이 더 큰가?", "answer": "",
+            "evidence": [{"chunk_id": "c1", "requirement_ids": requirement_ids}],
+            "structure": {"entities": entities, "values": values, "choice": entities[1]}}
+    text = ("요구사항 분류 | 품질 요구사항 | 응낙수준 | 필수\n세부 내용 | 실명 인증은 휴대폰, 로그인은 아이디로 한다\n"
+            "목표경영 | 42\n과제관리 | 103")
+    reason = rule_reason(item, [{"text": text, "ref": {"location": {"kind": "table", "row": 1}}}])
+    assert (reason and improvement.failure_code(reason)) == code
 
 
 @pytest.mark.parametrize("topic, question, code", [
@@ -487,18 +506,43 @@ def test_a_rename_reissues_releases_under_current_names_without_screening(looped
     [after] = read_jsonl(renamed / "golden.jsonl")
     assert after == {**before, "question": with_document(BOND["question"], {"agency": "새기관", "title": "나사업 운영"})}
     manifest = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["release"] == {"renamed_from": {"v1": storage._sha256(first / "golden.jsonl")}}
+    assert manifest["release"] == {"renamed_from": {"v1": storage._sha256(first / "golden.jsonl")}, "dropped": []}
     assert manifest["runs"] == ["A/l1-r1"]
 
 
-def released_under(version, agency, run_id, make_item):
-    """가기관 문서의 같은 예산 질문을 run 마다 다른 근거 묶음으로 등록하고, agency 이름을 붙여 출시한다."""
-    item = make_item(candidate_id=f"numeric-A-{run_id}-0001", run_id=run_id, bundle_id=f"b-{run_id}",
-                     question=with_document("사업 예산은 얼마인가?", {"agency": agency, "title": "가사업 구축"}))
+def released_under(version, agency, run_id, make_item, text="사업 예산은 1억 3천만원이다", **overrides):
+    """가기관 문서의 같은 예산 질문을 run 마다 다른 근거 묶음 · 계획으로 등록하고, agency 이름을 붙여 출시한다.
+
+    계획의 근거 단위 본문은 text 다. 다시 낼 때 규칙 검사가 이 본문을 읽는다.
+    """
+    item = make_item(**{"candidate_id": f"numeric-A-{run_id}-0001", "run_id": run_id, "bundle_id": f"b-{run_id}",
+                        "question": with_document("사업 예산은 얼마인가?", {"agency": agency, "title": "가사업 구축"}),
+                        **overrides})
     item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": f"c-{run_id}"}]
+    plan_path = storage.OUTPUTS / "plans" / f"p-{run_id}.json"
+    plan_path.parent.mkdir(exist_ok=True)
+    plan_path.write_text(json.dumps({"bundles": [{"bundle_id": item["bundle_id"],
+                                                  "units": [{"ref": item["evidence"][0], "text": text}]}]}), encoding="utf-8")
+    topic = item["primary_topic"]
     accepted = transition(item, "auto_validated", "통과", validator_version="val-0.1", difficulty="easy")
-    storage.write_run("numeric", "A", run_id, [accepted])
-    return storage.write_release("numeric", version, [transition(accepted, "released", "출시")], [("A", run_id)])
+    storage.write_run(topic, "A", run_id, [accepted],
+                      info={"plan_id": f"p-{run_id}", "plan_sha256": storage._sha256(plan_path)})
+    return storage.write_release(topic, version, [transition(accepted, "released", "출시")], [("A", run_id)])
+
+
+def test_a_rename_drops_what_a_newer_rule_rules_out_and_records_it_as_a_failure(evidence_run, make_item):
+    # 칸 비교 규칙은 비교 문항을 출시한 뒤에 생겼다. 판정 없이 다시 낸 출시본에 그 문항이 남으면 규칙이 없는 것과 같다.
+    released_under("v1", "가기관", "r1", make_item, text="요구사항 분류 | 품질 요구사항 | 응낙수준 | 필수",
+                   candidate_id="comparison-A-r1-0001", primary_topic="comparison", secondary_tags=[],
+                   structure={"entities": ["요구사항 분류", "응낙수준"],
+                              "values": {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "choice": "응낙수준"})
+
+    renamed = rename("comparison", "v2", ["v1"])
+
+    manifest = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["count"] == 0 and manifest["runs"] == ["A/r1"]
+    assert [row["candidate_id"] for row in manifest["release"]["dropped"]] == ["comparison-A-r1-0001"]
+    assert read_jsonl(improvement.record_screen("comparison", "v2"))[0]["failure_code"] == "invalid_comparison"
 
 
 def test_a_rename_refuses_questions_that_only_become_the_same_under_current_names(evidence_run, make_item):
