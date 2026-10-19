@@ -53,10 +53,10 @@ def test_load_v11_package_links_split_requirement_and_table_chunks(tmp_path):
     """요구사항 ID 청크와 상세 내용 청크, 여러 청크로 나뉜 표가 v11 에서 읽은 그대로 02 의 연결 청크가 된다"""
     write_jsonl([{"doc_id": "d", "source_paths": ["기관_사업.hwp"], "search_text": "표지"}], tmp_path / "final_records.jsonl")
     write_jsonl([{"element_id": f"e{i}", "location": {"page": 3, "supplier_metadata": {
-        "doc_id": "d", "requirement_ids": ["SER-001"] if i < 2 else []}}} for i in range(4)],
+        "doc_id": "d", "requirement_ids": ["TST-901"] if i < 2 else []}}} for i in range(4)],
         tmp_path / "final_elements.jsonl")
-    requirement = [{"payload": body, "chunk_type": "requirement_detail", "requirement_key": "SER-001"}
-                   for body in ["요구사항 고유번호 | SER-001", "요구사항 상세내용 | 보안 준수"]]
+    requirement = [{"payload": body, "chunk_type": "requirement_detail", "requirement_key": "TST-901"}
+                   for body in ["요구사항 고유번호 | TST-901", "요구사항 상세내용 | 예시 점검 절차"]]
     table = [{"payload": body, "chunk_type": "table", "table_refs": ["t1"]} for body in ["| 구분 | 값 |", "| 응답 | 3초 |"]]
     write_jsonl([{"chunk_id": f"c{i}", "spans": [{"element_id": f"e{i}"}], "body": chunk["payload"],
                   "section_path": [], **chunk} for i, chunk in enumerate(requirement + table)],
@@ -65,5 +65,5 @@ def test_load_v11_package_links_split_requirement_and_table_chunks(tmp_path):
     _, chunks = load_v11_package(tmp_path)
     code_chunks, links = _link_index(chunks)
 
-    assert code_chunks["SER-001"] == {0, 1}
+    assert code_chunks["TST-901"] == {0, 1}
     assert links == [[1], [0], [3], [2]]

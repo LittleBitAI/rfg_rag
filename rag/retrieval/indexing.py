@@ -62,7 +62,7 @@ def find_codes(text: str) -> set[str]:
     return {f"{letters.upper()}-{digits}" for letters, digits in _CODE_RE.findall(text)}
 
 
-# 요구사항 표의 명칭 칸: '요구사항 명칭 | 보안관리 및 규정 준수' · '요구사항명 | …' · 오타 '요사항 명칭 | …'
+# 요구사항 표의 명칭 칸: '요구사항 명칭 | 시험 데이터 보관' ·'요구사항명 | …' · 오타 '요사항 명칭 | …'
 _REQUIREMENT_NAME = re.compile(r"(?:요?구?사항\s*)?명\s*칭\s*\|\s*([^\n|]+)|요구사항\s*명\s*\|\s*([^\n|]+)")
 
 
@@ -86,7 +86,7 @@ def requirement_names(chunks: list[dict]) -> dict[tuple[str, str], str]:
 
 def search_texts(chunks: list[dict]) -> list[str]:
     """검색(BM25 · 임베딩)이 읽는 청크 글. 요구사항에 속한 청크의 글에 그 요구사항 ID 나 명칭이 없으면
-    '[요구사항 SER-001 보안관리 및 규정 준수]' 를 앞에 붙인다 — 전처리에서 ID · 명칭 청크와 상세 내용 청크가
+    '[요구사항 TST-901 시험 데이터 보관]' 을 앞에 붙인다 — 전처리에서 ID · 명칭 청크와 상세 내용 청크가
     나뉘어도 상세 내용 청크가 요구사항 ID · 이름으로 찾히게 (요구사항 소속 정보 requirement_key 를 쓴다).
     답변 근거와 화면에는 원래 글(text · body)을 그대로 쓴다."""
     names = requirement_names(chunks)

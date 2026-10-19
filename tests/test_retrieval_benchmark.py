@@ -87,8 +87,8 @@ def test_sparse_preparation_reuses_production_tokens_of_requirement_labelled_chu
     from rag.retrieval.benchmark import run
     from rag.retrieval.indexing import KiwiTokenizer, search_texts
 
-    chunks = [{"chunk_id": f"c{i}", "doc_id": "d", "text": text, "body": text, "requirement_key": "SER-001"}
-              for i, text in enumerate(["요구사항 고유번호 | SER-001\n요구사항 명칭 | 보안관리", "접근 통제를 둔다"])]
+    chunks = [{"chunk_id": f"c{i}", "doc_id": "d", "text": text, "body": text, "requirement_key": "TST-901"}
+              for i, text in enumerate(["요구사항 고유번호 | TST-901\n요구사항 명칭 | 시험 데이터 보관", "예시 점검 절차"])]
     write_jsonl(chunks, tmp_path / "out/input/chunks.jsonl")
     tokenizer = KiwiTokenizer()
     production = {"tokenizer": tokenizer.fingerprint, "tokens": tokenizer.batch(search_texts(chunks))}

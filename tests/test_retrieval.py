@@ -269,28 +269,28 @@ def test_csv_case_only_collision_does_not_choose_an_organization():
     assert router.route("기관가공사와 기관나공사 요구사항") == {}
 
 
-# 요구사항 ID · 명칭 청크와 상세 내용 청크가 나뉜 전처리 패키지 사례 (서민금융진흥원 SER-001)
-_SPLIT_REQUIREMENT = ["요구사항 고유번호 | SER-001 / 요구사항 명칭 | 보안관리 및 규정 준수",
-                      "요구사항 상세내용 | 누출금지 대상정보는 내·외부 IP주소 현황, 정보통신망 구성도",
+# 요구사항 ID · 명칭 청크와 상세 내용 청크가 나뉜 전처리 패키지 사례 (합성 예시)
+_SPLIT_REQUIREMENT = ["요구사항 고유번호 | TST-901 / 요구사항 명칭 | 시험 데이터 보관",
+                      "요구사항 상세내용 | 예시 점검 절차는 매주 수행한다",
                       "다른 요구사항 상세 내용", "다른 문서의 같은 코드 상세 내용"]
 
 
 def test_detail_chunk_without_id_text_matches_its_requirement_code():
     index = make_index(_SPLIT_REQUIREMENT, [5, 5, 5, 5], doc_ids=["a", "a", "a", "b"],
-                       requirements=["SER-001", "SER-001", None, "SER-001"])
-    index.router.route.return_value = {"서민금융진흥원": {"a"}}
+                       requirements=["TST-901", "TST-901", None, "TST-901"])
+    index.router.route.return_value = {"가상기관": {"a"}}
     index._dense = MagicMock(return_value={2: 1.0})
     index._sparse = MagicMock(return_value={2: 1.0})
 
-    hits = index.search("서민금융진흥원 SER-001 누출금지 대상정보")
+    hits = index.search("가상기관 TST-901 예시 점검 절차")
 
-    assert [hit["chunk_id"] for hit in hits] == ["c0", "c1", "c2"]  # 다른 문서(b)의 SER-001 은 라우팅으로 제외
+    assert [hit["chunk_id"] for hit in hits] == ["c0", "c1", "c2"]  # 다른 문서(b)의 TST-901 은 라우팅으로 제외
 
 
 @pytest.mark.parametrize("found", [0, 1])
 def test_pack_adds_other_chunks_of_the_same_requirement_right_after_the_found_one(found):
     index = make_index(_SPLIT_REQUIREMENT, [5, 5, 5, 5], doc_ids=["a", "a", "a", "b"],
-                       requirements=["SER-001", "SER-001", None, "SER-001"])
+                       requirements=["TST-901", "TST-901", None, "TST-901"])
 
     hits = index._pack([(found, 0.9), (2, 0.5)])
 
@@ -300,7 +300,7 @@ def test_pack_adds_other_chunks_of_the_same_requirement_right_after_the_found_on
 
 def test_requirement_chunks_still_respect_token_budget():
     index = make_index(_SPLIT_REQUIREMENT, [5, 30, 5, 5], budget=12, doc_ids=["a", "a", "a", "b"],
-                       requirements=["SER-001", "SER-001", None, "SER-001"])
+                       requirements=["TST-901", "TST-901", None, "TST-901"])
 
     assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (2, 0.5)])] == ["c0", "c2"]
 
@@ -322,21 +322,21 @@ def test_same_table_ref_in_another_document_is_not_linked():
 
 
 def test_linked_chunks_stop_at_link_token_cap():
-    index = make_index(["ID 청크", "상세 하나", "상세 둘"], [5, 400, 400], requirements=["SER-001"] * 3)
+    index = make_index(["ID 청크", "상세 하나", "상세 둘"], [5, 400, 400], requirements=["TST-901"] * 3)
 
     assert [hit["chunk_id"] for hit in index._pack([(0, 0.9)])] == ["c0", "c1"]  # 400 + 400 > 600
 
 
 _REQUIREMENT_CHUNKS = [
-    {"doc_id": "a", "text": "요구사항 고유번호 | SER-001\n요구사항 명칭 | 보안관리 및 규정 준수", "requirement_key": "SER-001"},
-    {"doc_id": "a", "text": "요구사항 상세내용 | 누출금지 대상정보는 IP주소 현황", "requirement_key": "SER-001"},
+    {"doc_id": "a", "text": "요구사항 고유번호 | TST-901\n요구사항 명칭 | 시험 데이터 보관", "requirement_key": "TST-901"},
+    {"doc_id": "a", "text": "요구사항 상세내용 | 예시 점검 절차는 매주 수행한다", "requirement_key": "TST-901"},
     {"doc_id": "a", "text": "일반 본문", "requirement_key": None}]
 
 
 def test_search_texts_label_detail_chunks_with_their_requirement_id_and_name():
     assert search_texts(_REQUIREMENT_CHUNKS) == [
         _REQUIREMENT_CHUNKS[0]["text"],  # ID · 명칭이 이미 있으면 그대로
-        "[요구사항 SER-001 보안관리 및 규정 준수]\n요구사항 상세내용 | 누출금지 대상정보는 IP주소 현황",
+        "[요구사항 TST-901 시험 데이터 보관]\n요구사항 상세내용 | 예시 점검 절차는 매주 수행한다",
         "일반 본문"]
 
 
