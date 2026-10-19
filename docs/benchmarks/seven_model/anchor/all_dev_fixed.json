@@ -1,0 +1,2599 @@
+{
+ "models_done": [
+  "kure",
+  "nemotron",
+  "harrier",
+  "jina",
+  "pplx",
+  "dragonkue",
+  "upskyy"
+ ],
+ "isolated": {
+  "stage1": {
+   "whitespace_bm25": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 44.53,
+    "chunk_fused_recall_at_10": 62.31,
+    "chunk_fused_recall_at_20": 82.67,
+    "chunk_mrr_at_10": 34.24,
+    "evidence_coverage": 63.37,
+    "full_evidence_coverage": 61.7,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 51.06
+     },
+     "condition": {
+      "n": 68,
+      "r10": 76.47
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 100.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 57.69
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 70.3
+     },
+     "table": {
+      "n": 83,
+      "r10": 46.99
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 54.57,
+      "full": 51.22,
+      "full_count": 84
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 72.12,
+      "full": 72.12,
+      "full_count": 119
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 49,
+     "tied": 230,
+     "regressed": 50,
+     "mean_diff_pp": -0.46
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 64.3,
+     "p90": 90.4
+    }
+   },
+   "dense": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 44.22,
+    "chunk_fused_recall_at_10": 59.27,
+    "chunk_fused_recall_at_20": 79.79,
+    "chunk_mrr_at_10": 28.73,
+    "evidence_coverage": 57.14,
+    "full_evidence_coverage": 55.62,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 53.19
+     },
+     "condition": {
+      "n": 68,
+      "r10": 70.59
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 75.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 57.69
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 80.2
+     },
+     "table": {
+      "n": 83,
+      "r10": 27.71
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 42.07,
+      "full": 39.02,
+      "full_count": 64
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 72.12,
+      "full": 72.12,
+      "full_count": 119
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 18,
+     "tied": 281,
+     "regressed": 30,
+     "mean_diff_pp": -3.5
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 55.3,
+     "p90": 60.8
+    }
+   },
+   "kiwi_bm25": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 37.39,
+    "chunk_fused_recall_at_10": 56.53,
+    "chunk_fused_recall_at_20": 76.75,
+    "chunk_mrr_at_10": 25.57,
+    "evidence_coverage": 55.93,
+    "full_evidence_coverage": 54.41,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 57.45
+     },
+     "condition": {
+      "n": 68,
+      "r10": 75.74
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 50.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 55.77
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 66.34
+     },
+     "table": {
+      "n": 83,
+      "r10": 28.92
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 45.12,
+      "full": 42.07,
+      "full_count": 69
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 66.67,
+      "full": 66.67,
+      "full_count": 110
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 16,
+     "tied": 277,
+     "regressed": 36,
+     "mean_diff_pp": -6.23
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 80.4,
+     "p90": 106.9
+    }
+   },
+   "whitespace_hybrid": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 51.06,
+    "chunk_fused_recall_at_10": 70.82,
+    "chunk_fused_recall_at_20": 88.3,
+    "chunk_mrr_at_10": 33.39,
+    "evidence_coverage": 70.21,
+    "full_evidence_coverage": 68.69,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 73.4
+     },
+     "condition": {
+      "n": 68,
+      "r10": 87.5
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 100.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 69.23
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 84.16
+     },
+     "table": {
+      "n": 83,
+      "r10": 38.55
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 57.32,
+      "full": 54.27,
+      "full_count": 89
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 83.03,
+      "full": 83.03,
+      "full_count": 137
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 32,
+     "tied": 294,
+     "regressed": 3,
+     "mean_diff_pp": 8.05
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 129.6,
+     "p90": 180.9
+    }
+   },
+   "kiwi_hybrid": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 44.68,
+    "chunk_fused_recall_at_10": 62.77,
+    "chunk_fused_recall_at_20": 81.76,
+    "chunk_mrr_at_10": 28.15,
+    "evidence_coverage": 62.77,
+    "full_evidence_coverage": 61.7,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 64.89
+     },
+     "condition": {
+      "n": 68,
+      "r10": 80.88
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 50.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 57.69
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 76.24
+     },
+     "table": {
+      "n": 83,
+      "r10": 32.53
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 47.87,
+      "full": 45.73,
+      "full_count": 75
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 77.58,
+      "full": 77.58,
+      "full_count": 128
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 0,
+     "tied": 329,
+     "regressed": 0,
+     "mean_diff_pp": 0.0
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 158.3,
+     "p90": 214.2
+    }
+   },
+   "audit_ws_vs_kiwi_bm25": {
+    "tuning": {
+     "n": 167,
+     "improved": 30,
+     "tied": 116,
+     "regressed": 21,
+     "mean_diff_pp": 5.39
+    },
+    "validation": {
+     "n": 162,
+     "improved": 26,
+     "tied": 120,
+     "regressed": 16,
+     "mean_diff_pp": 6.17
+    },
+    "all_dev": {
+     "n": 329,
+     "improved": 56,
+     "tied": 236,
+     "regressed": 37,
+     "mean_diff_pp": 5.78
+    }
+   }
+  },
+  "stage2": {
+   "kure": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 44.68,
+     "chunk_fused_recall_at_10": 62.77,
+     "chunk_fused_recall_at_20": 81.76,
+     "chunk_mrr_at_10": 28.15,
+     "evidence_coverage": 62.77,
+     "full_evidence_coverage": 61.7,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 64.89
+      },
+      "condition": {
+       "n": 68,
+       "r10": 80.88
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 57.69
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 76.24
+      },
+      "table": {
+       "n": 83,
+       "r10": 32.53
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 47.87,
+       "full": 45.73,
+       "full_count": 75
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 77.58,
+       "full": 77.58,
+       "full_count": 128
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 0,
+      "tied": 329,
+      "regressed": 0,
+      "mean_diff_pp": 0.0
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 158.3,
+      "p90": 214.2
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 44.22,
+     "chunk_fused_recall_at_10": 59.27,
+     "chunk_fused_recall_at_20": 79.79,
+     "chunk_mrr_at_10": 28.73,
+     "evidence_coverage": 57.14,
+     "full_evidence_coverage": 55.62,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 53.19
+      },
+      "condition": {
+       "n": 68,
+       "r10": 70.59
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 57.69
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 80.2
+      },
+      "table": {
+       "n": 83,
+       "r10": 27.71
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 42.07,
+       "full": 39.02,
+       "full_count": 64
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 72.12,
+       "full": 72.12,
+       "full_count": 119
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 0,
+      "tied": 329,
+      "regressed": 0,
+      "mean_diff_pp": 0.0
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 55.3,
+      "p90": 60.8
+     }
+    }
+   },
+   "nemotron": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 47.72,
+     "chunk_fused_recall_at_10": 67.63,
+     "chunk_fused_recall_at_20": 84.95,
+     "chunk_mrr_at_10": 34.33,
+     "evidence_coverage": 64.89,
+     "full_evidence_coverage": 63.83,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 68.09
+      },
+      "condition": {
+       "n": 68,
+       "r10": 88.97
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 65.38
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 80.2
+      },
+      "table": {
+       "n": 83,
+       "r10": 36.14
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 53.35,
+       "full": 51.22,
+       "full_count": 84
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 76.36,
+       "full": 76.36,
+       "full_count": 126
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 27,
+      "tied": 292,
+      "regressed": 10,
+      "mean_diff_pp": 4.86
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 163.8,
+      "p90": 216.3
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 48.48,
+     "chunk_fused_recall_at_10": 65.65,
+     "chunk_fused_recall_at_20": 85.87,
+     "chunk_mrr_at_10": 35.05,
+     "evidence_coverage": 61.85,
+     "full_evidence_coverage": 60.18,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 67.02
+      },
+      "condition": {
+       "n": 68,
+       "r10": 83.09
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 69.23
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 77.23
+      },
+      "table": {
+       "n": 83,
+       "r10": 36.14
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 49.7,
+       "full": 46.34,
+       "full_count": 76
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 73.94,
+       "full": 73.94,
+       "full_count": 122
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 45,
+      "tied": 261,
+      "regressed": 23,
+      "mean_diff_pp": 6.38
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 75.7,
+      "p90": 99.3
+     }
+    }
+   },
+   "harrier": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 39.36,
+     "chunk_fused_recall_at_10": 60.03,
+     "chunk_fused_recall_at_20": 79.18,
+     "chunk_mrr_at_10": 27.23,
+     "evidence_coverage": 57.6,
+     "full_evidence_coverage": 56.53,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 61.7
+      },
+      "condition": {
+       "n": 68,
+       "r10": 77.94
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 55.77
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 72.28
+      },
+      "table": {
+       "n": 83,
+       "r10": 30.12
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 46.04,
+       "full": 43.9,
+       "full_count": 72
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 69.09,
+       "full": 69.09,
+       "full_count": 114
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 17,
+      "tied": 286,
+      "regressed": 26,
+      "mean_diff_pp": -2.74
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 177.6,
+      "p90": 240.3
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 36.47,
+     "chunk_fused_recall_at_10": 55.62,
+     "chunk_fused_recall_at_20": 73.1,
+     "chunk_mrr_at_10": 24.11,
+     "evidence_coverage": 55.78,
+     "full_evidence_coverage": 54.41,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 55.32
+      },
+      "condition": {
+       "n": 68,
+       "r10": 67.65
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 50.0
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 73.27
+      },
+      "table": {
+       "n": 83,
+       "r10": 25.3
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 41.77,
+       "full": 39.02,
+       "full_count": 64
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 69.7,
+       "full": 69.7,
+       "full_count": 115
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 23,
+      "tied": 270,
+      "regressed": 36,
+      "mean_diff_pp": -3.65
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 86.1,
+      "p90": 124.6
+     }
+    }
+   },
+   "jina": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 36.32,
+     "chunk_fused_recall_at_10": 56.38,
+     "chunk_fused_recall_at_20": 77.05,
+     "chunk_mrr_at_10": 23.74,
+     "evidence_coverage": 55.47,
+     "full_evidence_coverage": 53.8,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 58.51
+      },
+      "condition": {
+       "n": 68,
+       "r10": 69.85
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 67.31
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 73.27
+      },
+      "table": {
+       "n": 83,
+       "r10": 20.48
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 42.38,
+       "full": 39.02,
+       "full_count": 64
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 68.48,
+       "full": 68.48,
+       "full_count": 113
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 14,
+      "tied": 281,
+      "regressed": 34,
+      "mean_diff_pp": -6.38
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 267.9,
+      "p90": 414.8
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 35.56,
+     "chunk_fused_recall_at_10": 51.52,
+     "chunk_fused_recall_at_20": 69.91,
+     "chunk_mrr_at_10": 22.34,
+     "evidence_coverage": 50.46,
+     "full_evidence_coverage": 48.94,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 53.19
+      },
+      "condition": {
+       "n": 68,
+       "r10": 61.76
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 63.46
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 70.3
+      },
+      "table": {
+       "n": 83,
+       "r10": 15.66
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 37.2,
+       "full": 34.15,
+       "full_count": 56
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 63.64,
+       "full": 63.64,
+       "full_count": 105
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 19,
+      "tied": 265,
+      "regressed": 45,
+      "mean_diff_pp": -7.75
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 148.1,
+      "p90": 166.9
+     }
+    }
+   },
+   "pplx": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 37.84,
+     "chunk_fused_recall_at_10": 56.69,
+     "chunk_fused_recall_at_20": 78.12,
+     "chunk_mrr_at_10": 25.19,
+     "evidence_coverage": 53.65,
+     "full_evidence_coverage": 52.58,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 55.32
+      },
+      "condition": {
+       "n": 68,
+       "r10": 75.74
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 61.54
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 73.27
+      },
+      "table": {
+       "n": 83,
+       "r10": 20.48
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 37.5,
+       "full": 35.37,
+       "full_count": 58
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 69.7,
+       "full": 69.7,
+       "full_count": 115
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 15,
+      "tied": 279,
+      "regressed": 35,
+      "mean_diff_pp": -6.08
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 178.4,
+      "p90": 266.5
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 36.32,
+     "chunk_fused_recall_at_10": 51.67,
+     "chunk_fused_recall_at_20": 70.36,
+     "chunk_mrr_at_10": 21.86,
+     "evidence_coverage": 47.57,
+     "full_evidence_coverage": 46.5,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 46.81
+      },
+      "condition": {
+       "n": 68,
+       "r10": 68.38
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 67.31
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 71.29
+      },
+      "table": {
+       "n": 83,
+       "r10": 12.05
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 32.62,
+       "full": 30.49,
+       "full_count": 50
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 62.42,
+       "full": 62.42,
+       "full_count": 103
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 23,
+      "tied": 257,
+      "regressed": 49,
+      "mean_diff_pp": -7.6
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 85.3,
+      "p90": 137.4
+     }
+    }
+   },
+   "dragonkue": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 41.95,
+     "chunk_fused_recall_at_10": 63.98,
+     "chunk_fused_recall_at_20": 84.35,
+     "chunk_mrr_at_10": 26.05,
+     "evidence_coverage": 64.89,
+     "full_evidence_coverage": 63.53,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 67.02
+      },
+      "condition": {
+       "n": 68,
+       "r10": 80.88
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 57.69
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 77.23
+      },
+      "table": {
+       "n": 83,
+       "r10": 33.73
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 53.35,
+       "full": 50.61,
+       "full_count": 83
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 76.36,
+       "full": 76.36,
+       "full_count": 126
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 14,
+      "tied": 306,
+      "regressed": 9,
+      "mean_diff_pp": 1.22
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 145.1,
+      "p90": 186.4
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 41.79,
+     "chunk_fused_recall_at_10": 62.16,
+     "chunk_fused_recall_at_20": 81.46,
+     "chunk_mrr_at_10": 24.53,
+     "evidence_coverage": 60.64,
+     "full_evidence_coverage": 59.27,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 54.26
+      },
+      "condition": {
+       "n": 68,
+       "r10": 75.0
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 65.38
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 80.2
+      },
+      "table": {
+       "n": 83,
+       "r10": 32.53
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 46.04,
+       "full": 43.29,
+       "full_count": 71
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 75.15,
+       "full": 75.15,
+       "full_count": 124
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 20,
+      "tied": 299,
+      "regressed": 10,
+      "mean_diff_pp": 2.89
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 58.0,
+      "p90": 76.1
+     }
+    }
+   },
+   "upskyy": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 39.21,
+     "chunk_fused_recall_at_10": 59.73,
+     "chunk_fused_recall_at_20": 80.09,
+     "chunk_mrr_at_10": 25.78,
+     "evidence_coverage": 64.13,
+     "full_evidence_coverage": 62.92,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 61.7
+      },
+      "condition": {
+       "n": 68,
+       "r10": 61.76
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 55.77
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 70.3
+      },
+      "table": {
+       "n": 83,
+       "r10": 45.78
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 60.37,
+       "full": 57.93,
+       "full_count": 95
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 67.88,
+       "full": 67.88,
+       "full_count": 112
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 22,
+      "tied": 275,
+      "regressed": 32,
+      "mean_diff_pp": -3.04
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 153.9,
+      "p90": 215.0
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 36.63,
+     "chunk_fused_recall_at_10": 52.89,
+     "chunk_fused_recall_at_20": 71.28,
+     "chunk_mrr_at_10": 23.06,
+     "evidence_coverage": 56.23,
+     "full_evidence_coverage": 54.71,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 44.68
+      },
+      "condition": {
+       "n": 68,
+       "r10": 48.53
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 46.15
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 66.34
+      },
+      "table": {
+       "n": 83,
+       "r10": 46.99
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 50.61,
+       "full": 47.56,
+       "full_count": 78
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 61.82,
+       "full": 61.82,
+       "full_count": 102
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 26,
+      "tied": 256,
+      "regressed": 47,
+      "mean_diff_pp": -6.38
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 53.7,
+      "p90": 69.3
+     }
+    }
+   }
+  }
+ },
+ "integrated": {
+  "stage1": {
+   "whitespace_bm25": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 58.36,
+    "chunk_fused_recall_at_10": 72.8,
+    "chunk_fused_recall_at_20": 86.93,
+    "chunk_mrr_at_10": 47.15,
+    "evidence_coverage": 73.25,
+    "full_evidence_coverage": 71.73,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 65.96
+     },
+     "condition": {
+      "n": 68,
+      "r10": 76.47
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 100.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 67.31
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 70.3
+     },
+     "table": {
+      "n": 83,
+      "r10": 77.11
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 74.39,
+      "full": 71.34,
+      "full_count": 117
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 72.12,
+      "full": 72.12,
+      "full_count": 119
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 37,
+     "tied": 253,
+     "regressed": 39,
+     "mean_diff_pp": -0.76
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 72.7,
+     "p90": 112.2
+    }
+   },
+   "dense": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 57.75,
+    "chunk_fused_recall_at_10": 70.82,
+    "chunk_fused_recall_at_20": 85.87,
+    "chunk_mrr_at_10": 38.53,
+    "evidence_coverage": 69.3,
+    "full_evidence_coverage": 67.78,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 59.57
+     },
+     "condition": {
+      "n": 68,
+      "r10": 70.59
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 75.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 57.69
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 80.2
+     },
+     "table": {
+      "n": 83,
+      "r10": 69.88
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 66.46,
+      "full": 63.41,
+      "full_count": 104
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 72.12,
+      "full": 72.12,
+      "full_count": 119
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 15,
+     "tied": 289,
+     "regressed": 25,
+     "mean_diff_pp": -2.74
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 55.4,
+     "p90": 61.8
+    }
+   },
+   "kiwi_bm25": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 50.91,
+    "chunk_fused_recall_at_10": 67.02,
+    "chunk_fused_recall_at_20": 81.91,
+    "chunk_mrr_at_10": 36.41,
+    "evidence_coverage": 66.26,
+    "full_evidence_coverage": 64.74,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 61.7
+     },
+     "condition": {
+      "n": 68,
+      "r10": 75.74
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 50.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 57.69
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 66.34
+     },
+     "table": {
+      "n": 83,
+      "r10": 67.47
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 65.85,
+      "full": 62.8,
+      "full_count": 103
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 66.67,
+      "full": 66.67,
+      "full_count": 110
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 11,
+     "tied": 286,
+     "regressed": 32,
+     "mean_diff_pp": -6.53
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 79.2,
+     "p90": 101.5
+    }
+   },
+   "whitespace_hybrid": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 64.89,
+    "chunk_fused_recall_at_10": 80.24,
+    "chunk_fused_recall_at_20": 91.64,
+    "chunk_mrr_at_10": 44.14,
+    "evidence_coverage": 79.64,
+    "full_evidence_coverage": 78.12,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 79.79
+     },
+     "condition": {
+      "n": 68,
+      "r10": 87.5
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 100.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 69.23
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 84.16
+     },
+     "table": {
+      "n": 83,
+      "r10": 72.29
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 76.22,
+      "full": 73.17,
+      "full_count": 120
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 83.03,
+      "full": 83.03,
+      "full_count": 137
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 26,
+     "tied": 301,
+     "regressed": 2,
+     "mean_diff_pp": 6.69
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 151.4,
+     "p90": 315.7
+    }
+   },
+   "kiwi_hybrid": {
+    "n": 329,
+    "chunk_fused_recall_at_5": 57.6,
+    "chunk_fused_recall_at_10": 73.56,
+    "chunk_fused_recall_at_20": 87.54,
+    "chunk_mrr_at_10": 37.91,
+    "evidence_coverage": 73.56,
+    "full_evidence_coverage": 72.34,
+    "topics": {
+     "comparison": {
+      "n": 47,
+      "r10": 71.28
+     },
+     "condition": {
+      "n": 68,
+      "r10": 80.88
+     },
+     "false_premise": {
+      "n": 4,
+      "r10": 50.0
+     },
+     "multi_hop": {
+      "n": 26,
+      "r10": 59.62
+     },
+     "numeric": {
+      "n": 101,
+      "r10": 76.24
+     },
+     "table": {
+      "n": 83,
+      "r10": 71.08
+     }
+    },
+    "routes": {
+     "ordinary": 329
+    },
+    "groups": {
+     "multi_evidence": {
+      "n": 164,
+      "coverage": 69.51,
+      "full": 67.07,
+      "full_count": 110
+     },
+     "single_evidence": {
+      "n": 165,
+      "coverage": 77.58,
+      "full": 77.58,
+      "full_count": 128
+     }
+    },
+    "vs_production": {
+     "n": 329,
+     "improved": 0,
+     "tied": 329,
+     "regressed": 0,
+     "mean_diff_pp": 0.0
+    },
+    "latency": {
+     "samples": 1224,
+     "p50": 148.8,
+     "p90": 206.9
+    }
+   },
+   "audit_ws_vs_kiwi_bm25": {
+    "tuning": {
+     "n": 167,
+     "improved": 24,
+     "tied": 129,
+     "regressed": 14,
+     "mean_diff_pp": 5.99
+    },
+    "validation": {
+     "n": 162,
+     "improved": 21,
+     "tied": 129,
+     "regressed": 12,
+     "mean_diff_pp": 5.56
+    },
+    "all_dev": {
+     "n": 329,
+     "improved": 45,
+     "tied": 258,
+     "regressed": 26,
+     "mean_diff_pp": 5.78
+    }
+   }
+  },
+  "stage2": {
+   "kure": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 57.6,
+     "chunk_fused_recall_at_10": 73.56,
+     "chunk_fused_recall_at_20": 87.54,
+     "chunk_mrr_at_10": 37.91,
+     "evidence_coverage": 73.56,
+     "full_evidence_coverage": 72.34,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 71.28
+      },
+      "condition": {
+       "n": 68,
+       "r10": 80.88
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 59.62
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 76.24
+      },
+      "table": {
+       "n": 83,
+       "r10": 71.08
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 69.51,
+       "full": 67.07,
+       "full_count": 110
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 77.58,
+       "full": 77.58,
+       "full_count": 128
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 0,
+      "tied": 329,
+      "regressed": 0,
+      "mean_diff_pp": 0.0
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 148.8,
+      "p90": 206.9
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 0.9983
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 57.75,
+     "chunk_fused_recall_at_10": 70.82,
+     "chunk_fused_recall_at_20": 85.87,
+     "chunk_mrr_at_10": 38.53,
+     "evidence_coverage": 69.3,
+     "full_evidence_coverage": 67.78,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 59.57
+      },
+      "condition": {
+       "n": 68,
+       "r10": 70.59
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 57.69
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 80.2
+      },
+      "table": {
+       "n": 83,
+       "r10": 69.88
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 66.46,
+       "full": 63.41,
+       "full_count": 104
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 72.12,
+       "full": 72.12,
+       "full_count": 119
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 0,
+      "tied": 329,
+      "regressed": 0,
+      "mean_diff_pp": 0.0
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 55.4,
+      "p90": 61.8
+     }
+    }
+   },
+   "nemotron": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 60.64,
+     "chunk_fused_recall_at_10": 78.12,
+     "chunk_fused_recall_at_20": 89.82,
+     "chunk_mrr_at_10": 44.35,
+     "evidence_coverage": 75.23,
+     "full_evidence_coverage": 74.16,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 72.34
+      },
+      "condition": {
+       "n": 68,
+       "r10": 88.97
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 67.31
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 80.2
+      },
+      "table": {
+       "n": 83,
+       "r10": 74.7
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 74.09,
+       "full": 71.95,
+       "full_count": 118
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 76.36,
+       "full": 76.36,
+       "full_count": 126
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 24,
+      "tied": 297,
+      "regressed": 8,
+      "mean_diff_pp": 4.56
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 152.7,
+      "p90": 236.1
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 0.9988
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 61.4,
+     "chunk_fused_recall_at_10": 75.84,
+     "chunk_fused_recall_at_20": 90.12,
+     "chunk_mrr_at_10": 45.69,
+     "evidence_coverage": 72.34,
+     "full_evidence_coverage": 70.52,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 71.28
+      },
+      "condition": {
+       "n": 68,
+       "r10": 83.09
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 71.15
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 77.23
+      },
+      "table": {
+       "n": 83,
+       "r10": 73.49
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 70.73,
+       "full": 67.07,
+       "full_count": 110
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 73.94,
+       "full": 73.94,
+       "full_count": 122
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 38,
+      "tied": 271,
+      "regressed": 20,
+      "mean_diff_pp": 5.02
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 68.6,
+      "p90": 107.8
+     }
+    }
+   },
+   "harrier": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 52.89,
+     "chunk_fused_recall_at_10": 71.43,
+     "chunk_fused_recall_at_20": 86.47,
+     "chunk_mrr_at_10": 38.38,
+     "evidence_coverage": 68.39,
+     "full_evidence_coverage": 67.17,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 65.96
+      },
+      "condition": {
+       "n": 68,
+       "r10": 77.94
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 57.69
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 72.28
+      },
+      "table": {
+       "n": 83,
+       "r10": 72.29
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 67.68,
+       "full": 65.24,
+       "full_count": 107
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 69.09,
+       "full": 69.09,
+       "full_count": 114
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 14,
+      "tied": 294,
+      "regressed": 21,
+      "mean_diff_pp": -2.13
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 176.3,
+      "p90": 262.5
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 0.9965
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 51.52,
+     "chunk_fused_recall_at_10": 68.54,
+     "chunk_fused_recall_at_20": 83.13,
+     "chunk_mrr_at_10": 36.01,
+     "evidence_coverage": 68.69,
+     "full_evidence_coverage": 67.17,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 59.57
+      },
+      "condition": {
+       "n": 68,
+       "r10": 67.65
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 51.92
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 73.27
+      },
+      "table": {
+       "n": 83,
+       "r10": 73.49
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 67.68,
+       "full": 64.63,
+       "full_count": 106
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 69.7,
+       "full": 69.7,
+       "full_count": 115
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 21,
+      "tied": 279,
+      "regressed": 29,
+      "mean_diff_pp": -2.28
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 113.8,
+      "p90": 264.9
+     }
+    }
+   },
+   "jina": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 51.06,
+     "chunk_fused_recall_at_10": 69.91,
+     "chunk_fused_recall_at_20": 86.47,
+     "chunk_mrr_at_10": 35.34,
+     "evidence_coverage": 68.84,
+     "full_evidence_coverage": 67.17,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 64.89
+      },
+      "condition": {
+       "n": 68,
+       "r10": 69.85
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 69.23
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 73.27
+      },
+      "table": {
+       "n": 83,
+       "r10": 69.88
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 69.21,
+       "full": 65.85,
+       "full_count": 108
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 68.48,
+       "full": 68.48,
+       "full_count": 113
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 14,
+      "tied": 290,
+      "regressed": 25,
+      "mean_diff_pp": -3.65
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 220.0,
+      "p90": 258.9
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 50.91,
+     "chunk_fused_recall_at_10": 65.96,
+     "chunk_fused_recall_at_20": 83.28,
+     "chunk_mrr_at_10": 34.68,
+     "evidence_coverage": 64.89,
+     "full_evidence_coverage": 63.22,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 59.57
+      },
+      "condition": {
+       "n": 68,
+       "r10": 61.76
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 65.38
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 70.3
+      },
+      "table": {
+       "n": 83,
+       "r10": 68.67
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 66.16,
+       "full": 62.8,
+       "full_count": 103
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 63.64,
+       "full": 63.64,
+       "full_count": 105
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 19,
+      "tied": 275,
+      "regressed": 35,
+      "mean_diff_pp": -4.86
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 178.3,
+      "p90": 250.4
+     }
+    }
+   },
+   "pplx": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 52.89,
+     "chunk_fused_recall_at_10": 70.21,
+     "chunk_fused_recall_at_20": 86.32,
+     "chunk_mrr_at_10": 35.96,
+     "evidence_coverage": 67.93,
+     "full_evidence_coverage": 66.87,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 61.7
+      },
+      "condition": {
+       "n": 68,
+       "r10": 75.74
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 63.46
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 73.27
+      },
+      "table": {
+       "n": 83,
+       "r10": 69.88
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 66.16,
+       "full": 64.02,
+       "full_count": 105
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 69.7,
+       "full": 69.7,
+       "full_count": 115
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 15,
+      "tied": 288,
+      "regressed": 26,
+      "mean_diff_pp": -3.34
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 161.9,
+      "p90": 237.2
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 0.9988
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 51.67,
+     "chunk_fused_recall_at_10": 66.72,
+     "chunk_fused_recall_at_20": 83.59,
+     "chunk_mrr_at_10": 33.16,
+     "evidence_coverage": 62.31,
+     "full_evidence_coverage": 61.09,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 55.32
+      },
+      "condition": {
+       "n": 68,
+       "r10": 68.38
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 69.23
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 71.29
+      },
+      "table": {
+       "n": 83,
+       "r10": 66.27
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 62.2,
+       "full": 59.76,
+       "full_count": 98
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 62.42,
+       "full": 62.42,
+       "full_count": 103
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 23,
+      "tied": 269,
+      "regressed": 37,
+      "mean_diff_pp": -4.1
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 84.7,
+      "p90": 146.3
+     }
+    }
+   },
+   "dragonkue": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 54.56,
+     "chunk_fused_recall_at_10": 74.01,
+     "chunk_fused_recall_at_20": 88.6,
+     "chunk_mrr_at_10": 36.35,
+     "evidence_coverage": 74.62,
+     "full_evidence_coverage": 73.25,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 71.28
+      },
+      "condition": {
+       "n": 68,
+       "r10": 80.88
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 57.69
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 77.23
+      },
+      "table": {
+       "n": 83,
+       "r10": 71.08
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 72.87,
+       "full": 70.12,
+       "full_count": 115
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 76.36,
+       "full": 76.36,
+       "full_count": 126
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 10,
+      "tied": 311,
+      "regressed": 8,
+      "mean_diff_pp": 0.46
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 166.7,
+      "p90": 252.3
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 1.0
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 55.62,
+     "chunk_fused_recall_at_10": 73.1,
+     "chunk_fused_recall_at_20": 87.23,
+     "chunk_mrr_at_10": 35.42,
+     "evidence_coverage": 71.58,
+     "full_evidence_coverage": 70.21,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 60.64
+      },
+      "condition": {
+       "n": 68,
+       "r10": 75.0
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 75.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 65.38
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 80.2
+      },
+      "table": {
+       "n": 83,
+       "r10": 72.29
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 67.99,
+       "full": 65.24,
+       "full_count": 107
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 75.15,
+       "full": 75.15,
+       "full_count": 124
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 17,
+      "tied": 303,
+      "regressed": 9,
+      "mean_diff_pp": 2.28
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 63.2,
+      "p90": 97.8
+     }
+    }
+   },
+   "upskyy": {
+    "hybrid": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 50.91,
+     "chunk_fused_recall_at_10": 67.48,
+     "chunk_fused_recall_at_20": 83.43,
+     "chunk_mrr_at_10": 37.17,
+     "evidence_coverage": 71.12,
+     "full_evidence_coverage": 69.91,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 68.09
+      },
+      "condition": {
+       "n": 68,
+       "r10": 61.76
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 57.69
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 70.3
+      },
+      "table": {
+       "n": 83,
+       "r10": 72.29
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 74.39,
+       "full": 71.95,
+       "full_count": 118
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 67.88,
+       "full": 67.88,
+       "full_count": 112
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 11,
+      "tied": 287,
+      "regressed": 31,
+      "mean_diff_pp": -6.08
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 148.0,
+      "p90": 201.7
+     },
+     "doc": {
+      "n": 400,
+      "r10": 100.0,
+      "mrr10": 0.9983
+     }
+    },
+    "dense": {
+     "n": 329,
+     "chunk_fused_recall_at_5": 48.94,
+     "chunk_fused_recall_at_10": 62.46,
+     "chunk_fused_recall_at_20": 75.08,
+     "chunk_mrr_at_10": 35.09,
+     "evidence_coverage": 64.89,
+     "full_evidence_coverage": 63.22,
+     "topics": {
+      "comparison": {
+       "n": 47,
+       "r10": 57.45
+      },
+      "condition": {
+       "n": 68,
+       "r10": 48.53
+      },
+      "false_premise": {
+       "n": 4,
+       "r10": 50.0
+      },
+      "multi_hop": {
+       "n": 26,
+       "r10": 55.77
+      },
+      "numeric": {
+       "n": 101,
+       "r10": 66.34
+      },
+      "table": {
+       "n": 83,
+       "r10": 74.7
+      }
+     },
+     "routes": {
+      "ordinary": 329
+     },
+     "groups": {
+      "multi_evidence": {
+       "n": 164,
+       "coverage": 67.99,
+       "full": 64.63,
+       "full_count": 106
+      },
+      "single_evidence": {
+       "n": 165,
+       "coverage": 61.82,
+       "full": 61.82,
+       "full_count": 102
+      }
+     },
+     "vs_kure": {
+      "n": 329,
+      "improved": 14,
+      "tied": 274,
+      "regressed": 41,
+      "mean_diff_pp": -8.36
+     },
+     "latency": {
+      "samples": 1224,
+      "p50": 54.8,
+      "p90": 79.8
+     }
+    }
+   }
+  }
+ }
+}

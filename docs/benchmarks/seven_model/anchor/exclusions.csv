@@ -1,0 +1,17 @@
+primary_topic,level,questions,fully_labelled,partly_labelled,unlabelled,unanswerable,no_golden_evidence,mapping_exclusion_rate
+ALL,doc,408,400,0,0,8,0,0.0
+ALL,chunk,408,329,36,35,8,0,0.1775
+comparison,doc,56,56,0,0,0,0,0.0
+comparison,chunk,56,47,5,4,0,0,0.16071428571428573
+condition,doc,69,69,0,0,0,0,0.0
+condition,chunk,69,68,0,1,0,0,0.014492753623188406
+false_premise,doc,4,4,0,0,0,0,0.0
+false_premise,chunk,4,4,0,0,0,0,0.0
+multi_hop,doc,71,71,0,0,0,0,0.0
+multi_hop,chunk,71,26,30,15,0,0,0.6338028169014085
+numeric,doc,104,104,0,0,0,0,0.0
+numeric,chunk,104,101,0,3,0,0,0.028846153846153848
+table,doc,96,96,0,0,0,0,0.0
+table,chunk,96,83,1,12,0,0,0.13541666666666666
+unanswerable,doc,8,0,0,0,8,0,
+unanswerable,chunk,8,0,0,0,8,0,
