@@ -57,9 +57,10 @@ CSV가 정식 명칭(`한국국제협력단`, `수산업협동조합중앙회`)�
 ③ 찾은 청크 바로 뒤에 연결 청크 — 같은 요구사항의 다른 청크와 여러 청크로 나뉜 같은 표(`table_refs`, 6청크 이하)의 다른 부분 — 를 찾은 청크 하나당 600토큰까지 함께 담습니다 (토큰 예산 안에서).
 01 에서 직접 청크를 나눈 경우엔 연결 정보가 없어 본문 속 코드만 씁니다. 검색 글이 바뀌면 02 의 색인을 다시 만들어야 하며, 색인과 청크가 맞지 않으면 검색 때 알려 줍니다(`artifacts/index/texts.sha1`).
 질문에 기관이 나오면 그 기관 문서 안에서는 질문에서 기관 · 사업을 가리킨 부분(`스포츠윤리센터의 「… LMS 기능개선」`)을 빼고 순위를 매깁니다 — 범위를 이미 좁혔으니 이 낱말들은 청크를 가르지 못하고 사업명을 되풀이하는 표지 · 서식 청크만 앞세웁니다. 사업명 낱말이 본문에서 다시 나오면(`ERP 행`) 남기고, 빼면 낱말이 거의 안 남는 질문은 그대로 씁니다.
-토큰 예산으로 자르기 전에 하이브리드 상위 30개 후보(`rerank.top_n`)를 로컬 리랭커가 다시 정렬합니다.
+Dense · BM25 후보(각각 상위 `candidate_k` 50개)는 RRF(Reciprocal Rank Fusion, 후보마다 `Σ 1/(60 + 순위)`)로 합칩니다 — 점수 크기가 아니라 각 검색의 순위만 써서 척도가 다른 두 점수를 비율로 섞지 않고, 두 검색 모두에서 위에 있는 청크가 앞에 옵니다. 예전의 `retrieval.dense_weight` · 02 의 `DENSE_WEIGHT` 는 없어졌습니다.
+토큰 예산으로 자르기 전에 RRF 상위 30개 후보(`rerank.top_n`)를 로컬 리랭커가 다시 정렬합니다.
 리랭커(`rerank.model`, 기본 `dragonkue/bge-reranker-v2-m3-ko`)는 질문과 청크를 함께 읽는 크로스 인코더로, 임베딩처럼 GPU에서 돌아 API 비용이 없습니다.
-요구사항 코드 일치 청크는 리랭커를 켜도 맨 앞에 둡니다. 02 설정 셀의 `RERANK = False`로 끄면 하이브리드 점수 순서 그대로 담습니다.
+요구사항 코드 일치 청크는 리랭커를 켜도 맨 앞에 둡니다. 02 설정 셀의 `RERANK = False`로 끄면 RRF 순서 그대로 담습니다.
 노트북은 VS Code · PyCharm · Jupyter 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.
 처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)과 리랭커 모델(약 2.3GB)을 내려받습니다.
 
@@ -191,11 +192,11 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"     # v11 (v12 는 "data/
 | 노트북 | 설정 셀에서 조절하는 값 |
 |---|---|
 | 01 전처리 | `OCR`, `OCR_MODEL`, `OCR_REASONING_EFFORT`, `OCR_MAX_TOKENS`, `OCR_PRICES`, `CHUNK_SIZE` |
-| 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `REWRITE_PRICES`, `DENSE_WEIGHT` (BM25는 `1 - DENSE_WEIGHT`), `RERANK` (로컬 리랭커 사용) |
+| 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `REWRITE_PRICES`, `RERANK` (로컬 리랭커 사용) |
 | 04 생성 | `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_TOKENS`, `LLM_PRICES` |
 | 05 평가 | `JUDGE` (`"local"` 로컬 채점 API 0원 / `"ragas"` gpt 심판), `JUDGE_MODEL`, `JUDGE_REASONING_EFFORT`, `JUDGE_MAX_TOKENS`, `JUDGE_PRICES` (`ragas` 일 때만) |
 
-예를 들어 02 설정 셀의 `DENSE_WEIGHT = cfg["retrieval"]["dense_weight"]`를 `DENSE_WEIGHT = 0.8`로 바꾸면 Dense 80%·BM25 20%로 검색합니다.
+예를 들어 02 설정 셀의 `RERANK = False`를 `RERANK = True`로 바꾸면 로컬 리랭커로 후보 순서를 다시 매깁니다.
 설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
 기존 색인이 있어도 이번 변경 후에는 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 청킹 크기를 바꾸면 01부터, 검색 설정을 바꾸면 02부터 후속 노트북을 다시 실행해야 합니다.
 모델을 바꾸면 같은 설정 셀의 `*_PRICES`도 해당 모델의 입력 · 캐시 입력 · 출력 단가(USD / 100만 토큰)로 맞추세요.

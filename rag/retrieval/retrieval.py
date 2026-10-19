@@ -40,13 +40,17 @@ def _is_dup(a: tuple, b: tuple) -> bool:
             and len(words_a & words_b) >= _DUP_RATIO * max(len(words_a), len(words_b)))
 
 
-def _minmax(d: dict[int, float]) -> dict[int, float]:
-    if not d:
-        return {}
-    lo, hi = min(d.values()), max(d.values())
-    if hi - lo < 1e-12:
-        return {k: 1.0 for k in d}
-    return {k: (v - lo) / (hi - lo) for k, v in d.items()}
+_RRF_K = 60  # RRF 상수 — 1위와 10위의 차이를 완만하게 한다 (RRF 원 논문 · 대부분 구현의 기본값)
+
+
+def _rrf(*rankings: dict[int, float]) -> dict[int, float]:
+    """Reciprocal Rank Fusion — 후보마다 Σ 1 / (_RRF_K + 순위). 점수 크기가 아니라 각 검색에서의 순위만 쓴다.
+    Dense(코사인)와 BM25 점수는 척도가 달라 비율로 섞으면 질문마다 뜻이 달라지는데, 순위는 그렇지 않다"""
+    fused: dict[int, float] = defaultdict(float)
+    for scores in rankings:
+        for rank, i in enumerate(sorted(scores, key=scores.get, reverse=True), 1):
+            fused[i] += 1 / (_RRF_K + rank)
+    return dict(fused)
 
 
 def _fingerprint(artifacts: Path, cfg: dict) -> str:
@@ -117,7 +121,7 @@ def _interleave(lists: list[list[dict]]) -> list[dict]:
 
 
 class HybridIndex:
-    """final = w·Dense + (1-w)·BM25 — 두 후보군을 각각 min-max 정규화한 뒤 가중합 (w = dense_weight, 0=BM25만, 1=Dense만).
+    """Dense · BM25 후보(각각 상위 candidate_k)를 RRF(순위 역수 합)로 합친다 — 두 검색 모두에서 위에 있는 청크가 앞에 온다.
     rerank.enabled 이면 상위 rerank.top_n 후보를 로컬 크로스 인코더(Reranker)로 다시 정렬한다.
     질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter).
     찾은 청크에 연결 청크(같은 요구사항의 ID · 명칭 / 상세 내용, 같은 표의 나뉜 부분)가 있으면 바로 뒤에 함께 담는다."""
@@ -163,11 +167,7 @@ class HybridIndex:
 
     def _rank(self, question: str, codes: set[str], doc_ids: set | None) -> list[tuple[int, float]]:
         allowed = np.isin(self.doc_ids, list(doc_ids)) if doc_ids else np.ones(len(self.chunks), dtype=bool)
-        w = float(self.rcfg["dense_weight"])
-        # 가중치 0 인 쪽은 후보도 내지 않는다 — 내면 점수 0 짜리 무관한 청크가 결과에 섞인다
-        dense = _minmax(self._dense(question, allowed)) if w > 0 else {}
-        sparse = _minmax(self._sparse(question, allowed)) if w < 1 else {}
-        fused = {i: w * dense.get(i, 0.0) + (1 - w) * sparse.get(i, 0.0) for i in dense.keys() | sparse.keys()}
+        fused = _rrf(self._dense(question, allowed), self._sparse(question, allowed))
         exact = self._exact(codes, allowed)
         fused |= {i: 0.0 for i in exact - fused.keys()}
         order = sorted(fused, key=lambda i: (i in exact, fused[i]), reverse=True)
