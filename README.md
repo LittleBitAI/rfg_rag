@@ -35,6 +35,9 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 증강 Golden dev 396 · v12 공유 평가 패키지 ZIP(`Golden_Dev396_v12_Team_Package_..._v2.zip`)을 `data/` 에 그대로 풉니다 → `data/Golden_Dev396_v12_Team_Package/`.
 01 은 이 패키지의 검색 코퍼스(`corpus/chunks.jsonl` · `docs.jsonl` — v12 98문서 · 18,989청크)를, 02 는 기관 목록(`data/data_list.csv`)을, 03 은 평가 질문(`data/golden_dev.jsonl` 396문항)을 그대로 읽습니다.
 패키지 파일은 고치지 않습니다 — 패키지 폴더에서 `python prepare.py` 를 실행하면 `PASS` 와 396문항 · 98문서 · 18,989청크 · F199/D194/B3 가 나와야 합니다.
+RFP 그림 OCR 결과(`RFP_OCR_파싱.zip` 의 `data/ocr_captions.jsonl` — 79문서 · 그림 320장 · 391곳)는 패키지의 `corpus/` 에 그대로 복사합니다 → `data/Golden_Dev396_v12_Team_Package/corpus/ocr_captions.jsonl`.
+01 이 패키지 코퍼스를 읽을 때 이 파일이 있으면 그림 설명을 `[그림/도표 설명] …` 청크(`kind = image_ocr`, 같은 문서의 같은 그림은 한 번, 1,400자 넘으면 줄 단위로 나눔 — 375청크)로 코퍼스 끝에 덧붙입니다. 기존 18,989청크의 순서 · id 는 그대로라 02 는 끝부분 임베딩만 새로 계산합니다.
+문서는 원본 SHA(`document_sha256` = 패키지 `doc_id`)로 찾고, 원본이 고쳐져 SHA 가 다른 2문서(중앙선거관리위원회 · 한국원자력연구원, 8곳)는 같은 파일명으로 찾습니다. `images/`(그림 원본, 약 380MB)는 코드가 읽지 않으므로 복사하지 않아도 됩니다. 파일을 빼면 예전 18,989청크로 돌아갑니다.
 RFP 원본으로 직접 파싱할 때만 RFP ZIP 을 `data/rfp.zip` 에 둡니다 (`config.yaml` 의 `paths.input`, 폴더도 가능).
 기관 목록은 `paths.org_csv`(기본 패키지의 `data/data_list.csv`)입니다.
 UTF-8 CSV에 `파일명`, `발주기관` 열이 있어야 합니다 (열 이름에 공백 없음). Excel이 붙인 BOM도 읽습니다. 목록은 자동 생성하지 않으며,

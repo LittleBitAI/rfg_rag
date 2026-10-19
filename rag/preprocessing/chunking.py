@@ -204,8 +204,45 @@ def load_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
     증강 Golden dev 396 패키지의 corpus/)는 그대로 읽고, v11 · v12 전처리 패키지(final_chunks.jsonl …)는 옮긴다"""
     package_dir = Path(package_dir)
     if (package_dir / "chunks.jsonl").exists():
-        return read_jsonl(package_dir / "docs.jsonl"), read_jsonl(package_dir / "chunks.jsonl")
+        docs, chunks = read_jsonl(package_dir / "docs.jsonl"), read_jsonl(package_dir / "chunks.jsonl")
+        if (package_dir / "ocr_captions.jsonl").exists():
+            chunks += ocr_caption_chunks(read_jsonl(package_dir / "ocr_captions.jsonl"), docs)
+        return docs, chunks
     return load_v11_package(package_dir)
+
+
+_OCR_CHUNK_CHARS = 1400  # 그림 설명 청크 최대 글자 수 = chunking.chunk_size 700 × table_size_factor 2 (표 청크와 같은 크기)
+
+
+def _split_caption(text: str) -> list[str]:
+    """긴 그림 설명(Markdown 표 · 도식)을 줄 단위로 _OCR_CHUNK_CHARS 글자 안팎씩 나눈다"""
+    parts, current = [], ""
+    for line in text.splitlines(keepends=True):
+        if current and len(current) + len(line) > _OCR_CHUNK_CHARS:
+            parts.append(current)
+            current = ""
+        current += line
+    return [part.strip() for part in [*parts, current] if part.strip()]
+
+
+def ocr_caption_chunks(rows: list[dict], docs: list[dict]) -> list[dict]:
+    """RFP OCR 결과(ocr_captions.jsonl, 그림 위치마다 한 줄) → 패키지 문서에 붙는 그림 설명 청크.
+    문서는 원본 SHA(document_sha256 = 패키지 doc_id)로 찾고, 원본이 고쳐져 SHA 가 다른 문서는 같은 파일명(NFC)으로 찾는다.
+    한 문서에 같은 그림이 여러 번 나오면 한 번만 넣는다. 청크를 끝에 덧붙이므로 기존 청크의 순서 · id 는 그대로다."""
+    by_id = {d["doc_id"]: d for d in docs}
+    by_source = {unicodedata.normalize("NFC", d["source"]): d for d in docs}
+    chunks, seen = [], set()
+    for row in rows:
+        doc = by_id.get(row["document_sha256"]) or by_source.get(unicodedata.normalize("NFC", row["source"]))
+        if doc is None or (doc["doc_id"], row["image_sha256"]) in seen:
+            continue
+        seen.add((doc["doc_id"], row["image_sha256"]))
+        for i, part in enumerate(_split_caption(row["text"])):
+            text = f"[그림/도표 설명] {part}"
+            chunks.append({"chunk_id": f"ocr-{row['image_sha256'][:16]}-{doc['doc_id'][:8]}-{i}",
+                           "doc_id": doc["doc_id"], "source": doc["source"], "title": doc["title"],
+                           "page": row.get("page"), "kind": "image_ocr", "section": "", "text": text, "body": text})
+    return chunks
 
 
 def save_chunks(docs: list[dict], chunks: list[dict], out_dir: Path):
