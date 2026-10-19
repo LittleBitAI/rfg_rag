@@ -213,7 +213,8 @@ golden_pipeline\golden.cmd evidence <run_id>
 표 span 이 없으면 첫 span 의 `char` 입니다. 본문은 청크의 `body` 전체이고, 표는 행을 줄로 · 칸을 ` | ` 로 잇습니다.
 
 단위의 필드는 `unit_id`, `doc_sha`, `chunk_id`, `element_id`, `record_id`, `location`, `page`,
-`requirement_ids`, `image_sha`, `ocr_scope`, `text`, `ids_linked`, `meaning_verified` 입니다.
+`requirement_ids`, `image_sha`, `ocr_scope`, `text`, `titled`, `ids_linked`, `meaning_verified` 입니다.
+`titled` 는 표 span 앞에 글 span 이 있는 청크입니다. 그 첫 줄은 표 앞 제목이라, 다단계 단독 검사에 머리글로 붙이지 않습니다.
 `ids_linked` (ID 가 모두 이어짐)와 `meaning_verified` (원문 의미가 검증됨)는 따로 계산하고, 연결만으로 검증이 참이 되지 않습니다.
 `eligible` 은 둘 다 참이고 보류 이유가 없을 때뿐입니다.
 

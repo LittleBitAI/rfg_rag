@@ -79,6 +79,8 @@ def test_run_pins_counts_and_writes_one_unit_per_chunk_with_separate_judgments(o
     assert table["location"] == {"kind": "table", "grid": "logical_restored", "row": 2, "cell": None}
     assert (table["element_id"], table["requirement_ids"]) == ("e-table", ["SFR-001"])
     assert table["text"] == "가. 예산\n예산 | 1억\n기간 | 6개월"
+    # 표 앞 글이 있는 표 청크만 titled 다. 첫 줄이 0행인지 본문만으로는 알 수 없기 때문이다.
+    assert (table["titled"], text["titled"]) == (True, False)
     assert {j["judgment"] for j in judgments.values()} == {"eligible"}
 
 

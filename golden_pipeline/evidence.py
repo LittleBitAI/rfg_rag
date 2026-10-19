@@ -70,7 +70,10 @@ def pin(package):
 
 
 def chunk_unit(chunk, docs):
-    """청크 하나의 근거 단위와 보류 이유. 위치는 청크의 첫 표 span(없으면 첫 span)이고, 본문은 청크 body 전체다."""
+    """청크 하나의 근거 단위와 보류 이유. 위치는 청크의 첫 표 span(없으면 첫 span)이고, 본문은 청크 body 전체다.
+
+    titled 는 표 span 앞에 글 span 이 있다는 뜻이다. 본문만으로는 첫 줄이 표 앞 제목인지 한 칸짜리 0행인지 가릴 수 없다.
+    """
     tables = [span for span in chunk["spans"] if "rows" in span]
     first = tables[0] if tables else chunk["spans"][0]
     if tables:
@@ -91,6 +94,7 @@ def chunk_unit(chunk, docs):
         "image_sha": image["asset_sha256"] if image else None,
         "ocr_scope": OCR_SCOPES.get(image.get("scope"), "hold") if image else None,
         "text": chunk["body"],
+        "titled": bool(tables) and first is not chunk["spans"][0],
     }
     errors = _link_errors(chunk, sources, docs)
     gaps = _meaning_gaps(unit, [location["supplier_metadata"] for location in sources.values()])

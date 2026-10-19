@@ -697,9 +697,9 @@ def test_a_longer_number_in_the_document_is_not_the_stated_value(text, found):
     assert (_premise_absent(item, [], [{"unit_id": "u", "text": text}]) is not None) == found
 
 
-def table_chunk(row, text):
+def table_chunk(row, text, titled=False):
     location = {"kind": "table", "grid": "logical_restored", "row": row, "cell": None}
-    return {"ref": {"element_id": "e-t", "location": location}, "text": text}
+    return {"ref": {"element_id": "e-t", "location": location}, "text": text, "titled": titled}
 
 
 @pytest.mark.parametrize("row, column, cell", [
@@ -749,3 +749,24 @@ def test_a_one_cell_header_row_does_not_lend_the_next_data_row_to_a_single_unit_
 
     assert validation._single_unit_verdict({"question": "A사업 담당 팀의 코드는?"}, [first, later],
                                            verdict("Z9"), ask, None)[0] == "auto_validated"
+
+
+@pytest.mark.parametrize("title, expected", [
+    ("", "multi_hop 아님: 근거 E2 하나로 답이 나옵니다"),
+    # 제목 줄을 머리글로 붙이면 열 이름 없이 물어 단순 조회가 다단계로 통과했다.
+    ("유지보수\n", "multi_hop 판정 불가: 근거 E2 의 표는 앞에 제목이 붙어 머리글 줄을 가릴 수 없습니다"),
+])
+def test_a_simple_table_lookup_is_not_accepted_as_multi_hop_with_or_without_a_title(title, expected):
+    first = {**table_chunk(0, f"{title}시스템 | 하자담보책임기간 | 무상 기술지원기간\nA시스템 | 12개월 | 36개월",
+                           titled=bool(title)), "label": "E1"}
+    later = {**table_chunk(2, "B시스템 | 24개월 | 6개월"), "label": "E2"}
+
+    def ask(question, units):
+        text = "\n".join(unit["text"] for unit in units)
+        both = "하자담보책임기간" in text and "B시스템" in text
+        return verdict("24개월" if both else "", answerable=both), None
+
+    item = {"question": "B시스템의 하자담보책임기간은?", "primary_topic": "multi_hop"}
+    assert validation._single_unit_verdict(item, [first, later], verdict("24개월"), ask, None) == ("rejected", expected)
+    # 한도에 세는 요청 수: 함께 한 번 + 판정이 멈추기 전까지의 단독 검사.
+    assert len(validation._validator_unit_lists(item, [first, later], None)) == (2 if title else 3)

@@ -84,12 +84,13 @@ def topic_spec(topic):
 
 
 def eligible_units(run_dir):
-    """eligible 판정을 받은 단위만, 근거 참조 필드와 본문을 붙여 패키지 순서대로 돌려준다."""
+    """eligible 판정을 받은 단위만, 근거 참조 필드와 본문 · 표 앞 제목 여부(titled)를 붙여 패키지 순서대로 돌려준다."""
     eligible = {
         row["unit_id"] for row in evidence._iter_jsonl(run_dir / "judgments.jsonl") if row["judgment"] == "eligible"
     }
     return [
-        {"unit_id": unit["unit_id"], "ref": {name: unit[name] for name in EVIDENCE_FIELDS}, "text": unit["text"]}
+        {"unit_id": unit["unit_id"], "ref": {name: unit[name] for name in EVIDENCE_FIELDS}, "text": unit["text"],
+         "titled": unit["titled"]}
         for unit in evidence._iter_jsonl(run_dir / "units.jsonl")
         if unit["unit_id"] in eligible and unit["text"].strip()
     ]

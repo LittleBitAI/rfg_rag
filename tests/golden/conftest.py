@@ -133,7 +133,7 @@ def _unit(unit_id, doc, body, row):
         "unit_id": unit_id, "doc_sha": doc, "chunk_id": f"c-{unit_id}", "element_id": element_id,
         "record_id": f"r-{unit_id}", "location": location, "page": None, "requirement_ids": [],
         "image_sha": None, "ocr_scope": None, "text": " | ".join(body) if isinstance(body, list) else body,
-        "ids_linked": True, "meaning_verified": True,
+        "titled": False, "ids_linked": True, "meaning_verified": True,
     }
 
 

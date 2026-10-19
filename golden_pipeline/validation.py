@@ -11,6 +11,7 @@ import json
 import re
 import unicodedata
 from collections import Counter, deque
+from itertools import takewhile
 from decimal import Decimal
 from functools import lru_cache
 
@@ -634,6 +635,8 @@ def _topic_rule(item, question, units):
 def _single_unit_verdict(item, units, full, ask, judge):
     """multi_hop 은 근거 단위를 하나씩만 줬을 때 어느 것으로도 독립 답이 나오지 않아야 한다 (표 중간 행에는 머리글 줄을 붙여 준다)."""
     for unit, asked in _single_units(units):
+        if asked is None:
+            return "rejected", f"multi_hop 판정 불가: 근거 {unit['label']} 의 표는 앞에 제목이 붙어 머리글 줄을 가릴 수 없습니다"
         single, error = ask(item["question"], asked)
         if not error and single["answerable"]:
             same, error = _settled(item["question"], units, full["answer"], single["answer"], judge)
@@ -1044,16 +1047,17 @@ def _validator_unit_lists(item, units, document):
         return document_batches(document)
     if item["primary_topic"] != "multi_hop":
         return [units]
-    return [units, *(asked for _, asked in _single_units(units))]
+    # 머리글을 가릴 수 없는 단위(None)에서 판정이 멈추므로, 그 앞까지만 묻는다.
+    return [units, *takewhile(lambda asked: asked is not None, (asked for _, asked in _single_units(units)))]
 
 
 def _single_units(units):
-    """multi_hop 에서 하나씩 묻는 근거: 단위마다 (그 단위, 검증기에 줄 목록).
+    """multi_hop 에서 하나씩 묻는 근거: 단위마다 (그 단위, 검증기에 줄 목록 또는 None).
 
     v12 의 0행 청크는 머리글 행과 데이터 행을 함께 담아 그 자체로 답이 나올 수 있으므로 함께 묻는다.
-    표 중간 행 청크에는 머리글 청크 전체가 아니라 그 첫 줄만 붙인다. 청크 전체를 붙이면 두 근거를 함께 묻는 셈이다.
-    첫 줄은 0행(머리글)이거나 표 앞 제목이라 다른 청크의 데이터 행이 섞이지 않는다.
-    ponytail: 제목 줄이 앞에 있는 표는 열 이름이 빠져 단독 검사가 느슨해진다. 청크에 행 범위를 줄 단위로 남기면 0행을 정확히 고를 수 있다.
+    표 중간 행 청크에는 머리글 청크 전체가 아니라 그 첫 줄(0행)만 붙인다. 청크 전체를 붙이면 두 근거를 함께 묻는 셈이다.
+    머리글 청크에 표 앞 제목이 있으면(titled) 몇째 줄이 0행인지 알 수 없다. 데이터 행을 붙이거나 열 이름을 빼고 물으면
+    판정이 틀어지므로 목록 대신 None 을 두어 _single_unit_verdict 가 다단계로 확정하지 않게 한다.
     _single_unit_verdict 와 _calls_left 가 함께 써서, 한도에 세는 요청과 실제로 보내는 요청이 어긋나지 않게 한다.
     """
     headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
@@ -1062,4 +1066,6 @@ def _single_units(units):
 
 def _with_header_line(unit, headers):
     header = headers.get(unit["ref"]["element_id"]) if plan._table_row(unit) else None
-    return [{**header, "text": header["text"].split("\n")[0]}, unit] if header else [unit]
+    if header is None:
+        return [unit]
+    return None if header["titled"] else [{**header, "text": header["text"].split("\n")[0]}, unit]
