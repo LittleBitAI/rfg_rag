@@ -33,6 +33,7 @@ def rewrite_question(question: str, rewrite_cfg: dict, history: list[dict] | Non
             max_completion_tokens=int(rewrite_cfg["max_tokens"]),
             reasoning_effort=rewrite_cfg["reasoning_effort"],
             messages=messages)
-    usage = record_usage("rewrite", resp.model, resp.usage.model_dump(), prices, subject=question)
+    usage = record_usage("rewrite", resp.model, resp.usage.model_dump(), prices, rewrite_cfg["reasoning_effort"],
+                         subject=question)
     return {"question": (resp.choices[0].message.content or "").strip() or question, **usage,
             "latency_s": round(time.perf_counter() - t0, 2)}

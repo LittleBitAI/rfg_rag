@@ -84,7 +84,8 @@ def generate(question: str, hits: list[dict], llm_cfg: dict, history: list[dict]
             name="generate-answer", model=llm_cfg["model"], max_completion_tokens=int(llm_cfg["max_tokens"]),
             reasoning_effort=llm_cfg["reasoning_effort"],
             messages=messages)
-    usage = record_usage("answer", resp.model, resp.usage.model_dump(), prices, subject=question)
+    usage = record_usage("answer", resp.model, resp.usage.model_dump(), prices, llm_cfg["reasoning_effort"],
+                         subject=question)
     return {"answer": resp.choices[0].message.content or "", **usage}
 
 

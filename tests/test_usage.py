@@ -59,7 +59,7 @@ def _usage_rows(tmp_path):
 
 def test_cached_input_and_reasoning_costs_with_concurrent_csv_writes(tmp_path):
     def record(i):
-        return usage.record_usage("answer", "actual-model-snapshot", TOKENS, PRICES, subject=f"질문 {i}")
+        return usage.record_usage("answer", "actual-model-snapshot", TOKENS, PRICES, "low", subject=f"질문 {i}")
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(record, range(12)))
@@ -73,6 +73,22 @@ def test_cached_input_and_reasoning_costs_with_concurrent_csv_writes(tmp_path):
     assert summary["reasoning_tokens"] == 240
     assert summary["cost_usd"] == pytest.approx(0.000076 * 12)
     assert not (tmp_path / "api_usage.csv").read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_old_csv_without_reasoning_effort_column_is_upgraded_before_appending(tmp_path):
+    """reasoning_effort 열이 생기기 전 파일에 덧붙여도 값이 한 칸씩 밀리지 않는다"""
+    old = ("timestamp,stage,evaluation,subject,model,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens,cost_usd\n"
+           "2026-10-16T00:00:00+00:00,judge,retrieval,,gpt-5-nano,1000,0,80,0,0.000132\n")
+    (tmp_path / "api_usage.csv").write_text(old, encoding="utf-8")
+
+    usage.record_usage("judge", "gpt-6-luna", TOKENS, PRICES, "none", evaluation="retrieval")
+
+    rows = _usage_rows(tmp_path)
+    assert [(r["model"], r["reasoning_effort"], r["input_tokens"], r["reasoning_tokens"]) for r in rows] == [
+        ("gpt-5-nano", "", "1000", "0"), ("gpt-6-luna", "none", "100", "20")]
+    summary = usage.usage_summary("judge").set_index(["model", "reasoning_effort"])
+    assert summary.loc[("gpt-6-luna", "none"), "input_tokens"] == 100
+    assert summary.loc[("gpt-5-nano", ""), "output_tokens"] == 80
 
 
 def test_summary_before_any_call_is_empty_and_creates_no_csv(tmp_path):
@@ -290,6 +306,7 @@ def test_ragas_async_judges_record_each_call_once_and_keep_saved_costs(monkeypat
     answers = tmp_path / "answers.jsonl"
     write_jsonl([_answer_row(), {**_answer_row(), "id": "q2"}], answers)
     cfg = load_config()
+    cfg["evaluation"]["judge_reasoning_effort"] = "none"
     cfg["llm"]["usd_per_1m_tokens"] = [99, 99, 99]
 
     table = getattr(evaluation, f"evaluate_{name}")(answers, cfg)
@@ -297,6 +314,7 @@ def test_ragas_async_judges_record_each_call_once_and_keep_saved_costs(monkeypat
     rows = _usage_rows(tmp_path)
     assert len(rows) == 2 * calls_per_question
     assert all(row["stage"] == "judge" and row["evaluation"] == name for row in rows)
+    assert {row["reasoning_effort"] for row in rows} == {"none"}  # 보낸 추론 강도가 호출마다 남는다
     assert sum(float(row["cost_usd"]) for row in rows) == pytest.approx(0.000076 * 2 * calls_per_question)
     assert table[metric].tolist() == [1.0, 1.0, 1.0]
     if name == "end_to_end":

@@ -24,7 +24,7 @@ def test_ocr_parser_uses_selected_model_and_effort(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     cfg = {"model": "gpt-5-mini", "max_tokens": 1234, "reasoning_effort": "high"}
 
-    parser = parsing._ocr_parser(cfg, UsageCallback("ocr", [0.25, 0.025, 2.0]))
+    parser = parsing._ocr_parser(cfg, UsageCallback("ocr", [0.25, 0.025, 2.0], "high"))
 
     assert parser.model.model_name == cfg["model"]
     assert parser.model.max_tokens == 1234
