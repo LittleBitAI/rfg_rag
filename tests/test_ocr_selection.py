@@ -38,7 +38,8 @@ def test_off_preserves_original_parser_and_document(monkeypatch):
         assert parser is delegate
         return expected
     monkeypatch.setattr(parsing, '_parse_file', parse)
-    assert parsing.parse_documents(['mock.hwp'], {}, True, {'usd_per_1m_tokens': [0.25, 0.025, 2.0]}) == [expected]
+    assert parsing.parse_documents(['mock.hwp'], {}, True, {'reasoning_effort': 'low',
+                                                            'usd_per_1m_tokens': [0.25, 0.025, 2.0]}) == [expected]
 
 
 def test_candidate_keeps_vision_response(selector):

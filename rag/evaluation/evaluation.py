@@ -37,7 +37,8 @@ _JUDGE_BATCH = 16  # 이 문항 수만큼 채점할 때마다 점수를 저장�
 def _judge(ecfg: dict, evaluation: str) -> LangchainLLMWrapper:
     judge = ChatOpenAI(model=ecfg["judge_model"], max_tokens=int(ecfg["judge_max_tokens"]),
                        reasoning_effort=ecfg["judge_reasoning_effort"], timeout=180, max_retries=3,
-                       callbacks=[UsageCallback("judge", ecfg["judge_usd_per_1m_tokens"], evaluation)])
+                       callbacks=[UsageCallback("judge", ecfg["judge_usd_per_1m_tokens"],
+                                                ecfg["judge_reasoning_effort"], evaluation)])
     # 추론 모델은 temperature·n 을 받지 않으므로 RAGAS 가 넣지 못하게 한다
     return LangchainLLMWrapper(judge, bypass_temperature=True, bypass_n=True)
 
