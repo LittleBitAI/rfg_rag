@@ -631,7 +631,7 @@ def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, capt
     from .ocr_captions import load_captions
 
     saved = {} if ocr else load_captions(captions_path)
-    callback = UsageCallback("ocr", ocr_cfg["usd_per_1m_tokens"]) if ocr else None
+    callback = UsageCallback("ocr", ocr_cfg["usd_per_1m_tokens"], ocr_cfg["reasoning_effort"]) if ocr else None
     image_parser = _ocr_parser(ocr_cfg, callback) if ocr else None
     if image_parser is not None and pcfg.get("craft", {}).get("enabled", False):
         image_parser = SelectionParser(image_parser, pcfg["craft"])
