@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from ragas.metrics import Faithfulness
 
-from rag.config import load_config
+from rag.config import load_config, read_checkpoint
 from rag.evaluation import evaluation
 from rag.generation import generation
 from rag.preprocessing import parsing
@@ -195,3 +195,10 @@ def test_interrupted_judge_scores_resume_and_nan_is_judged_again(monkeypatch, tm
 
     assert judged == [["질문 0", "질문 2"], ["질문 3", "질문 4"]]  # 저장된 질문 1 은 건너뛰고 NaN 인 질문 0 은 다시
     assert [s["faithfulness"] for s in scores[1:]] == [1.0] * 4
+
+
+@pytest.mark.parametrize("tail", [b'{"answer": "', '{"answer": "가'.encode()[:-1]], ids=["json", "utf8"])
+def test_checkpoint_drops_line_cut_mid_write(tmp_path, tail):
+    path = tmp_path / "answers.jsonl"
+    path.write_bytes('{"answer": "가"}\n'.encode() + tail)
+    assert read_checkpoint(path) == [{"answer": "가"}]

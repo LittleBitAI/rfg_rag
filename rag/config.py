@@ -43,12 +43,13 @@ def append_jsonl(row: dict, path: Path):
 
 
 def read_checkpoint(path: Path) -> list[dict]:
-    """체크포인트를 읽는다. 쓰다 끊긴 마지막 줄부터는 버린다 (없으면 빈 목록)"""
+    """체크포인트를 읽는다. 쓰다 끊긴 마지막 줄부터는 버린다 (없으면 빈 목록).
+    한글 글자 중간에서 끊길 수 있으므로 파일 전체가 아니라 줄마다 UTF-8 로 푼다."""
     rows = []
     if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in path.read_bytes().splitlines():
             try:
                 rows.append(json.loads(line))
-            except json.JSONDecodeError:
+            except ValueError:  # JSONDecodeError · UnicodeDecodeError 둘 다
                 break
     return rows
