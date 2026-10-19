@@ -42,9 +42,42 @@ def retrieval_fields(index, question: str, query: str, *, reused: bool) -> tuple
                                          "k_values": [5, 10, 20], "stored_rewrites_reused": reused}}
 
 
-def _is_dup(a: set[str], b: set[str]) -> bool:
-    """큰 낱말 집합의 80%가 겹쳐야 중복이다. 짧은 코드만 겹치는 상세 근거는 남긴다."""
-    return len(a & b) >= _DUP_RATIO * max(len(a), len(b))
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*\s*(?:%|시간|개월|MB|GB|KB|TB|[초분일월년명건회개원부식인장])?")
+_NEGATION = re.compile(r"않|아니|없|불가|금지|미적용|불포함|제외")
+
+
+def _evidence_key(body: str) -> tuple[set[str], frozenset[str], frozenset[str]]:
+    """중복 판정에 쓰는 (낱말들, 단위를 붙인 숫자들, 부정어가 든 낱말들)"""
+    words = set(body.split())
+    numbers = frozenset(re.sub(r"[,\s]", "", n) for n in _NUMBER.findall(body))
+    return words, numbers, frozenset(w for w in words if _NEGATION.search(w))
+
+
+def _is_dup(a: tuple, b: tuple) -> bool:
+    """숫자 · 부정어가 모두 같고 큰 낱말 집합의 80%가 겹쳐야 중복이다. 짧은 코드만 겹치는 상세 근거는 남긴다.
+    '2초/5초', '포함한다/포함하지 않는다' 처럼 낱말은 거의 같아도 뜻이 다른 근거는 둘 다 남긴다."""
+    (words_a, numbers_a, negations_a), (words_b, numbers_b, negations_b) = a, b
+    return (numbers_a == numbers_b and negations_a == negations_b
+            and len(words_a & words_b) >= _DUP_RATIO * max(len(words_a), len(words_b)))
+
+
+def _org_query(query: str, route: dict[str, set], org: str) -> str:
+    """비교 질문에서 이 기관을 찾을 질문 — 다른 기관 이름을 뺀다 (한 질문에 두 기관이 섞여 검색이 흐려지지 않게)"""
+    for other in route:
+        if other != org:
+            for name in other.split(" · "):
+                query = query.replace(name, " ")
+    return re.sub(r"\s+", " ", query).strip()
+
+
+def _interleave(lists: list[list[dict]]) -> list[dict]:
+    """기관별 결과를 하나씩 번갈아 섞는다. 두 기관이 같은 문서를 가리켜 겹친 청크는 한 번만"""
+    seen, out = set(), []
+    for hit in chain.from_iterable(zip_longest(*lists)):
+        if hit is not None and hit["chunk_id"] not in seen:
+            seen.add(hit["chunk_id"])
+            out.append(hit)
+    return out
 
 
 def _minmax(d: dict[int, float]) -> dict[int, float]:
@@ -126,9 +159,10 @@ class HybridIndex:
 
     @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str, *, query: str | None = None) -> list[dict]:
-        """재작성 질문 query(없으면 원본)로 기관을 고르고 검색한다. 비교 질문은 기관별 결과를 번갈아 섞는다.
-        후속 질문의 '그 사업'은 재작성 때 사업명으로 풀리므로 기관도 재작성 질문에서 찾는다.
-        요구사항 코드는 양쪽에서 모아 재작성 때 코드가 빠져도 정확 일치를 유지한다."""
+        """재작성 질문 query(없으면 원본)로 기관을 고르고 검색한다.
+        후속 질문의 '그 사업'은 재작성 때 사업명으로 풀리므로 기관 · 사업명도 재작성 질문에서 찾는다.
+        비교 질문(기관 둘 이상)은 기관마다 다른 기관 이름을 뺀 질문으로 따로 찾고, 토큰 예산도 기관마다 따로 써서
+        번갈아 섞는다 — 한 기관이 예산을 다 차지하지 않게. 요구사항 코드는 원본 · 재작성 양쪽에서 모은다."""
         return self.search_with_candidates(question, query=query)[0]
 
     def search_with_candidates(self, question: str, *, query: str | None = None) -> tuple:
@@ -139,10 +173,13 @@ class HybridIndex:
         if condition:
             return self._filter(condition)
         codes = find_codes(question) | find_codes(query)
-        groups = [self._rank(query, codes, doc_ids) for doc_ids in (list(route.values()) or [None])]
+        groups = [self._rank(self.router.focus(_org_query(query, route, org), org, doc_ids), codes, doc_ids,
+                             self.router.prefer(query, doc_ids)) for org, doc_ids in route.items()]
+        groups = groups or [self._rank(query, codes, None)]
         ranked = [hit for hit in chain.from_iterable(zip_longest(*groups)) if hit is not None]
         candidates = self._candidate_snapshot(groups, ranked)
-        return self._pack([(c["index"], c["score"]) for c in ranked]), candidates
+        packed = [self._pack([(c["index"], c["score"]) for c in group]) for group in groups]
+        return _interleave(packed), candidates
 
     def _filter(self, condition):
         matched, chosen = choose_values(self.quantity_rows, self.quantity_phrases, self.quantity_vectors,
@@ -198,7 +235,8 @@ class HybridIndex:
                      "bm25_score": c["bm25_score"], "bm25_rank": c["bm25_rank"],
                      "exact_code_match": c["exact_code_match"]}) for rank, c in enumerate(ranked, 1))
 
-    def _rank(self, question: str, codes: set[str], doc_ids: set | None) -> list[dict]:
+    def _rank(self, question: str, codes: set[str], doc_ids: set | None, preferred: set = frozenset()) -> list[dict]:
+        """preferred 문서(질문에 사업명이 나온 문서)의 후보를 먼저, 같은 기관의 다른 사업 문서는 그 뒤에 둔다"""
         allowed = np.isin(self.doc_ids, list(doc_ids)) if doc_ids else np.ones(len(self.chunks), dtype=bool)
         w = float(self.rcfg["dense_weight"])
         # 가중치 0 인 쪽은 후보도 내지 않는다 — 내면 점수 0 짜리 무관한 청크가 결과에 섞인다
@@ -208,7 +246,7 @@ class HybridIndex:
         fused = {i: w * dense.get(i, 0.0) + (1 - w) * sparse.get(i, 0.0) for i in dense.keys() | sparse.keys()}
         exact = self._exact(codes, allowed)
         fused |= {i: 0.0 for i in exact - fused.keys()}
-        order = sorted(fused, key=lambda i: (i in exact, fused[i]), reverse=True)
+        order = sorted(fused, key=lambda i: (self.doc_ids[i] in preferred, i in exact, fused[i]), reverse=True)
         dense_ranks = {i: rank for rank, i in enumerate(dense_raw, 1)}
         sparse_ranks = {i: rank for rank, i in enumerate(sparse_raw, 1)}
         return [{"index": i, "score": fused[i], "dense_score": dense_raw.get(i), "dense_rank": dense_ranks.get(i),
@@ -232,15 +270,15 @@ class HybridIndex:
         top = np.argsort(-scores)[: int(self.rcfg["candidate_k"])]
         return {int(i): float(scores[i]) for i in top if scores[i] > 0}
 
-    def _admit(self, i: int, picked: list[tuple[int, float, set[str]]], room: int) -> tuple[int, set[str]] | None:
-        """청크 i 를 담을 수 있으면 (토큰 수, 낱말 집합). 이미 담았거나, 같은 문서의 거의 같은 청크가 있거나,
+    def _admit(self, i: int, picked: list[tuple[int, float, tuple]], room: int) -> tuple[int, tuple] | None:
+        """청크 i 를 담을 수 있으면 (토큰 수, 중복 판정 키). 이미 담았거나, 같은 문서의 거의 같은 청크가 있거나,
         room 토큰을 넘으면 None — 단 아무것도 담지 않았으면 넘어도 담는다 (빈 컨텍스트를 막는다)"""
-        words = set(self.chunks[i]["body"].split())
-        if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(words, seen))
+        key = _evidence_key(self.chunks[i]["body"])
+        if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(key, seen))
                for j, _, seen in picked):
             return None
         cost = self.embedder.token_counts([self.chunks[i]["body"]])[0]
-        return None if picked and cost > room else (cost, words)
+        return None if picked and cost > room else (cost, key)
 
     def _pack(self, ranked: list[tuple[int, float]]) -> list[dict]:
         """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크는 제외한다. 긴 청크는 건너뛴다.
@@ -248,7 +286,7 @@ class HybridIndex:
         고르고 문서 순서대로 담는다 (점수는 찾은 청크와 같게). 연결 한도는 실제로 담은 연결 청크만 쓴다 —
         이미 담았거나 중복이라 빠진 청크가 더 가까운 청크의 자리를 빼앗지 않게."""
         budget = int(self.rcfg["token_budget"])
-        picked: list[tuple[int, float, set[str]]] = []
+        picked: list[tuple[int, float, tuple]] = []
         used = 0
         for i, score in ranked:
             admitted = self._admit(i, picked, budget - used)
@@ -275,7 +313,14 @@ _ORG_SUFFIX = (r"(?:공단|공사|연구원|연구소|대학교|대학|과학기
 _ORG_RE = re.compile(r"(?:한국|국립|재단법인|\(재\)|\(사\))?\s?[가-힣A-Za-z]{2,15}" + _ORG_SUFFIX)
 _GENERIC_ORG = re.compile(r"(?:자문|평가|심의|운영|선정|추진|협의|기술|제안)?위원회$|^(?:해당|발주|주관|수요|관련|전문|계약|용역|사업|기타|본|각)"
                           r"|^[가-힣]{1,2}(?:센터|연구소)$|^산학협력단$")
-_LEGAL_FORM = re.compile(r"^\((?:재|사)\)\s*|^(?:재단|사단)법인\s*|^주식회사\s*|\s*\(주\)$")
+# 법인 형태는 앞뒤 어느 쪽에 붙어도 뗀다 (전각 괄호 포함): '(사)벤처기업협회', '(사）한국대학스포츠협의회', '케빈랩 주식회사', '인천공항운영서비스㈜', '한국철도공사 (용역)'
+_LEGAL_FORM = re.compile(r"^[(（](?:재|사|주)[)）]\s*|^㈜\s*|^(?:재단|사단)법인\s*|^주식회사\s*|\s*[(（][^)）]*[)）]$|\s*㈜$|\s*주식회사$")
+# 여러 낱말 CSV 기관명에서 따로 라우팅에 쓸 낱말: 기관 접미사나 시·군·구로 끝나는 낱말
+# ('경희대학교 산학협력단' → '경희대학교', '경상북도 봉화군' → '봉화군', '아시아물위원회 사무국' → '아시아물위원회').
+# 광역 지자체('인천광역시 동구' 의 '인천광역시')와 하위 조직 일반명('산학협력단', '조직위원회')은 따로 쓰지 않는다.
+_ORG_PART = re.compile(_ORG_SUFFIX + r"$|대회$|[시군구]$")
+_PROVINCE = re.compile(r"(?:특별시|광역시|특별자치시|특별자치도|도)$")
+_GENERIC_PART = re.compile(r"^(?:(?:자문|평가|심의|운영|선정|추진|협의|기술|제안|조직)?위원회|산학협력단|사업단|사무국|연구소|센터)$")
 
 
 def _is_org_name(name: str) -> bool:
@@ -323,14 +368,34 @@ def _file_key(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z가-힣]", "", stem)
 
 
+def _is_org_part(word: str) -> bool:
+    if re.fullmatch(r"[A-Z]{3,}", word):  # 'KOICA 전자조달' → 'KOICA'
+        return True
+    return (len(word) >= 3 and bool(_ORG_PART.search(word)) and not _PROVINCE.search(word)
+            and not _GENERIC_PART.match(word))
+
+
 def _org_names(org: str) -> set[str]:
-    """CSV의 전체 기관명과 공백을 제거한 전체 이름만 모은다"""
+    """CSV의 기관명(법인 형태 제외) · 공백을 뺀 이름 · 여러 낱말이면 기관다운 낱말 각각.
+    CSV 전체 이름에는 자동 추출용 필터(4글자 이상 · …위원회 제외)를 쓰지 않는다 — '케빈랩' · '중앙선거관리위원회'가 빠지지 않게."""
     name = _LEGAL_FORM.sub("", org.strip())
-    return {n for n in {name, re.sub(r"\s+", "", name)} if _is_org_name(n)}
+    names = {name, re.sub(r"\s+", "", name)}
+    words = name.split()
+    if len(words) > 1:
+        names |= {w for w in words if _is_org_part(w)}
+    return {n for n in names if len(n) >= 2}
+
+
+def _file_org_names(source: str) -> set[str]:
+    """'발주기관_사업명' 파일명의 앞부분. CSV는 정식 명칭('한국국제협력단', '수산업협동조합중앙회')이라도
+    질문에는 파일명 쪽의 흔한 이름('KOICA', '수협중앙회')이 나오므로 함께 쓴다"""
+    stem = unicodedata.normalize("NFC", source)
+    return _org_names(stem.split("_", 1)[0]) if "_" in stem else set()
 
 
 def _csv_org_docs(docs: list[dict], csv_orgs: dict[str, str]) -> dict[str, set]:
-    """전체 파일명을 우선 맞추고, 정규화·앞부분 일치는 기관이 하나일 때만 쓴다"""
+    """전체 파일명을 우선 맞추고, 정규화·앞부분 일치는 기관이 하나일 때만 쓴다.
+    맞춘 문서에는 CSV 기관명과 파일명 앞부분의 기관명을 함께 붙인다."""
     by_source: dict[str, set[str]] = defaultdict(set)
     by_key: dict[str, set[str]] = defaultdict(set)
     for name, org in csv_orgs.items():
@@ -342,9 +407,55 @@ def _csv_org_docs(docs: list[dict], csv_orgs: dict[str, str]) -> dict[str, set]:
         orgs = (by_source.get(_source_key(doc["source"])) or by_key.get(key)
                 or set().union(*(orgs for k, orgs in by_key.items() if k.startswith(key))))
         if len(orgs) == 1:
-            for name in _org_names(next(iter(orgs))):
+            for name in _org_names(next(iter(orgs))) | _file_org_names(doc["source"]):
                 org_docs[name].add(doc["doc_id"])
     return org_docs
+
+
+_TITLE_WORD = re.compile(r"[가-힣A-Za-z0-9]{2,}")
+_TITLE_MAX_DOCS = 2  # 이보다 많은 사업 제목에 나오는 낱말('시스템' · '구축' · '고도화' · '2024년')은 사업을 가르지 못한다
+_PREFER_MIN_CHARS = 4  # 질문에 나온 사업명 고유 낱말이 이 글자 수 이상일 때만 그 문서를 앞세운다
+_FOCUS_MIN_WORDS = 2  # 기관명 · 사업명 낱말을 뺀 질문에 이보다 적은 낱말이 남으면 빼지 않는다
+
+
+def _title_keys(titles: dict[str, str]) -> dict[str, set[str]]:
+    """문서별 사업명 고유 낱말 — 파일명 '발주기관_사업명' 의 사업명 낱말 중 다른 사업 제목에 거의 안 나오는 것"""
+    words = {did: set(_TITLE_WORD.findall(title.split("_", 1)[-1])) for did, title in titles.items()}
+    df = defaultdict(int)
+    for ws in words.values():
+        for w in ws:
+            df[w] += 1
+    return {did: {w for w in ws if df[w] <= _TITLE_MAX_DOCS} for did, ws in words.items()}
+
+
+def _merge_overlaps(route: dict[str, set]) -> dict[str, set]:
+    """같은 문서를 가리키는 기관명은 하나로 합친다 ('전북대학교' 와 '공유대학' 이 같은 JST 문서) —
+    따로 두면 그 문서가 기관별 검색 · 예산을 두 몫 가져간다. 다른 기관 문서에 모두 들어가는 쪽은 그 기관에 합친다."""
+    merged: dict[str, set] = {}
+    for org, doc_ids in sorted(route.items(), key=lambda item: -len(item[1])):
+        owner = next((name for name, docs in merged.items() if doc_ids <= docs), None)
+        if owner:
+            merged[f"{owner} · {org}"] = merged.pop(owner)
+        else:
+            merged[org] = set(doc_ids)
+    return merged
+
+
+def _first_mentions(words: list[str], names: set[str]) -> set[int]:
+    """각 이름이 처음 들어 있는 낱말의 위치"""
+    used: set[str] = set()
+    found = set()
+    for i, word in enumerate(words):
+        names_in = {name for name in names if name in word}
+        if names_in - used:
+            found.add(i)
+            used |= names_in
+    return found
+
+
+def _is_title_word(word: str, title_words: set[str]) -> bool:
+    """사업명 낱말이 들었거나 괄호 · 기호뿐인 낱말"""
+    return not _TITLE_WORD.search(word) or any(t in word for t in title_words)
 
 
 class DocRouter:
@@ -353,26 +464,53 @@ class DocRouter:
 
     def __init__(self, docs: list[dict], csv_orgs: dict[str, str]):
         self.titles = {d["doc_id"]: d["title"] for d in docs}
+        self.title_keys = _title_keys(self.titles)
         hay = {d["doc_id"]: f"{d['title']}\n" + (d["cover_text"] or d["head_text"][:1500]) for d in docs}
         self.org_docs: dict[str, set] = defaultdict(set)
         for org in _extract_orgs(hay.values()):
             self.org_docs[org] |= {did for did, text in hay.items() if _has(text, org)}
         for org, doc_ids in _csv_org_docs(docs, csv_orgs).items():
-            self.org_docs[org] |= doc_ids
+            # 다른 문서 제목 · 표지에 같은 이름이 나오면 그 문서도 넣는다 (예: '평택시' 사업을 다른 업체가 발주)
+            self.org_docs[org] |= doc_ids | {did for did, text in hay.items() if _has(text, org)}
         self.org_docs = {org: doc_ids for org, doc_ids in self.org_docs.items() if doc_ids}
+
+    def unrouted_titles(self) -> list[str]:
+        """기관명이 하나도 연결되지 않은 문서 제목. 이 문서들은 질문에 기관명이 나와도 전체 검색으로만 찾힌다"""
+        routed = set().union(*self.org_docs.values())
+        return sorted(title for doc_id, title in self.titles.items() if doc_id not in routed)
 
     def route(self, question: str) -> dict[str, set]:
         """질문에 나온 기관 → 검색할 문서 id 들. 기관이 없으면 빈 dict(전체 검색)"""
         found = [org for org in self.org_docs if _has(question, org)]
         # '한국원자력연구원' 과 자동추출 '원자력연구원' 처럼 겹치면 긴 이름만
         found = [o for o in found if not any(o != p and o in p for p in found)]
-        return {org: self._narrow(self.org_docs[org], question) for org in found}
+        return _merge_overlaps({org: self.org_docs[org] for org in found})
 
-    def _narrow(self, doc_ids: set, question: str) -> set:
-        """같은 기관 문서가 여러 개면 질문 단어와 제목이 가장 많이 겹치는 문서로 좁힘"""
-        if len(doc_ids) <= 1:
-            return doc_ids
-        words = set(re.findall(r"[가-힣A-Za-z0-9]{2,}", question))
-        score = {d: sum(w in self.titles[d] for w in words) for d in doc_ids}
-        best = max(score.values())
-        return {d for d, s in score.items() if s == best} if best > 0 else doc_ids
+    def focus(self, query: str, org: str, doc_ids: set) -> str:
+        """기관 문서 안에서 순위를 매길 질문 — 질문에서 기관 · 사업을 가리킨 부분('스포츠윤리센터의 「… LMS 기능개선」')을 뺀다.
+        검색 범위를 이미 그 기관 문서로 좁혔으니 이 부분은 청크를 가르지 못하고, 사업명을 되풀이하는 표지 · 서식 ·
+        서약서 청크만 앞세워 정작 묻는 내용('하자보증 기간')의 청크를 토큰 예산 밖으로 밀어낸다.
+        기관명 · 사업명 고유 낱말은 처음 나올 때만 빼고(본문에서 다시 묻는 'ERP 행' 은 남김), 그 옆에 붙은 사업명 낱말도 함께 뺀다.
+        남는 낱말이 너무 적으면(사업명 자체를 묻는 질문) 그대로 둔다."""
+        words = query.split()
+        title_words = {w for did in doc_ids for w in _TITLE_WORD.findall(self.titles[did].split("_", 1)[-1])}
+        drop = _first_mentions(words, {*org.split(" · "), *(w for did in doc_ids for w in self.title_keys.get(did, ()))})
+        for i in sorted(drop):
+            for step in (-1, 1):
+                j = i + step
+                while 0 <= j < len(words) and j not in drop and _is_title_word(words[j], title_words):
+                    drop.add(j)
+                    j += step
+        focused = " ".join(w for i, w in enumerate(words) if i not in drop)
+        return focused if len(_TITLE_WORD.findall(focused)) >= _FOCUS_MIN_WORDS else query
+
+    def prefer(self, question: str, doc_ids: set) -> set:
+        """기관 문서가 여럿이면 질문에 사업명 고유 낱말이 가장 많이(글자 수 기준) 나온 문서 → 그 문서 후보를 앞세운다.
+        빼지 않고 뒤로 미루기만 한다 — 질문의 '대용량 전송' 이 다른 사업 제목('대용량 자료전송시스템')과 겹쳐
+        정답 문서를 빼던 문제가 있었다. 고유 낱말이 긴 쪽('기록관리시스템' 7자 > '대용량' 3자)이 이기고,
+        동점이거나 사업명이 없으면 빈 집합(앞세울 문서 없음)."""
+        compact = re.sub(r"\s+", "", question)
+        scores = {did: sum(len(w) for w in self.title_keys.get(did, ()) if w in compact) for did in doc_ids}
+        best = max(scores.values(), default=0)
+        preferred = {did for did, score in scores.items() if score == best}
+        return set() if best < _PREFER_MIN_CHARS or preferred == set(doc_ids) else preferred
