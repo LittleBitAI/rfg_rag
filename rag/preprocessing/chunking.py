@@ -214,14 +214,8 @@ _OCR_CHUNK_CHARS = 1400  # 그림 설명 청크 최대 글자 수 = chunking.chu
 
 
 def _split_caption(text: str) -> list[str]:
-    """긴 그림 설명(Markdown 표 · 도식)을 줄 단위로 _OCR_CHUNK_CHARS 글자 안팎씩 나눈다"""
-    parts, current = [], ""
-    for line in text.splitlines(keepends=True):
-        if current and len(current) + len(line) > _OCR_CHUNK_CHARS:
-            parts.append(current)
-            current = ""
-        current += line
-    return [part.strip() for part in [*parts, current] if part.strip()]
+    """긴 그림 설명(Markdown 표 · 도식)을 _OCR_CHUNK_CHARS 글자 이하로 나눈다 — 줄 단위로 끊고, 줄바꿈 없는 긴 줄은 공백 · 글자 단위로 더 끊는다"""
+    return RecursiveCharacterTextSplitter(chunk_size=_OCR_CHUNK_CHARS, chunk_overlap=0).split_text(text)
 
 
 def ocr_caption_chunks(rows: list[dict], docs: list[dict]) -> list[dict]:

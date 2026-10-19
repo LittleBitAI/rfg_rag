@@ -84,7 +84,7 @@ def test_package_corpus_adds_ocr_captions_as_image_chunks(tmp_path):
                "text": "| 구분 | 값 |\n| 응답시간 | 3초 |"}
     rows = [caption, {**caption, "marker_start": 99},                           # 같은 그림 두 곳 → 한 번
             {**caption, "image_sha256": "e" * 64, "source": unicodedata.normalize("NFD", "다른_사업.pdf"),
-             "document_sha256": "고쳐지기 전 원본", "page": 3, "text": "줄\n" * 800},  # 파일명으로 찾음, 긴 설명은 나눔
+             "document_sha256": "고쳐지기 전 원본", "page": 3, "text": "가 " * 1500},  # 파일명으로 찾음, 줄바꿈 없는 긴 설명도 나눔
             {**caption, "image_sha256": "d" * 64, "source": "없는.hwp", "document_sha256": "x"}]  # 코퍼스에 없는 문서
     for name, data in [("docs", docs), ("chunks", chunks), ("ocr_captions", rows)]:
         write_jsonl(data, tmp_path / f"{name}.jsonl")
@@ -95,5 +95,5 @@ def test_package_corpus_adds_ocr_captions_as_image_chunks(tmp_path):
     ocr = loaded[1:]
     assert [(c["doc_id"], c["kind"], c["page"]) for c in ocr[:2]] == [("sha-a", "image_ocr", None), ("sha-b", "image_ocr", 3)]
     assert ocr[0]["text"] == ocr[0]["body"] == "[그림/도표 설명] | 구분 | 값 |\n| 응답시간 | 3초 |"
-    assert {c["doc_id"] for c in ocr} == {"sha-a", "sha-b"} and len(ocr) == 3  # 긴 설명 1600자 → 2청크
+    assert {c["doc_id"] for c in ocr} == {"sha-a", "sha-b"} and len(ocr) == 4  # 한 줄 3000자 → 3청크
     assert all(len(c["text"]) <= 1400 + len("[그림/도표 설명] ") for c in ocr)
