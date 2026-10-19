@@ -1,14 +1,19 @@
 """④ 생성 — 검색한 청크와 이전 대화를 컨텍스트로 GPT가 답한다.
 담당: 생성. 03 검증의 eval_set.jsonl 질문마다 02 검색 → 답변을 만들어
 answers.jsonl로 05 평가에 넘긴다.
-.env에 Langfuse 키가 있으면 질문마다 재작성·검색·생성 추적이 남는다."""
+.env에 Langfuse 키가 있으면 질문마다 재작성·검색·생성 추적이 남는다.
+체크포인트 폴더를 주면 답을 하나 만들 때마다 저장해, 중간에 끊겨도 다시 실행하면 다음 질문부터 이어서 만든다."""
 from __future__ import annotations
 
+import hashlib
+import json
 import time
+from pathlib import Path
 
 from langfuse import get_client, observe
 from langfuse.openai import openai
 
+from ..config import append_jsonl, read_checkpoint, write_jsonl
 from ..retrieval.rewrite import rewrite_question
 from ..retrieval.retrieval import retrieval_fields
 from ..usage import record_usage
@@ -102,17 +107,41 @@ def answer_question(item: dict, index, llm_cfg: dict, rewrite_cfg: dict, history
             "latency_s": round(time.perf_counter() - t0, 2), "trace_id": langfuse.get_current_trace_id()}
 
 
+def _checkpoint_file(checkpoint_dir: Path, index, llm_cfg: dict, rewrite_cfg: dict, history_window: int) -> Path:
+    """설정마다 다른 파일. 답변 · 재작성 · 검색 설정이나 청크가 하나라도 바뀌면 예전 답을 섞어 쓰지 않는다"""
+    key = json.dumps({"index": index.fingerprint, "llm": llm_cfg, "rewrite": rewrite_cfg,
+                      "history_window": history_window}, ensure_ascii=False, sort_keys=True)
+    return checkpoint_dir / f"{hashlib.sha1(key.encode()).hexdigest()[:16]}.jsonl"
+
+
+def _saved_answers(path: Path, eval_set: list[dict]) -> list[dict]:
+    """저장된 답 중 평가셋 앞부분과 순서 · 항목이 같은 만큼만 쓴다.
+    이전 답이 다음 질문의 대화 기록이 되므로, 03 에서 질문이 바뀐 곳부터는 다시 만든다."""
+    saved = []
+    for row, item in zip(read_checkpoint(path), eval_set):
+        if any(row.get(k) != v for k, v in item.items()):
+            break
+        saved.append(row)
+    write_jsonl(saved, path)  # 쓰다 끊긴 줄과 바뀐 질문 이후의 답을 잘라 내고 그 뒤에 덧붙인다
+    return saved
+
+
 def answer_questions(eval_set: list[dict], index, llm_cfg: dict, rewrite_cfg: dict,
-                     history_window: int = 10) -> list[dict]:
+                     history_window: int = 10, checkpoint_dir: Path | None = None) -> list[dict]:
     """질문을 순서대로 처리하며 직전 history_window개의 Q&A를 전달한다.
 
     테스트용 대화 기록은 이 함수 실행 중에만 유지된다.
     eval_set의 순서가 대화 순서가 되며, 이전 질문과 생성된 답변을 사용한다.
     필드가 빠진 옛 eval_set 이면 유료 호출 전에 멈춘다. 답변 파일은 항목을 그대로 옮기므로 05 평가가 그 필드를 읽는다.
+    checkpoint_dir 를 주면 답마다 저장하고, 다시 실행하면 저장된 답으로 대화 기록을 되살려 다음 질문부터 이어서 만든다.
     """
     missing = sorted({field for item in eval_set for field in EVAL_ITEM_FIELDS if field not in item})
     if missing:
         raise ValueError(f"eval_set 에 {missing} 필드가 없습니다. 03 검증을 다시 실행해 eval_set.jsonl 을 만드세요")
+    path = _checkpoint_file(checkpoint_dir, index, llm_cfg, rewrite_cfg, history_window) if checkpoint_dir else None
+    saved = _saved_answers(path, eval_set) if path else []
+    if path:
+        print(f"저장된 답변 {len(saved)}/{len(eval_set)}개 — {path}")
     rows = []
     history = []
 
@@ -121,7 +150,13 @@ def answer_questions(eval_set: list[dict], index, llm_cfg: dict, rewrite_cfg: di
         if item.get("reset_context", False):
             history.clear()
 
-        row = answer_question(item, index, llm_cfg, rewrite_cfg, history=history[-history_window:])
+        if i <= len(saved):
+            row = saved[i - 1]
+        else:
+            row = answer_question(item, index, llm_cfg, rewrite_cfg, history=history[-history_window:])
+            if path:
+                append_jsonl(row, path)
+            print(f"생성 {i}/{len(eval_set)} {item['id']} ({row['latency_s']}s)")
         rows.append(row)
 
         # 다음 질문에서 이전 대화로 사용할 수 있도록 Q&A를 추가한다.
@@ -129,7 +164,5 @@ def answer_questions(eval_set: list[dict], index, llm_cfg: dict, rewrite_cfg: di
             "question": item["question"],
             "answer": row["answer"],
         })
-
-        print(f"생성 {i}/{len(eval_set)} {item['id']} ({row['latency_s']}s)")
 
     return rows

@@ -94,7 +94,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
         [{"id": "q1", "question": "질문"}], index,
         {**defaults["llm"], "model": "selected-answer-model", "reasoning_effort": "medium", "max_tokens": 2345,
          "usd_per_1m_tokens": [2.0, 0.2, 8.0]},
-        used_cfg["rewrite"])
+        used_cfg["rewrite"], checkpoint_dir=tmp_path / "checkpoints" / "answers")
 
 
 @pytest.mark.parametrize("package,captions_present,ocr", [(None, False, False), (None, True, False),
@@ -127,7 +127,8 @@ def test_preprocessing_notebook_selects_input(tmp_path, package, captions_presen
         namespace["collect_inputs"].assert_called_once()
         namespace["parse_documents"].assert_called_once_with(
             ["test.pdf"], defaults["parsing"], ocr=ocr, ocr_cfg=defaults["ocr"],
-            captions_path=resolved_captions if not ocr else None)
+            captions_path=resolved_captions if not ocr else None,
+            cache_dir=tmp_path / "artifacts" / "checkpoints" / "parsed")
         if not ocr:
             namespace["local_input"].assert_called_once_with(tmp_path, tmp_path / defaults["paths"]["ocr_captions"])
         else:

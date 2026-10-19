@@ -4,9 +4,11 @@
   Grounding    답이 검색 근거 안에서만 나왔나    faithfulness
   End-to-End   최종 답이 정답과 맞나, 얼마 들었나  factual_correctness · 지연 시간 · 토큰 · 예상 비용
 .env 에 Langfuse 키가 있으면 질문별 점수를 04 생성의 추적(answer-question)에 붙인다.
+RAGAS 점수는 몇 문항씩 채점할 때마다 체크포인트에 저장해, 끊겨도 남은 문항만 채점한다.
 담당: 평가."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -21,7 +23,7 @@ from ragas import EvaluationDataset, evaluate
 from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import FactualCorrectness, Faithfulness
 
-from ..config import read_jsonl, write_jsonl
+from ..config import append_jsonl, read_checkpoint, read_jsonl, write_jsonl
 from ..retrieval.retrieval import retrieval_fields
 from ..usage import UsageCallback
 from .ir import coverage_group, exclusion_report, ir_scores, label_state
@@ -29,17 +31,55 @@ from .ir import coverage_group, exclusion_report, ir_scores, label_state
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")  # ragas 사용 통계 전송 끔
 
 
-def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str) -> list[dict]:
-    """RAGAS 채점 → 질문마다 {지표 이름: 점수}"""
-    ecfg = cfg["evaluation"]
+_JUDGE_BATCH = 16  # 이 문항 수만큼 채점할 때마다 점수를 저장한다 (끊기면 이 묶음 하나만 다시 채점)
+
+
+def _judge(ecfg: dict, evaluation: str) -> LangchainLLMWrapper:
     judge = ChatOpenAI(model=ecfg["judge_model"], max_tokens=int(ecfg["judge_max_tokens"]),
                        reasoning_effort=ecfg["judge_reasoning_effort"], timeout=180, max_retries=3,
                        callbacks=[UsageCallback("judge", ecfg["judge_usd_per_1m_tokens"], evaluation)])
     # 추론 모델은 temperature·n 을 받지 않으므로 RAGAS 가 넣지 못하게 한다
-    llm = LangchainLLMWrapper(judge, bypass_temperature=True, bypass_n=True)
-    data = EvaluationDataset.from_list([{"user_input": r["question"], "retrieved_contexts": r["contexts"] or [""],
-                                         "response": r["answer"], "reference": r["reference"]} for r in rows])
-    return evaluate(data, metrics=metrics, llm=llm).scores
+    return LangchainLLMWrapper(judge, bypass_temperature=True, bypass_n=True)
+
+
+def _score_key(row: dict, metrics: list, ecfg: dict) -> str:
+    """지표 · 심판 설정 · 문항(질문 · 근거 · 답 · 정답)이 모두 같을 때만 같은 키 — 04 를 다시 돌려 답이 바뀐 문항은 새로 채점한다"""
+    key = json.dumps({"metrics": [m.name for m in metrics],
+                      "judge": [ecfg["judge_model"], ecfg["judge_reasoning_effort"], ecfg["judge_max_tokens"]],
+                      "row": [row["question"], row["contexts"], row["answer"], row["reference"]]}, ensure_ascii=False)
+    return hashlib.sha1(key.encode()).hexdigest()
+
+
+def _saved_scores(path: Path) -> dict[str, dict]:
+    saved = read_checkpoint(path)
+    write_jsonl(saved, path)  # 쓰다 끊긴 마지막 줄을 잘라 내고 그 뒤에 덧붙인다
+    return {s["key"]: s["scores"] for s in saved}
+
+
+def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, checkpoint: Path) -> list[dict]:
+    """RAGAS 채점 → 질문마다 {지표 이름: 점수}. checkpoint 에 저장된 문항은 다시 채점하지 않는다.
+    NaN(심판 호출 실패 포함)은 저장하지 않아 다음 실행에서 다시 채점한다."""
+    keys = [_score_key(r, metrics, cfg["evaluation"]) for r in rows]
+    scores = _saved_scores(checkpoint)
+    todo = [i for i, key in enumerate(keys) if key not in scores]
+    print(f"{evaluation}: {len(rows)}문항 중 저장된 점수 {len(rows) - len(todo)}개, 채점할 문항 {len(todo)}개 — {checkpoint}")
+    llm = _judge(cfg["evaluation"], evaluation) if todo else None
+    for start in range(0, len(todo), _JUDGE_BATCH):
+        batch = todo[start:start + _JUDGE_BATCH]
+        data = EvaluationDataset.from_list([{"user_input": rows[i]["question"],
+                                             "retrieved_contexts": rows[i]["contexts"] or [""],
+                                             "response": rows[i]["answer"], "reference": rows[i]["reference"]}
+                                            for i in batch])
+        for i, s in zip(batch, evaluate(data, metrics=metrics, llm=llm).scores):
+            scores[keys[i]] = s
+            if not any(math.isnan(v) for v in s.values()):
+                append_jsonl({"key": keys[i], "scores": s}, checkpoint)
+    return [scores[key] for key in keys]
+
+
+def _checkpoint(answers_path: Path, evaluation: str) -> Path:
+    """평가별 점수 체크포인트 — answers.jsonl 옆 checkpoints/judge/<평가>.jsonl"""
+    return answers_path.with_name("checkpoints") / "judge" / f"{evaluation}.jsonl"
 
 
 _DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
@@ -293,7 +333,7 @@ def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
 def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Grounding: 답의 주장들이 검색한 청크로 뒷받침되나 (낮으면 환각)"""
     rows = _read_answers(answers_path)
-    ragas = _ragas(rows, [Faithfulness()], cfg, "grounding")
+    ragas = _ragas(rows, [Faithfulness()], cfg, "grounding", _checkpoint(answers_path, "grounding"))
     scores = [{"faithfulness": s["faithfulness"]} for s in ragas]
     _send_scores(rows, scores)
     return _table(rows, scores, answers_path.with_name("grounding.csv"))
@@ -302,7 +342,7 @@ def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
 def evaluate_end_to_end(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """End-to-End: 최종 답이 정답과 사실이 맞는지 + 질문당 지연 시간·토큰·예상 비용(USD)"""
     rows = _read_answers(answers_path)
-    ragas = _ragas(rows, [FactualCorrectness()], cfg, "end_to_end")
+    ragas = _ragas(rows, [FactualCorrectness()], cfg, "end_to_end", _checkpoint(answers_path, "end_to_end"))
     # 지연 시간 · 토큰 · 비용은 추적에 이미 있으므로 점수로는 factual_correctness 만 보낸다
     _send_scores(rows, [{"factual_correctness": s["factual_correctness(mode=f1)"]} for s in ragas])
     scores = [{"factual_correctness": s["factual_correctness(mode=f1)"], "latency_s": r["latency_s"],

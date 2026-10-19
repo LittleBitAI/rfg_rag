@@ -7,6 +7,8 @@ import json
 import re
 import unicodedata
 from collections import defaultdict
+from functools import cached_property
+from hashlib import sha256
 from itertools import chain, zip_longest
 from pathlib import Path
 from types import MappingProxyType
@@ -154,6 +156,16 @@ class HybridIndex:
         self.quantity_rows = read_jsonl(artifacts / "index" / "quantities.jsonl")
         self.quantity_phrases = json.loads((artifacts / "index" / "quantity_phrases.json").read_text(encoding="utf-8"))
         self.quantity_vectors = np.load(artifacts / "index" / "quantity_vectors.npy")
+        self.settings = {name: cfg[name] for name in ("embedding", "bm25", "retrieval")}
+
+    @cached_property
+    def fingerprint(self) -> str:
+        """검색 결과를 바꾸는 입력(청크 · 기관 라우팅 · 검색 설정)의 해시.
+        04 답변 체크포인트가 이 값으로 갈려, 01 · 02 를 다시 돌리거나 검색 설정을 바꾸면 예전 답을 쓰지 않는다."""
+        routes = {org: sorted(doc_ids) for org, doc_ids in self.router.org_docs.items()}
+        key = json.dumps({"chunks": self.chunks, "routes": routes, "settings": self.settings},
+                         ensure_ascii=False, sort_keys=True)
+        return sha256(key.encode("utf-8")).hexdigest()
 
     @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str, *, query: str | None = None) -> list[dict]:
