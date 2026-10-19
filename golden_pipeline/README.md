@@ -394,7 +394,7 @@ validate(topic, method, run_id, config_path, client)
 | 8 | 질문에 독립 답이 이미 들어 있지 않음. 비교 질문이 선택지로 든 대상 이름 하나를 답하는 것은 예외 | `rejected` `복사형` |
 | 9 | 독립 답이 후보 답과 같음 (아래 정규화, 정하지 못하면 판정기). 비교는 대상별 값 · 고른 대상이 같음 | `rejected` `독립 답과 다릅니다` |
 | 9 | 독립 답이 단 조건 · 예외 중 후보 답에 글자로 없는 것이 있으면 판정기가 그 조건이 답을 제한하는지까지 보고 정함 | `rejected` `조건 · 예외 누락` |
-| 10 | multi_hop: 근거 단위를 하나씩만 준 검증기 답이 어느 것도 독립 답과 같지 않음 | `rejected` `multi_hop 아님` |
+| 10 | multi_hop: 근거 단위를 하나씩만 준 검증기 답이 어느 것도 독립 답과 같지 않음. 표 중간 행 단위에는 그 표 0행 청크의 첫 줄을 머리글로 붙이고, 0행 청크가 `titled` 라 첫 줄이 머리글이 아니면 거기서 판정을 멈추고 거절합니다 | `rejected` `multi_hop 아님` · `multi_hop 판정 불가` |
 
 unanswerable · false_premise 의 2번 검사는 근거 묶음이 아니라 질문이 묻는 문서 전체를 읽습니다 (`plan.document_units`).
 근거 어댑터 run 의 `units.jsonl` 에서 그 문서의 모든 단위를 eligible · held 가리지 않고 본문과 함께 읽습니다.
@@ -536,7 +536,7 @@ held-out 은 어떤 채택에도 쓰지 않았으므로 이 차이가 채택한 
 | `output_format` · `evidence_label` · `schema` | 생성 출력이 JSON · 필드 · 근거 라벨 · 스키마를 어김 |
 | `type_mismatch` · `evidence_owned` | 주제 구조 위반, 다른 주제가 가진 근거 묶음 |
 | `table_relation` · `missing_condition` · `duplicate` | 표 칸, 조건 · 예외 누락, 중복 |
-| `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 |
+| `unanswerable` · `answer_mismatch` · `copied` · `not_multi_hop` | 검증기가 답할 수 없음, 독립 답과 다름, 복사형, multi_hop 아님 · multi_hop 판정 불가 |
 | `single_chunk` | multi_hop 이 인용한 근거가 모두 한 청크 (규칙 검사) |
 | `validator_output` · `evidence_conflict` | 검증기 · 판정기 출력이 두 번 다 계약을 어김, 근거끼리 값이 다름 |
 | `present_in_target` · `premise_in_document` | unanswerable 의 속성이 묻는 문서에 있음, false_premise 의 `stated` 가 문서에 있음 |

@@ -4,7 +4,7 @@ from collections import deque
 
 import pytest
 
-from golden_pipeline import generation, storage, validation
+from golden_pipeline import generation, improvement, report, storage, validation
 from golden_pipeline.generation import comparison_answer, generate, import_c, with_document
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.plan import topic_spec as load_topic_spec
@@ -768,5 +768,7 @@ def test_a_simple_table_lookup_is_not_accepted_as_multi_hop_with_or_without_a_ti
 
     item = {"question": "B시스템의 하자담보책임기간은?", "primary_topic": "multi_hop"}
     assert validation._single_unit_verdict(item, [first, later], verdict("24개월"), ask, None) == ("rejected", expected)
+    # 실패 기록과 비교 보고서가 이 거절을 코드로 바꾸지 못하면 A loop 와 보고서가 멈췄다.
+    assert improvement.failure_code(expected) == report._code(expected) == "not_multi_hop"
     # 한도에 세는 요청 수: 함께 한 번 + 판정이 멈추기 전까지의 단독 검사.
     assert len(validation._validator_unit_lists(item, [first, later], None)) == (2 if title else 3)
