@@ -312,6 +312,23 @@ def test_long_table_chunk_packs_the_table_head_and_its_nearest_row_in_document_o
     assert [hit["chunk_id"] for hit in index._pack([(5, 0.9)])] == ["c5", "c0", "c4"]
 
 
+def test_links_already_packed_or_dropped_as_duplicates_do_not_use_the_link_cap():
+    """연결 한도는 실제로 담은 연결 청크만 쓴다 — 앞서 담긴 첫 청크(c0)나 찾은 청크와 거의 같아 빠지는
+    600토큰 첫 청크가 가까운 행(c4 · c6)의 자리를 빼앗지 않는다"""
+    index = make_index([f"표 {i}" for i in range(9)], [300] * 9, tables=[["t1"]] * 9)
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (5, 0.8)])] == ["c0", "c1", "c2", "c5", "c4", "c6"]
+
+    bodies = ["가 나 다 라 마 바", *[f"표 {i}" for i in range(1, 5)], "가 나 다 라 마", *[f"표 {i}" for i in range(6, 9)]]
+    index = make_index(bodies, [600, 300, 300, 300, 100, 300, 300, 300, 300], tables=[["t1"]] * 9)
+    assert [hit["chunk_id"] for hit in index._pack([(5, 0.9)])] == ["c5", "c4", "c6"]
+
+
+def test_links_of_a_found_chunk_dropped_as_a_duplicate_are_not_packed():
+    index = make_index(["가 나 다 라 마", "가 나 다 라 마 바", "표 이어짐"], [5, 5, 5], tables=[[], ["t1"], ["t1"]])
+
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (1, 0.8)])] == ["c0"]
+
+
 def test_same_table_ref_in_another_document_is_not_linked():
     """표 참조가 같아도 다른 문서의 청크는 연결하지 않는다 — 라우팅된 문서 밖 청크가 담기지 않게"""
     index = make_index(["A 표", "B 표"], [1, 1], doc_ids=["doc-a", "doc-b"], tables=[["t1"], ["t1"]])

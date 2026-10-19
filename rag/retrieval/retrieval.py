@@ -232,37 +232,38 @@ class HybridIndex:
         top = np.argsort(-scores)[: int(self.rcfg["candidate_k"])]
         return {int(i): float(scores[i]) for i in top if scores[i] > 0}
 
-    def _with_links(self, ranked: list[tuple[int, float]]):
-        """각 청크 바로 뒤에 연결 청크를 붙인다 (점수는 찾은 청크와 같게).
-        찾은 청크 하나에 붙이는 연결 청크는 _LINK_TOKENS 토큰까지 우선순위 순서로 고르고 — 넘치는 연결 청크는 건너뛴다 —
-        고른 청크는 문서 순서대로 붙인다"""
-        for i, score in ranked:
-            yield i, score
-            spent, chosen = 0, []
-            for j in self.links[i]:
-                cost = self.embedder.token_counts([self.chunks[j]["body"]])[0]
-                if spent + cost <= _LINK_TOKENS:
-                    spent += cost
-                    chosen.append(j)
-            for j in sorted(chosen):
-                yield j, score
+    def _admit(self, i: int, picked: list[tuple[int, float, set[str]]], room: int) -> tuple[int, set[str]] | None:
+        """청크 i 를 담을 수 있으면 (토큰 수, 낱말 집합). 이미 담았거나, 같은 문서의 거의 같은 청크가 있거나,
+        room 토큰을 넘으면 None — 단 아무것도 담지 않았으면 넘어도 담는다 (빈 컨텍스트를 막는다)"""
+        words = set(self.chunks[i]["body"].split())
+        if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(words, seen))
+               for j, _, seen in picked):
+            return None
+        cost = self.embedder.token_counts([self.chunks[i]["body"]])[0]
+        return None if picked and cost > room else (cost, words)
 
     def _pack(self, ranked: list[tuple[int, float]]) -> list[dict]:
-        """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크는 제외한다.
-        연결 청크(같은 요구사항 · 같은 표)는 함께 담는다. 긴 청크는 건너뛰되 첫 청크는 예산을 넘어도 담아 빈 컨텍스트를 막는다."""
+        """본문 토큰 예산 안에서 순서대로 담고 같은 문서의 거의 같은 청크는 제외한다. 긴 청크는 건너뛴다.
+        찾은 청크를 담았으면 바로 뒤에 연결 청크(같은 요구사항 · 같은 표)를 우선순위 순서로 _LINK_TOKENS 토큰까지
+        고르고 문서 순서대로 담는다 (점수는 찾은 청크와 같게). 연결 한도는 실제로 담은 연결 청크만 쓴다 —
+        이미 담았거나 중복이라 빠진 청크가 더 가까운 청크의 자리를 빼앗지 않게."""
         budget = int(self.rcfg["token_budget"])
         picked: list[tuple[int, float, set[str]]] = []
         used = 0
-        for i, score in self._with_links(ranked):
-            words = set(self.chunks[i]["body"].split())
-            if any(i == j or (self.chunks[i]["doc_id"] == self.chunks[j]["doc_id"] and _is_dup(words, seen))
-                   for j, _, seen in picked):
+        for i, score in ranked:
+            admitted = self._admit(i, picked, budget - used)
+            if admitted is None:
                 continue
-            cost = self.embedder.token_counts([self.chunks[i]["body"]])[0]
-            if picked and used + cost > budget:
-                continue
-            picked.append((i, score, words))
-            used += cost
+            picked.append((i, score, admitted[1]))
+            used += admitted[0]
+            start, spent = len(picked), 0
+            for j in self.links[i]:
+                admitted = self._admit(j, picked, min(budget - used, _LINK_TOKENS - spent))
+                if admitted is not None:
+                    picked.append((j, score, admitted[1]))
+                    used += admitted[0]
+                    spent += admitted[0]
+            picked[start:] = sorted(picked[start:], key=lambda p: p[0])
         return [{**self.chunks[i], "score": round(score, 4)} for i, score, _ in picked]
 
 

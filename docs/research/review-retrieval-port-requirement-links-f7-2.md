@@ -116,7 +116,17 @@ The defect is where and in what unit the link choice is measured, not the order 
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, not verified: this is still a draft. The reviewer's case reproduced at 4090646: a 9-chunk table, hit c5, a 600-token c0 that `_pack` drops as a near-duplicate of c5, and a 100-token c4. `_pack([(5, 0.9)])` returned `['c5']`, because c0 used up the whole link cap before `_pack` dropped it.
+
+Experiment (2), counts only, offline with the KURE-v1 tokenizer (the unit `_LINK_TOKENS` and the budget are measured in). The 21 chunks of the 3 v12 tables with more than 6 chunks have a median of 576 KURE tokens (max 701; 6 are over 600). Under head-then-distance order with the 600 cap, 0 of the 21 possible hits get zero links, so cause (2) disappears, as the Counterevidence anticipated. No change to the cap policy, option (b), was needed. For comparison, 322 of the 1,562 chunks in 2-6 chunk tables exceed 600 tokens (median 461).
+
+The fix follows part (a) of the hypothesis. `_with_links` is removed. `_pack` adds a found chunk through a new `_admit`, which rejects chunks already picked, near-duplicates in the same document, or chunks over the room left. Only after the found chunk is actually picked does it walk `links[i]` in `_link_priority` order. Each link is admitted against min(budget left, `_LINK_TOKENS` minus what this hit's links already took), so the cap is charged only for links actually added. The links added for one hit are put in document order.
+
+Tests (`tests/test_retrieval.py`):
+- `test_links_already_packed_or_dropped_as_duplicates_do_not_use_the_link_cap`: hit c0 then c5 at 300 tokens per chunk gives `['c0', 'c1', 'c2', 'c5', 'c4', 'c6']` (old code: no c6), and the reviewer's duplicate-head case gives `['c5', 'c4', 'c6']` (old code: `['c5']`).
+- `test_links_of_a_found_chunk_dropped_as_a_duplicate_are_not_packed` gives `['c0']` (old code: `['c0', 'c2']`).
+
+`tests/test_retrieval.py`, `tests/test_retrieval_benchmark.py` and `tests/test_v11_package.py` pass (76 passed), and ruff is clean. The commit is the one that carries this page ("retrieval: charge the link cap only for links actually packed"). Not run: experiment (3), the dev `rerun_retrieval` and 05 Retrieval comparison, because it needs an index rebuilt from this branch's search texts.
 
 ## Unresolved limits
 
