@@ -1,0 +1,10 @@
+{
+  "kiwi_seconds": 15.372352099999262,
+  "tokenizer": {
+    "source_sha256": "aff9336b923de96e8072c647fb124051bbb76a457f418313858839ed11917493",
+    "dictionary_sha256": "5fffe01db32f300f850bbf052a9e8c0ea67f43a79ab562a2c32a963846c50294",
+    "kiwipiepy": "0.24.0",
+    "kiwipiepy_model": "0.24.0",
+    "hanja": "0.15.1"
+  }
+}

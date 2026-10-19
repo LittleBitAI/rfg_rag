@@ -1,7 +1,15 @@
-# 수량 필터 제외 항목 점검 절차
+# 기존 제외 문서 40개 재점검
 
-금액·기간의 의미와 표 단위의 범위를 먼저 확인한다. 누락·모호·잘못 연결된 값은 별도 사유로 남기고 기본값으로 채우지 않는다. 표 머리글과 빈 칸의 위치를 보존한다. Actual excluded records and source text remain private; aggregate exclusion counts may be published. 회귀 검사는 독립적으로 작성한 합성 표로 재현한다.
+집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
 
-## 기록 보관
+복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행의 역사적 관측이며 이번 작업에서 재측정한 결과가 아니다.
 
-This page describes the procedure. Earlier report originals remain in ignored `artifacts/review-round2/originals/`. Actual questions, answers, evidence text, and dataset records must remain private. Aggregate counts, quality scores, latency, resource usage, and reports discussing those measurements may be published without the underlying records. This procedure page alone does not establish a measured winner.
+2026-10-17. 기존 40개 중 30개에서 감사한 사업 금액과 같은 값을 복원했다. 그중 19개는 1억원 이상, 11개는 미만이다. 나머지는 금액 확인 불가 9개와 추정가격 정책 제외 1개다. 원문 추출에서 확인하지 못한 것은 원문 전체에 금액이 없다는 단정이 아니다. 이미지 재검증이나 유료 OCR은 하지 않았다.
+
+원인별로 항목 매칭 20개, 단위 추출 7개, 실제 예산 상한을 조건문으로 잘못 제외한 경우 3개를 수정했다. 금액 확인 불가 9개의 원본 파일은 현재 문서 ID와 SHA256이 같은지 검증하고 로컬에서 추출했다. 기존에 일치했던 42개 사업의 선택 금액은 모두 그대로다.
+
+문서별 40행의 파일명·원문 금액·판정 표는 실제 레코드 내보내기이므로 로컬 원본에만 보관한다. 원인별 복구 수와 전체 문서 분포는 이 문서에 남긴다.
+
+전체 98개 문서에서는 61개가 1억원 이상이고, 확인한 값이 1억원 미만인 문서는 27개, 값 미표기·매칭 불가 또는 정책 제외는 10개다. 이 제외 수는 조건 미달 문서 수와 다르다.
+
+`artifacts/quantity_filter/repaired_final/exclusion_disposition.json`과 같은 이름의 CSV에 문서 ID, 원문 금액, 항목명, 유사도와 감사 사유를 비공개로 보관한다. 개별 문서 내부의 상충 값을 의미적으로 조정하지는 않으며, 해당 사례와 원문 값은 공개본에 싣지 않는다.

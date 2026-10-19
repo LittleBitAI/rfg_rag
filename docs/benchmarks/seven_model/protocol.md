@@ -61,3 +61,9 @@ foreach ($model in @('kure','nemotron','harrier','jina','pplx','dragonkue','upsk
 완료 시점의 소스·파일 봉인이 없는 기존 측정은 원본 그대로 역사적 기록으로 보존하되 v3 검증 통과나 현재 추천의 확정 근거로 표시하지 않는다. 사후 해시 생성은 완료 당시의 무결성을 입증하지 못하므로 새로 고정한 커밋에서 새 실측이 필요하다. 기존 기록을 덮어쓰지 않는다.
 
 집계는 로컬 raw의 질문 분할·3패스 순서·모델 완료 상태·동결 가중치를 다시 검증하며 지표는 기존 IR 도우미로 계산한다. Git 테스트는 합성 임시 자료와 손상 사례만 사용한다. `eval/golden/`의 원본 릴리스는 추적하지 않고 로컬에서 제공하며 실제 dev 행을 저장소 테스트 fixture로 사용하지 않는다. 전체 pytest gate는 서버 소유이며 구현 세션에서는 영향받은 파일만 검사한다.
+
+## 집계 결과 보관
+
+기존 로컬 측정의 집계 결과는 [385문항 부분집합 보고서](historical/report.md)와 [408문항 전체 dev 보고서](full_dev/report.md)에 보관한다. 각 폴더의 `quality.csv`, `paired_differences.csv`, `latency.csv`, `exclusions.csv`, `chosen_weights.json`, `resources.json`, `sparse_build.json`은 질문별 레코드를 담지 않는 집계다. 각 `runtime-freeze.txt`는 당시 저장한 패키지 이름·버전 183개만 보존한 실행 환경 기록이며 프로젝트 설치 의존성을 바꾸지 않는다. 원래 점수·분모·시간·자원·추천과 한계를 함께 보존하며, 이번 복원에서 새로 실행하거나 점수를 다시 계산하지 않았다.
+
+두 기록은 완료 당시 v3 봉인이 없는 역사적 측정이다. 기존 추천을 현재 검증을 통과한 확정 결론으로 승격하지 않는다. 원시 질문·정답·근거, 문항별 순위/점수·시간 표본, split ID, 실제 사례별 감사는 원래 무시된 `artifacts/seven_model/record/`와 `artifacts/seven_model_full_dev/record/`에 둔다. 집계 파일은 Git에 보관하고 원시 레코드는 로컬에 보관한다.
