@@ -18,9 +18,18 @@ from rank_bm25 import BM25Okapi
 
 from ..config import ROOT, read_jsonl
 from .indexing import Embedder, KiwiTokenizer, find_codes
+from .quantity_filter import choose_values, content_query, introduction, project_condition, substantive
 
 
 _DUP_RATIO = 0.8
+
+
+class FilterHits(list):
+    def __init__(self, hits, summary, values, chosen):
+        super().__init__(hits)
+        self.summary = summary
+        self.values = values
+        self.chosen = chosen
 
 
 def retrieval_fields(index, question: str, query: str, *, reused: bool) -> tuple:
@@ -51,6 +60,11 @@ class HybridIndex:
     질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter)."""
 
     def __init__(self, artifacts: Path, cfg: dict):
+        self.tokenizer = KiwiTokenizer()
+        stored = json.loads((artifacts / "index" / "bm25_tokens.json").read_text(encoding="utf-8"))
+        if not isinstance(stored, dict) or stored.get("tokenizer") != self.tokenizer.fingerprint:
+            raise ValueError("BM25 tokenizer mismatch or missing fingerprint. "
+                             "Rebuild the index with 02_retrieval.ipynb's build_index cell before searching.")
         self.chunks = read_jsonl(artifacts / "chunks.jsonl")
         self.doc_ids = np.array([c["doc_id"] for c in self.chunks])
         self.code_chunks: dict[str, set[int]] = defaultdict(set)
@@ -58,13 +72,14 @@ class HybridIndex:
             for code in find_codes(chunk["text"]):
                 self.code_chunks[code].add(i)
         self.faiss = faiss.read_index(str(artifacts / "index" / "faiss.index"))
-        tokens = json.loads((artifacts / "index" / "bm25_tokens.json").read_text(encoding="utf-8"))
-        self.bm25 = BM25Okapi(tokens, k1=float(cfg["bm25"]["k1"]), b=float(cfg["bm25"]["b"]))
+        self.bm25 = BM25Okapi(stored["tokens"], k1=float(cfg["bm25"]["k1"]), b=float(cfg["bm25"]["b"]))
         self.embedder = Embedder(cfg["embedding"])
-        self.tokenizer = KiwiTokenizer()
         self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"), read_csv_orgs(ROOT / cfg["paths"]["org_csv"]))
         self.rcfg = cfg["retrieval"]
         self.chunk_file = str((artifacts / "chunks.jsonl").resolve())
+        self.quantity_rows = read_jsonl(artifacts / "index" / "quantities.jsonl")
+        self.quantity_phrases = json.loads((artifacts / "index" / "quantity_phrases.json").read_text(encoding="utf-8"))
+        self.quantity_vectors = np.load(artifacts / "index" / "quantity_vectors.npy")
 
     @observe(name="retrieve-context", as_type="retriever")
     def search(self, question: str, *, query: str | None = None) -> list[dict]:
@@ -77,11 +92,55 @@ class HybridIndex:
         """기존 검색 결과와 패킹 전 후보의 읽기 전용 스냅샷을 함께 반환한다."""
         query = query or question
         route = self.router.route(query)
+        condition = project_condition(query) if not route and not re.match(r"^.*?」 사업에서 ", query) else None
+        if condition:
+            return self._filter(condition)
         codes = find_codes(question) | find_codes(query)
         groups = [self._rank(query, codes, doc_ids) for doc_ids in (list(route.values()) or [None])]
         ranked = [hit for hit in chain.from_iterable(zip_longest(*groups)) if hit is not None]
         candidates = self._candidate_snapshot(groups, ranked)
         return self._pack([(c["index"], c["score"]) for c in ranked]), candidates
+
+    def _filter(self, condition):
+        matched, chosen = choose_values(self.quantity_rows, self.quantity_phrases, self.quantity_vectors,
+                                        self.embedder, condition, float(self.rcfg["field_similarity"]))
+        excluded = len(set(self.doc_ids) - chosen.keys())
+        summary = f"[수량 필터] 조건 일치 {len(matched)}개 문서; 값 미표기·매칭 불가로 제외 {excluded}개 문서."
+        share = int(self.rcfg["filter_token_budget"]) // max(1, len(matched))
+        hits, ranked = [], []
+        for row in matched:
+            top, overview = self._filter_excerpt(row, condition.remainder)
+            value_index = next(i for i, c in enumerate(self.chunks) if c["chunk_id"] == row["chunk_id"])
+            chunk = self.chunks[value_index]
+            if top["index"] != value_index:
+                source = self.chunks[top["index"]]
+                loc = f"p.{source['page']}" if source["page"] else source["section"]
+                overview = f"개요 출처: {source['source']} {loc} [chunk_id={source['chunk_id']}]\n" + overview
+            original = row["original"]
+            if row.get("unit_declaration"):
+                original += f" ({row['unit_declaration']['original']})"
+            value = f"{row['phrase']}: {original}\n"
+            available = share - self.embedder.token_counts([value])[0] - 2
+            body = value + self.embedder.truncate(overview, max(0, available))
+            hits.append({**chunk, "body": body, "score": round(row["similarity"], 4)})
+            ranked.append({**top, "index": value_index, "dense_score": None, "dense_rank": None, "bm25_score": None,
+                           "bm25_rank": None, "exact_code_match": False})
+        return FilterHits(hits, summary, matched, chosen), self._candidate_snapshot([ranked], ranked)
+
+    def _filter_excerpt(self, row, remainder):
+        value_index = next(i for i, c in enumerate(self.chunks) if c["chunk_id"] == row["chunk_id"])
+        query = content_query(remainder)
+        results = self._rank(query, set(), {row["doc_id"]})
+        if query != remainder:
+            results.insert(0, {"index": value_index, "score": 0})
+            for candidate in results:
+                excerpt = introduction(self.chunks[candidate["index"]]["body"])
+                if excerpt:
+                    return candidate, excerpt
+        top = next((c for c in results if substantive(self.chunks[c["index"]]["body"])), None)
+        if top:
+            return top, self.chunks[top["index"]]["body"]
+        return {"index": value_index, "score": 0}, "(관련 내용을 담은 본문을 찾지 못했습니다.)"
 
     def _candidate_snapshot(self, groups: list, ranked: list) -> tuple:
         for component in ("dense", "bm25"):

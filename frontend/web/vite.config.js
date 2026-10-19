@@ -9,5 +9,5 @@ export default defineConfig({
     port: 5173, strictPort: true,
     proxy: { '/api': 'http://127.0.0.1:8765', '/ocr-api': 'http://127.0.0.1:8766' },
   },
-  build: { rollupOptions: { input: ['index.html', 'ocr.html'] } },
+  build: { rollupOptions: { input: ['index.html', 'ocr.html', 'review.html'] } },
 })

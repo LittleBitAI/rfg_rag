@@ -1,10 +1,14 @@
 """실제 콜백 경로와 CSV·비용 계산을 네트워크 호출 없이 검증한다."""
 import csv
+import hashlib
+import io
 import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pymupdf
 import pytest
 from langchain_openai import ChatOpenAI
 from openai.types.chat import ChatCompletion
@@ -15,6 +19,7 @@ from rag.config import load_config, write_jsonl
 from rag.evaluation import evaluation
 from rag.generation import generation
 from rag.preprocessing import parsing
+from rag.preprocessing.craft_detector import Detector
 from rag.validation import validation
 
 TOKENS = {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130,
@@ -82,7 +87,8 @@ def test_ocr_invocation_records_every_image_with_source_without_langfuse(monkeyp
     def fake_generate(self, messages, **kwargs):
         return self._create_chat_result(_completion("예산 100만원"))
 
-    def parse_file(path, pcfg, parser):
+    def parse_file(path, pcfg, parser, saved_rows):
+        assert saved_rows is None
         if parser is not None:
             for _ in range(2):
                 assert parser._analyze_image(Image.new("RGB", (1, 1))) == "예산 100만원"
@@ -101,6 +107,64 @@ def test_ocr_invocation_records_every_image_with_source_without_langfuse(monkeyp
     assert all(float(row["cost_usd"]) == pytest.approx(0.000076) for row in rows)
 
 
+def _source_with_saved_caption(tmp_path, monkeypatch, extension):
+    image = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(image, format="PNG")
+    payload = image.getvalue()
+    path = tmp_path / f"source.{extension}"
+    if extension == "pdf":
+        with pymupdf.open() as pdf:
+            page = pdf.new_page()
+            page.insert_text((72, 72), "Body")
+            page.insert_image((72, 100, 100, 150), stream=payload)
+            pdf.save(path)
+        location = {"page": 1, "image_index": 0}
+    else:
+        path.write_bytes(b"hwp source")
+
+        def raw_text(path, image_dir):
+            (Path(image_dir) / "image.png").write_bytes(payload)
+            return "Body\n[IMAGE: image.png]"
+
+        monkeypatch.setattr(parsing, "_hwp_raw_text", raw_text)
+        location = {"image_name": "image.png", "marker_start": 5}
+    captions = tmp_path / "captions.jsonl"
+    write_jsonl([{"format": "pdf" if extension == "pdf" else "hwp",
+                  "doc_id": parsing.make_doc_id(str(path)),
+                  "document_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                  "image_sha256": hashlib.sha256(payload).hexdigest(),
+                  "text": "saved benchmark 99", **location}], captions)
+    return path, captions
+
+
+@pytest.mark.parametrize("extension", ["pdf", "hwp", "hwpx"])
+@pytest.mark.parametrize("craft", [False, True])
+def test_live_ocr_overrides_saved_captions_and_records_usage(tmp_path, monkeypatch, extension, craft):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    calls = []
+
+    def fake_generate(self, messages, **kwargs):
+        calls.append(messages)
+        return self._create_chat_result(_completion("fresh Vision 42"))
+
+    monkeypatch.setattr(ChatOpenAI, "_generate", fake_generate)
+    classify = MagicMock(return_value={"classification": "OCR_CANDIDATE", "reason": "test candidate"})
+    monkeypatch.setattr(Detector, "classify", classify)
+    path, captions = _source_with_saved_caption(tmp_path, monkeypatch, extension)
+    cfg = load_config()
+    cfg["parsing"].update(skip_first_pages=0, hanja_mode="none", craft={
+        "enabled": craft, "model_dir": str(tmp_path / "models"),
+        "cache_dir": str(tmp_path / "detector"), "review_queue": str(tmp_path / "review.jsonl")})
+    docs = parsing.parse_documents([str(path)], cfg["parsing"], True, cfg["ocr"], captions)
+    assert [r["text"] for r in docs[0]["records"] if r["kind"] == "image_caption"] == [
+        "[그림/도표 설명] fresh Vision 42"]
+    assert len(calls) == 1
+    assert classify.call_count == int(craft)
+    row, = _usage_rows(tmp_path)
+    assert (row["stage"], row["subject"], row["model"]) == ("ocr", path.name, "actual-model-snapshot")
+    assert float(row["cost_usd"]) == pytest.approx(0.000076)
+
+
 @pytest.mark.parametrize("turns", [0, 3, 12])
 def test_answer_saves_actual_model_usage_and_recent_history(monkeypatch, tmp_path, turns):
     client = MagicMock()
@@ -109,12 +173,13 @@ def test_answer_saves_actual_model_usage_and_recent_history(monkeypatch, tmp_pat
     monkeypatch.setattr(generation.openai, "OpenAI", MagicMock(return_value=client))
 
     history = [{"question": f"이전 질문 {i}", "answer": f"이전 답변 {i}"} for i in range(turns)]
-    result = generation.generate("질문", [], load_config()["llm"], history=history or None)
+    llm_cfg = {**load_config()["llm"], "usd_per_1m_tokens": [0.10, 0.01, 0.50]}
+    result = generation.generate("질문", [], llm_cfg, history=history or None)
 
     assert result["model"] == "actual-model-snapshot"
     assert result["cached_input_tokens"] == 40
     assert result["reasoning_tokens"] == 20
-    assert result["cost_usd"] == pytest.approx(0.000076)
+    assert result["cost_usd"] == pytest.approx(0.0000214)
     row, = _usage_rows(tmp_path)
     assert row["stage"] == "answer" and row["subject"] == "질문"
     messages = client.chat.completions.create.call_args.kwargs["messages"]

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from golden_pipeline import adoption, improvement, storage
+from golden_pipeline import adoption, evidence, improvement, storage
 from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
@@ -452,7 +452,7 @@ def test_a_limit_hit_on_held_out_is_the_stop_reason_even_after_the_rounds_ran_ou
 
 def test_a_release_names_each_document_by_the_current_data_list(looped, evidence_run, tmp_path):
     # 팀이 data_list.csv 의 기관 이름을 고친 뒤에도 앞서 만든 항목이 옛 이름으로 나가면 한 출시본에서 한 문서가 두 이름이 된다.
-    data_list = evidence_run.parent / "data_list.csv"
+    data_list = evidence_run / evidence.AGENCIES
     data_list.write_text(data_list.read_text(encoding="utf-8").replace(",나기관", ",새기관"), encoding="utf-8")
 
     def useful(**kwargs):
@@ -478,7 +478,7 @@ def test_a_rename_reissues_releases_under_current_names_without_screening(looped
     config = tmp_path / "screen.json"
     config.write_text(json.dumps({**LOOP["validator"], "max_calls": 10, "budget_usd": 1.0}), encoding="utf-8")
     first = release("numeric", "v1", [("A", "l1-r1")], config, useful)
-    data_list = evidence_run.parent / "data_list.csv"
+    data_list = evidence_run / evidence.AGENCIES
     data_list.write_text(data_list.read_text(encoding="utf-8").replace(",나기관", ",새기관"), encoding="utf-8")
 
     renamed = rename("numeric", "v2", ["v1"])

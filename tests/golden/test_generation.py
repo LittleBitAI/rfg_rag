@@ -71,7 +71,7 @@ def test_a_writes_candidates_with_bundle_id_and_the_exact_context_sent(planned, 
     assert info["prompt_sha256"] == item["prompt_version"] == storage._sha256(storage.PROMPTS / "A" / "numeric.txt")
     assert info["run_config_sha256"] == storage._sha256(planned)
     assert info["plan_sha256"] == load_plan("p1")[1]
-    assert info["v11_manifest_sha256"] == storage._sha256(evidence_run / "manifest.json")
+    assert info["package_manifest_sha256"] == storage._sha256(evidence_run / "manifest.json")
     assert info["topic_spec_sha256"] == topic_spec("numeric")[1]
     assert info["bundle_ids"] == [numeric["bundle_id"]]
     assert info["document_scope"] == [DOC_1]
@@ -207,7 +207,7 @@ def test_b_prompt_hash_is_constant(planned):
     assert clients[0].requests == clients[1].requests
 
     a = manifest(generate("A", "numeric", "p1", "a1", planned, Client(NUMERIC)))["generation"]
-    for name in ("model_requested", "plan_sha256", "v11_manifest_sha256", "topic_spec_sha256", "bundle_ids"):
+    for name in ("model_requested", "plan_sha256", "package_manifest_sha256", "topic_spec_sha256", "bundle_ids"):
         assert infos[0][name] == a[name]
     assert infos[0]["prompt_sha256"] != a["prompt_sha256"]
 

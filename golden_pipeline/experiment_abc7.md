@@ -1,0 +1,9 @@
+# 일곱 주제 A·B·C 비교 절차
+
+같은 근거 계획을 먼저 고정하고 방식별 상태를 분리한다. 공개 config는 방법과 예산 상한을 담는다. Actual questions, answers, and evidence records remain in private outputs and ignored artifacts. Aggregate measurements and comparison reports may be published without those records.
+
+실행 전에 CLI의 freeze·estimate로 입력과 전체 비용 가정을 고정하고 승인을 받는다. 유료 호출은 같은 실험 장부에 기록한다. C의 수동 생성은 pro-packets로 내보내고 응답 형식을 검증해 가져온다. blind review는 독립된 순서와 완전한 검토지로 수행한다.
+
+재시작 시 파일 존재만으로 완료를 판단하지 않고 현재 계획·입력·호출 소유권 지문을 확인한다. 유효율·근거 정확성·유형 준수·중복·커버리지·비용은 분모와 미측정 상태를 명시해 로컬 보고서에 기록한다. 미관측 비용을 0으로 채우지 않는다.
+
+명령 형식과 스키마는 [파이프라인 안내](README.md)를 따른다. 이전 실제 실행 결과는 무시된 `artifacts/review-round2/originals/golden_pipeline/experiment_abc7.md`에 보존한다. 이 문서는 특정 데이터셋의 결과나 승자를 제시하지 않는다.

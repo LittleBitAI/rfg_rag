@@ -2,19 +2,31 @@
 
 모든 쓰기는 golden_pipeline/outputs 아래에서만 일어나고, 이미 있는 run 과 release 는 덮어쓰지 않는다.
 """
+import contextlib
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from golden_pipeline.schema import ITEM_FIELDS, METHODS, TOPICS, validate_item
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 PACKAGE = Path(__file__).resolve().parent
 OUTPUTS = PACKAGE / "outputs"
 CONFIGS = PACKAGE / "configs"
 PROMPTS = PACKAGE / "prompts"
+# 비교 실험(cli --experiment)의 id. 실험은 카탈로그 · run · 실패 기록 · loop 를 outputs/experiments/{id} 에 따로 둔다.
+# 지난 실패 기록 · 통과 항목 · 근거 묶음 소유가 어느 방식을 돕거나 막지 않게 하려는 것이다. 근거 run · 계획은 함께 읽는다.
+EXPERIMENT = None
 STATE_FILES = {"auto_validated": "accepted.jsonl", "rejected": "rejected.jsonl"}
 # generation.with_document 가 질문 앞에 붙인 문서 이름: "기관의 「사업 이름」 사업에서 ".
 DOCUMENT_PREFIX = re.compile(r"^.*?」 사업에서 ")
@@ -68,7 +80,7 @@ def write_run(topic, method, run_id, items, rejects=(), info=None):
         "counts": {name: _count_lines(run_dir / name) for name in ("candidates.jsonl", *STATE_FILES.values())},
         "generation": info,
     })
-    _append_jsonl(OUTPUTS / "catalog.jsonl", entries)
+    _append_jsonl(state_root() / "catalog.jsonl", entries)
     return run_dir
 
 
@@ -221,7 +233,7 @@ def read_release(topic, version):
 
 
 def read_catalog():
-    path = guard(OUTPUTS / "catalog.jsonl")
+    path = guard(state_root() / "catalog.jsonl")
     return _read_jsonl(path) if path.exists() else []
 
 
@@ -311,7 +323,12 @@ def _catalog_entry(item):
 def _topic_dir(topic):
     if topic not in TOPICS:
         raise ValueError(f"topic 은 {TOPICS} 중 하나여야 합니다: {topic!r}")
-    return guard(OUTPUTS / "goldens" / topic)
+    return guard(state_root() / "goldens" / topic)
+
+
+def state_root():
+    """카탈로그와 주제 폴더가 놓이는 곳: 실험이면 outputs/experiments/{id}, 아니면 outputs."""
+    return _child(OUTPUTS / "experiments", EXPERIMENT) if EXPERIMENT else guard(OUTPUTS)
 
 
 def _child(parent, name):
@@ -349,6 +366,65 @@ def _read_json(path):
 def _read_jsonl(path):
     with path.open(encoding="utf-8") as f:
         return [json.loads(line) for line in f]
+
+
+@contextlib.contextmanager
+def exclusive(path):
+    """잠금 파일 path 를 OS 잠금으로 쥔 동안만 들어간다. 다른 명령이 쥐고 있으면 기다리지 않고 멈춘다.
+
+    잠금은 파일이 있는지가 아니라 OS 가 쥔 것이라, 프로세스가 끊기면 OS 가 풀어 준다. 그래서 끊긴 명령도 다음 실행을 막지 않는다.
+    """
+    with guard(path).open("a+b") as f:
+        f.seek(0)
+        try:
+            if os.name == "nt":
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise RuntimeError(f"다른 명령이 같은 작업을 하고 있습니다. 끝난 뒤 다시 실행하세요: {path}") from None
+        try:
+            yield
+        finally:
+            f.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def publish(path, data):
+    """data 를 path 에 한 번에 내놓는다. 옆 숨은 임시 파일에 다 쓴 뒤 하드 링크로 건다.
+
+    링크는 다 쓴 파일을 한 번에 보이게 하고, 있는 파일은 덮지 않는다(FileExistsError). 그래서 읽는 쪽은 반쯤 쓴 파일을
+    보지 못하고, 쓰다 끊기면 숨은 임시 파일만 남아 path 는 없다. 링크 뒤의 임시 파일 지우기는 실패해도 넘겨,
+    내놓은 뒤에는 이 호출이 실패하지 않는다.
+    """
+    path = guard(path)
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temp.write_bytes(data)
+    try:
+        os.link(temp, path)
+    finally:
+        with contextlib.suppress(OSError):
+            temp.unlink()
+
+
+def publish_folder(folder, files):
+    """files {이름: 바이트} 를 옆 숨은 임시 폴더에 다 쓴 뒤 folder 로 한 번에 옮긴다. folder 가 이미 있으면 옮기지 않고 멈춘다.
+
+    읽는 쪽은 반쯤 찬 폴더를 보지 못하고, 쓰다 끊기면 숨은 임시 폴더만 남아 같은 명령을 다시 돌릴 수 있다.
+    """
+    folder = guard(folder)
+    temp = folder.with_name(f".{folder.name}.{uuid.uuid4().hex}.tmp")
+    temp.mkdir()
+    try:
+        for name, data in files.items():
+            (temp / name).write_bytes(data)
+        os.rename(temp, folder)
+    except BaseException:
+        shutil.rmtree(temp, ignore_errors=True)
+        raise
 
 
 def _write_json(path, data):

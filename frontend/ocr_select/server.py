@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from frontend.ocr_select.extract import IMAGES, OUT, hwp_text
+from frontend.ocr_select.review import router as review_router
 from rag.config import ARTIFACTS, ROOT, load_config, read_jsonl
 from rag.preprocessing.parsing import _IMG_MARK, collect_inputs
 
@@ -102,6 +103,7 @@ def _read_images() -> list[dict]:
 
 
 app = FastAPI()
+app.include_router(review_router)
 
 
 def _labels() -> dict[str, dict]:

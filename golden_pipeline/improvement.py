@@ -31,6 +31,8 @@ FAILURE_CODES = (
     # 같은 앞말의 not_multi_hop 보다 먼저 맞춘다. 근거는 둘 이상 이었지만 청크가 하나였던 실패다.
     ("multi_hop 아님: 인용한 근거가 모두 한 청크", "single_chunk"),
     ("multi_hop 아님", "not_multi_hop"),
+    # 단독 검사를 끝내지 못해 다단계임을 확인하지 못한 실패다. 막는 길은 not_multi_hop 과 같다.
+    ("multi_hop 판정 불가", "not_multi_hop"),
     ("검증기 출력 오류", "validator_output"),
     ("근거 충돌", "evidence_conflict"),
     ("모호한 대상", "ordinal_reference"),

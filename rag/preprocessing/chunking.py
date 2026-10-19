@@ -87,7 +87,30 @@ def _record_texts(record: dict, splitter, size: int, table_size: int) -> list[st
     return out
 
 
-def _doc_pieces(doc: dict, splitter, size: int, table_size: int) -> list[tuple[str, int | None, str, str]]:
+def _text_pieces(text, splitter, starts, pages, section_at, offset):
+    pieces = []
+    for chunk in splitter.create_documents([text]) if text.strip() else []:
+        start = offset + chunk.metadata["start_index"]
+        page = pages[bisect.bisect_right(starts, start) - 1]
+        pieces.append((chunk.page_content, page, "text", section_at(start)))
+    return pieces
+
+
+def _caption_pieces(anchors, body_pieces, anchor_pieces, length, position_captions):
+    if not position_captions:
+        pieces = body_pieces(0, length)
+        for record, offset in anchors:
+            pieces += anchor_pieces(record, offset)
+        return pieces
+    pieces, cursor = [], 0
+    for record, offset in anchors:
+        pieces += body_pieces(cursor, offset)
+        pieces += anchor_pieces(record, offset)
+        cursor = offset
+    return pieces + body_pieces(cursor, length)
+
+
+def _doc_pieces(doc: dict, splitter, size: int, table_size: int, position_captions=False):
     """문서 1개 → [(본문, 쪽, kind, 섹션)]. 본문 레코드는 이어 붙여 나누고, 시작 위치로 쪽·섹션을 역추적한다.
     표·그림은 '나온 위치'(앞 본문 길이)의 섹션을 붙인다."""
     full, starts, pages, anchors = "", [], [], []
@@ -104,17 +127,25 @@ def _doc_pieces(doc: dict, splitter, size: int, table_size: int) -> list[tuple[s
         i = bisect.bisect_right(offs, off) - 1
         return paths[i] if i >= 0 else ""
 
-    pieces = []
-    for d in splitter.create_documents([full]) if full.strip() else []:
-        start = d.metadata["start_index"]
-        pieces.append((d.page_content, pages[bisect.bisect_right(starts, start) - 1], "text", section_at(start)))
-    for r, off in anchors:
+    def body_pieces(start, end):
+        return _text_pieces(full[start:end], splitter, starts, pages, section_at, start)
+
+    def anchor_pieces(r, off):
         section = section_at(max(off - 1, 0))
-        pieces += [(text, r["page"], r["kind"], section) for text in _record_texts(r, splitter, size, table_size)]
-    return pieces
+        return [(text, r["page"], r["kind"], section) for text in _record_texts(r, splitter, size, table_size)]
+
+    return _caption_pieces(anchors, body_pieces, anchor_pieces, len(full), position_captions)
 
 
-def chunk_documents(docs: list[dict], ccfg: dict) -> list[dict]:
+def _chunk_pieces(doc, splitter, size, table_size, ccfg, position_captions):
+    positioned = position_captions and any(r["kind"] == "image_caption" for r in doc["records"])
+    minimum = int(ccfg["min_chunk_chars"])
+    pieces = _doc_pieces(doc, splitter, size, table_size, positioned)
+    return [piece for piece in pieces
+            if len(piece[0].strip()) >= (1 if positioned and piece[2] != "table" else minimum)]
+
+
+def chunk_documents(docs: list[dict], ccfg: dict, *, position_captions=False) -> list[dict]:
     """청크마다 머리말 '문서: <제목> | p.N | 섹션: 1. 사업개요 > 1.1 …' 을 붙인다 (text = 머리말 + body)"""
     size = int(ccfg["chunk_size"])
     table_size = int(size * float(ccfg["table_size_factor"]))
@@ -123,7 +154,7 @@ def chunk_documents(docs: list[dict], ccfg: dict) -> list[dict]:
                                               add_start_index=True, strip_whitespace=True)
     chunks = []
     for doc in docs:
-        pieces = [p for p in _doc_pieces(doc, splitter, size, table_size) if len(p[0].strip()) >= int(ccfg["min_chunk_chars"])]
+        pieces = _chunk_pieces(doc, splitter, size, table_size, ccfg, position_captions)
         for i, (text, page, kind, section) in enumerate(pieces):
             header = f"문서: {doc['title']}" + (f" | p.{page}" if page else "") + (f" | 섹션: {section}" if section else "")
             chunks.append({"chunk_id": f"{doc['doc_id']}::c{i:05d}", "doc_id": doc["doc_id"], "source": doc["source"],

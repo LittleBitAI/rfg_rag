@@ -42,6 +42,20 @@ Complexity is measured by ruff, configured in `pyproject.toml`.
 - When a function fails, split it or simplify it. Never silence it with `noqa` or by raising a limit.
 - `ruff check .` reports nothing today; keep it that way.
 
+### 1.4 Keep actual dataset records private; allow measurements
+
+Never commit or upload actual dataset records, such as real questions, answers,
+document or evidence text, saved OCR transcriptions, or exports that disclose those
+records. This includes JSONL files and actual records copied into other formats.
+Keep these under ignored `artifacts/` locally.
+
+Aggregate measurements and descriptive statistics may be committed, including
+dataset counts, quality scores, latency, resource usage, and reports discussing
+those values, provided they do not include actual dataset records or excerpts.
+Source code, model configuration, generic instructions, and independently authored
+synthetic fixtures are also allowed. Ignore rules do not remove already tracked
+files; flag pre-existing tracked actual datasets before any push.
+
 ## 2. Dependencies
 
 - A package goes into `requirements.txt` only when this repository's code imports it directly,
@@ -73,7 +87,7 @@ Each has exactly one owner.
 | 3 | Validation | Building and checking the evaluation dataset | Evaluation dataset |
 | 4 | Generation | Answering questions from retrieved chunks | Answers |
 | 5 | Evaluation | Four evaluations of one answers file: Retrieval, Generation, Grounding, End-to-End | Four score tables and CSV files |
-| 6 | Frontend | `frontend/`: the question screen and the OCR image labelling screen (`frontend/ocr_select/`), with their launchers; wraps `answer_question` and reuses preprocessing functions, holds no RAG logic | Answers on screen, OCR image labels in `artifacts/ocr_labels/` |
+| 6 | Frontend | `frontend/`: the question screen, the OCR image labelling screen and the saved OCR result review screen (`frontend/ocr_select/`), with their launchers; wraps `answer_question` and reuses preprocessing functions, holds no RAG logic | Answers on screen, OCR image labels and review verdicts in `artifacts/ocr_labels/` |
 
 | # | Notebook | Modules |
 |---|---|---|
@@ -94,9 +108,14 @@ kept apart from `rag/validation/validation.py` on purpose.
 It imports nothing from `rag/` and writes only under `golden_pipeline/outputs/`.
 Its tests live in `tests/golden/`, so the gate runs them.
 
-Images in documents become text only through the OpenAI API (LangChain's `LLMImageBlobParser`),
-and only when `OCR = True` in `01_preprocessing.ipynb`; it is `False` by default.
-Do not add a local OCR model or a local VLM such as Qwen2.5-VL; the team decided against running one.
+Choose the OCR engine separately for each image type using measured quality and measured
+cost per image on a reference set. Allowed engines are the OpenAI API, the Gemini API
+through its OpenAI-compatible endpoint, and PaddleOCR-VL-1.5 in its own environment
+on the local Windows PC. Log every paid OCR call and its cost through `rag/usage.py`;
+record seconds per image for PaddleOCR. Before the benchmark's first paid call and
+before the full run, show a per-model token-price estimate and wait for approval.
+01 reads saved captions without API calls. The existing `OCR = True` path still uses
+LangChain's `LLMImageBlobParser` and optional CRAFT selection; its default is `False`.
 
 ## 5. Evaluation results
 

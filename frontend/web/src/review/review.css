@@ -1,0 +1,48 @@
+.review-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.review-filters label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.review-filters select {
+  width: 100%; min-width: 0; min-height: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text); font: inherit;
+}
+.review-navigation { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 20px 0; }
+.review-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+.review-image, .review-result { min-width: 0; }
+.review-image { align-self: start; position: sticky; top: 84px; }
+.review-image img { display: block; width: 100%; max-height: calc(100vh - 130px); object-fit: contain; background: var(--surface); margin-top: 12px; }
+.review-result { display: flex; flex-direction: column; gap: 12px; }
+.review-result > p { margin: 0; }
+.review-markdown { overflow-x: auto; }
+.review-markdown > :first-child { margin-top: 0; }
+.review-markdown h1 { font-size: 26px; }
+.review-markdown h2 { font-size: 22px; }
+.review-markdown h3 { font-size: 19px; }
+.review-markdown h1, .review-markdown h2, .review-markdown h3 { line-height: 1.4; }
+.review-markdown table { width: max-content; min-width: 100%; border-collapse: collapse; overflow-wrap: normal; font-size: 15px; line-height: 1.6; }
+.review-markdown th, .review-markdown td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+.review-markdown th { background: var(--surface); }
+.review-markdown pre { overflow-x: auto; padding: 12px; background: var(--surface); }
+.review-markdown a { color: var(--accent); }
+.review-places { margin: 0; padding-left: 24px; }
+.review-places li + li { margin-top: 6px; }
+.review-status { color: var(--muted); }
+.review-result .choices button { min-height: 44px; }
+@media (max-width: 800px) {
+  .review-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .review-card { grid-template-columns: minmax(0, 1fr); }
+  .review-image { position: static; }
+  .review-image img { max-height: 60vh; }
+}
+@media (max-width: 480px) {
+  .review-filters { grid-template-columns: minmax(0, 1fr); }
+}

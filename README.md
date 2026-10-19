@@ -1,6 +1,6 @@
-# RFP RAG — 공공기관 제안요청서 질의응답 (PDF · HWP · 하이브리드 검색 · gpt-5-mini · RAGAS)
+# RFP RAG — Public institution RFP Q&A (PDF · HWP · Hybrid Search · GPT-6 LUNA · RAGAS)
 
-RFP 문서(PDF · HWP · HWPX)를 파싱해 청크로 나누고, BM25 + 임베딩(FAISS) 하이브리드 검색으로 찾은 청크를 근거로 `gpt-5-mini` 가 답합니다.
+RFP documents (PDF, HWP and HWPX) are parsed into chunks. BM25 and embedding-based FAISS search retrieve evidence for answers from `gpt-6-luna`.
 답은 네 가지(Retrieval · Generation · Grounding · End-to-End)로 나눠 채점합니다. 검색은 결정적 IR 지표, 핵심 사실은 문자열 일치, 근거 충실도와 최종 정답은 RAGAS 심판으로 확인해 나쁜 답이 어디서 왔는지 가립니다.
 
 작업은 다섯 파이프라인으로 나뉘고, 파이프라인마다 담당자 한 명 · 노트북 하나 · `rag/` 아래 폴더 하나가 있습니다.
@@ -38,6 +38,45 @@ UTF-8 CSV에 `파일명`, `발주기관` 열이 있어야 합니다. Excel이 �
 파일이 없으면 02 색인·검색과 질문 화면을 실행하기 전에 담당자에게 요청하세요.
 검색은 요구사항 코드 일치 청크를 먼저 담고, 거의 같은 본문을 제외하며,
 `retrieval.token_budget`(기본 2500)으로 본문 토큰 합을 제한합니다. 첫 청크는 예산을 넘어도 유지합니다.
+
+### 전체 사업의 수량 조건 검색
+
+Quantity conditions targeting projects (`사업`), without an agency or document-name prefix, filter the whole collection using indexed per-document values. Thresholds, ranges and max/min are supported, retaining ties. Examples: `사업 예산 1억원 이상인 사업들과, 그 사업들의 개요를 알려줘.`, `사업기간 6개월 이상인 사업`, `예산이 1억~5억인 사업`, `예산이 가장 큰 사업`. Numeric comparisons targeting requirements or vendor qualifications use the existing hybrid search; mentioning a project in the field name alone does not select the project filter. Routing uses the stored rewrite, or the original question when it is empty.
+
+The scope modifier `전체` is supported before the project target: `예산 1억원 이상인 전체 사업` has the same filter and default overview context as its unmodified form. The same modifier before requirements or vendors keeps hybrid retrieval, including questions mentioning a project later. This bounded rule does not interpret arbitrary restrictive modifiers.
+
+`이내`와 단독 `까지`는 `이하`와 같은 포함 상한입니다. `사업기간 6개월 이내인 사업`과 `사업기간 6개월까지인 사업`은 6개월을 포함하여 오름차순으로 모든 일치 사업을 반환합니다. `부터…까지`는 기존의 양 끝값 포함 범위를 유지합니다.
+
+수량 추출을 바꾸면 02에서 색인을 다시 만드세요. `artifacts/index/quantities.jsonl`은 수량마다 문서·청크·값·단위·정리한 항목명·원문 범위를 저장합니다. 서로 다른 항목명은 기존 로컬 Embedder로 한 번씩 임베딩합니다. 띄어 쓴 항목명과 표 머리글을 복원하고, 단위는 Kiwi 품사로 읽습니다. 한글 금액, 앞쪽 통화 기호, 확인된 단위 중복 오타는 로컬에서 정규화합니다. 색인·라우팅·필터에 LLM이나 API 호출을 추가하지 않습니다.
+
+Comparison expressions remain marked as bounds. Explicit labelled quantity ceilings, such as `사업예산: 230,000천원 이내` and `사업기간: 계약일로부터 24개월 이내`, can supply the document value; eligibility clauses, examples and explicit reference blocks cannot. Estimated prices (`추정가격`) remain excluded. Won values of 1 or less are unstated; valid one-month and one-item quantities remain usable. Parenthesized currency scales declare units, and counter-only labels such as `건당` cannot supply a budget field. Table-cell subjects take precedence over generic headers, and artificial project context is added only to monetary labels so unrelated periods retain their actual subjects.
+
+Declared column units and a preceding `(단위: 천원)` apply to numeric table cells: `사업예산(천원) | 부문` followed by `10 | 운영` yields 10,000 won. The metadata preserves both the numeric cell and its unit declaration spans; the context displays `10 (천원)`. Explicit cell units take precedence, and inherited units end with the table or chunk. Component row labels remain distinct from a shortened total row. Slash-separated parallel fields such as `과업비/과업기간: 100,000천원/5개월` assign each value to its corresponding field; unit-internal slashes such as `MB/s` remain intact.
+
+Optional boundary pipes, exterior whitespace and LF/CRLF endings do not add table columns. Interior empty cells retain their positions. A shortened total still uses the existing unique-declared-column recovery; this does not infer arbitrary merged cells or prefer totals over fields with higher similarity.
+
+Missing or textual data values leave the active column labels and units intact. A table schema starts with a label-only row, changes on another label-only unit declaration, and resets at the existing non-pipe table boundary or chunk end. Numeric key/value rows remain data. Adjacent unmarked header changes in delimiter-free text remain ambiguous; they require a declaration or a supported boundary.
+
+선언 단위 머리글에는 `1차 예산(천원)`이나 `2026년 1차 예산(천원)`처럼 숫자 수식어가 있어도 됩니다. 수식어 뒤의 항목명과 끝의 단위 선언을 확인하여 열 단위를 설치하며, 머리글의 차수·연도는 데이터 수량으로 내보내지 않습니다. 숫자 셀, 명시 단위 값, 괄호 약어가 섞인 본문은 데이터로 유지합니다.
+
+A Markdown delimiter row also identifies a declared-unit header as a whole. For example, `구분 | 2024년 | 예산(천원)` above `--- | --- | ---` installs the budget column's thousand-won scale even though the year occupies a separate cell. Header numbers are not emitted as data. Without that structural marker, the existing cell-level checks remain in force; a numbered data row cannot install a sibling declaration merely because it contains parentheses.
+
+Each delimiter cell must contain at least three hyphens, optionally surrounded by alignment colons. Single-hyphen missing-value rows and other shorter cells cannot install column units or suppress quantities in the preceding data row.
+
+02 builds FAISS, BM25 tokens, quantity rows, phrase names and phrase vectors in a private sibling directory. It publishes the completed directory only after quantity embedding and summary calculation succeed, restoring the previous directory if the publication rename raises. This rollback covers the five index artifacts; preprocessing chunk files are unchanged. It is not a concurrent-reader or process-crash transaction.
+
+Filtered hit metadata, candidate IDs and `context_chunk_ids` identify the selected value's source chunk. When the overview comes from another chunk, its filename, page or section, and chunk ID appear beside that excerpt in the body. Each project still contributes one hit with the existing schema; the overview's ID is recorded in that body rather than added to `context_chunk_ids`.
+
+| 설정 | 의미 |
+| --- | --- |
+| `retrieval.field_similarity` | 질문 항목명과 색인 항목명의 최소 코사인 유사도. 필요한 단위의 사용 가능한 행 중 유사도가 가장 높은 행을 문서 값으로 선택합니다. |
+| `retrieval.filter_token_budget` | 일치한 전체 문서의 본문 토큰 예산. 문서마다 균등하게 나누고 선택한 값의 원문과 실제 본문 발췌를 담습니다. |
+
+항목명 정리와 사업 문맥 보정 후 측정한 기준값은 0.66입니다. `과업비`는 약 .668, `집행한도액`은 .710, `보상한도액`은 .650이며 추정가격은 별도 정책으로 제외합니다. 숫자 없는 최대·최소와 단위 없는 배율 범위는 문서별로 가장 잘 맞는 사용 가능한 행 하나씩을 뽑아 가장 흔한 단위를 추론합니다. 같은 문서의 서식이 반복되어도 단위 집계를 늘리지 않습니다.
+
+Overview/default requests prefer substantive introduction, purpose and main-work excerpts, including a value-source chunk when it contains an introduction. Headings, TOCs and blank forms are skipped. Missing content is explicit. Context reports matching documents and `값 미표기·매칭 불가로 제외` counts separately from known values below the threshold. Values without an accepted matching field can still be omitted, and conflicting values within one document are not semantically reconciled. The 02 local-check cell prints values, fields and similarities without API calls. The [paid validation report](docs/quantity_filter_validation.md) records defects found in real answers and subsequent local corrections; it does not claim acceptance from table formatting alone.
+
+답변 모델은 승인된 출력 한도 8,192토큰에 추론을 포함합니다. 제공된 모든 사업을 원문 값·개요·출처가 있는 표로 나열합니다. [전체 견적서](docs/quantity_filter_estimate.md)에 모델 비교, 유료 검증 및 한계를 기록합니다.
 노트북은 VS Code · PyCharm · Jupyter 에서 `.venv` 커널로 **01 → 05 순서대로** 실행합니다.
 처음 실행할 때 임베딩 모델 KURE-v1(약 2.3GB)을 내려받습니다.
 
@@ -141,7 +180,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 | ③ 검증 | `03_validation.ipynb` | `rag/validation/validation.py` (골든 dev 분할 · 평가 질문 읽기 · 평가 항목 점검) | `artifacts/eval_set.jsonl` |
 | ④ 생성 | `04_generation.ipynb` | `rag/generation/generation.py` (검색 → 이전 대화를 참고해 답변 · 토큰 · 지연 시간) | `artifacts/answers.jsonl` |
 | ⑤ 평가 | `05_evaluation.ipynb` | `rag/evaluation/evaluation.py` (네 가지 평가) | `artifacts/retrieval.csv` · `generation.csv` · `grounding.csv` · `end_to_end.csv` |
-| ⑥ 질문 화면 | — | `frontend/server.py` (`answer_question` 을 감싸는 `POST /api/ask`), `frontend/web/` (React + Vite 화면), `frontend/start.cmd` · `frontend/start.command` (실행기); `frontend/ocr_select/` (OCR 이미지 라벨링 화면) | 브라우저 화면의 답변 · 출처, `artifacts/ocr_labels/labels.jsonl` |
+| ⑥ 질문 화면 | — | `frontend/server.py` (`answer_question` 을 감싸는 `POST /api/ask`), `frontend/web/` (React + Vite 화면), `frontend/start.cmd` · `frontend/start.command` (실행기); `frontend/ocr_select/` (OCR 이미지 라벨링 · OCR 결과 검토 화면) | 브라우저 화면의 답변 · 출처, `artifacts/ocr_labels/labels.jsonl` · `reviews.jsonl` |
 
 공통: `rag/config.py` (`config.yaml` · `.env` 읽기, jsonl 읽기/쓰기), `config.yaml` (모든 설정 — 파이프라인별 구역).
 
@@ -156,9 +195,11 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 
 예를 들어 02 설정 셀의 `DENSE_WEIGHT = cfg["retrieval"]["dense_weight"]`를 `DENSE_WEIGHT = 0.8`로 바꾸면 Dense 80%·BM25 20%로 검색합니다.
 설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
-기존 색인이 있어도 이번 변경 후에는 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 청킹 크기를 바꾸면 01부터 다시 실행합니다. 검색 설정 조절은 저장 rewrite가 있는 dev에서 아래 검색 전용 재실행으로 비교할 수 있습니다. 새 설정의 답변·심판 결과가 필요하면 04도 다시 실행합니다.
+기존 색인을 재사용할 때도 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 단, 토크나이저 지문이 없거나 현재 코드·사전·패키지와 다르면 검색 시 오류로 중단합니다. 이번 Kiwi 변경 전 색인은 재사용할 수 없으므로 02의 불러오기·설정 셀과 `1. 색인 만들기`의 `build_index` 셀을 실행한 뒤 04나 질문 화면을 실행하세요. 이 색인 재구축은 로컬 작업이며 유료 질문 재작성 예제 셀을 실행할 필요가 없습니다.
+`bm25_tokens.json`은 토큰과 지문을 함께 저장합니다. 지문은 줄바꿈을 정규화한 `indexing.py` 전체 코드, 생성 사전, `kiwipiepy`·모델 데이터·`hanja` 버전을 포함합니다. 따라서 이 모듈의 토큰 규칙 외 변경도 보수적으로 재구축을 요구합니다. 청킹 크기를 바꾸면 01부터 다시 실행합니다. 검색 설정 조절은 저장 rewrite가 있는 dev에서 아래 검색 전용 재실행으로 비교할 수 있습니다. 새 설정의 답변·심판 결과가 필요하면 04도 다시 실행합니다.
+Rolling back code after rebuilding also requires a coordinated index downgrade. Follow [the stopped-reader rollback procedure](docs/index_rollback.md): quarantine the newer index, rebuild and verify with the exact rollback revision/environment, then publish the complete directory before restarting any reader. A code-only rollback or extracting the new payload's token array is unsupported.
 모델을 바꾸면 같은 설정 셀의 `*_PRICES`도 해당 모델의 입력 · 캐시 입력 · 출력 단가(USD / 100만 토큰)로 맞추세요.
-기본 단가는 [OpenAI 공식 gpt-5-mini 문서](https://developers.openai.com/api/docs/models/gpt-5-mini)의 Standard 요금입니다. 비용은 설정한 단가에 따른 추정값이며 실제 청구서와는 다를 수 있습니다.
+재작성·답변 기본값은 [GPT-6 LUNA Standard 단가](https://developers.openai.com/api/docs/models/gpt-6-luna)를 사용하며 평가 심판은 [gpt-5-mini 단가](https://developers.openai.com/api/docs/models/gpt-5-mini)를 유지합니다. 설정 단가는 비용 추정용으로 실제 청구와 다를 수 있습니다. [수량 필터 전체 견적과 네 질문 비교](docs/quantity_filter_estimate.md)에 범위·실사용량·모델 선택의 한계를 기록합니다.
 
 02 검색 예제와 04 답변 생성은 검색 전에 `rag/retrieval/rewrite.py`로 질문을 재작성합니다.
 `config.yaml`의 `rewrite.model`, `rewrite.max_tokens`, `rewrite.reasoning_effort`가 이 API 호출에 적용됩니다.
@@ -175,7 +216,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 질문하면 04 와 같은 방식(재작성 → 하이브리드 검색 → 답변)으로 답하고, 답변 안에 `[n]` 번호를, 답변 옆 출처 칸에 출처 카드(파일 · 쪽)를 보여 줍니다.
 번호나 카드를 누르면 출처 칸에 그 청크 본문이 열립니다. 창 폭이 1024px 보다 좁으면 출처 카드는 답변 위에 나옵니다. 이어서 질문하면 이 탭의 직전 질문 · 답변 최대 10개를 함께 보냅니다.
 대화는 열린 탭에만 있고, `새 스레드` 를 누르거나 탭을 닫으면 사라집니다. 서버는 대화를 저장하지 않습니다.
-이전 대화는 질문 재작성과 답변 생성이 함께 참고합니다. 예를 들어 고려대학교 사업을 물은 뒤 "그 사업 예산은?" 이라고 물으면, 재작성이 이전 대화에서 기관 · 사업명을 채워 넣고 그 재작성 질문으로 기관을 골라 고려대학교 문서에서 검색합니다.
+이전 대화는 질문 재작성과 답변 생성이 함께 참고합니다. 예를 들어 가상의 예시기관 사업을 물은 뒤 "그 사업 예산은?" 이라고 물으면, 재작성이 이전 대화에서 기관 · 사업명을 채워 넣고 그 재작성 질문으로 그 기관의 문서에서 검색합니다.
 
 준비물
 - 위 설치대로 만든 `.venv` (`requirements.txt` 에 `fastapi` · `uvicorn` 포함)와 `.env` 의 `OPENAI_API_KEY`
@@ -209,20 +250,35 @@ RFP 문서에서 꺼낸 그림마다 OCR 이 필요한지 사람이 매기는 �
 WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카드(형식 · 문서 이름 · 위치)로 나오고 라벨을 매길 수 있습니다.
 `artifacts/ocr_selection.jsonl`(CRAFT 선별 기록)이 있으면 카드에 CRAFT 분류를 함께 보여 줍니다. 없어도 화면은 그대로 동작합니다.
 그림을 누르면 크게 보고(바깥 · Esc 로 닫기, ◀ ▶ · ← → 로 넘기기), `원본 보기` 를 누르면 문서 속 자리를 봅니다. PDF 는 새 탭에서 그 쪽으로 열리고, 쪽 번호가 없는 HWP 는 그림 앞뒤 본문을 보여 줍니다.
-라벨은 기록만 합니다. 01 전처리가 라벨을 읽어 OCR 대상을 고르게 하는 일은 전처리 담당의 별도 변경입니다.
+라벨은 위치별로 기록합니다. OCR 벤치마크는 합친 라벨의 1·2 위치를 사용하며, 01은 벤치마크가 저장한 전사 결과를 읽습니다.
 
 실행 — 저장소 최상위에서
-1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다. 문서 100개에 1분 남짓 걸립니다.
+1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다.
 2. 화면 열기: 질문 화면과 같은 실행기(`frontend\start.cmd` · `frontend/start.command`)를 더블클릭하고, 첫 화면 오른쪽 위 `설정` → `OCR 이미지 라벨링` 을 누릅니다 (`http://localhost:5173/ocr.html`). 실행기가 라벨링 화면의 API 서버(포트 8766)도 함께 띄웁니다.
-3. 묶음 고르기: 상단 바에서 맡은 `묶음 1` ~ `묶음 5` 를 누릅니다. 카드를 문서 이름 · 문서 안 위치 순서로 세워 다섯으로 고르게 자른 것이라(209 · 209 · 209 · 209 · 208곳), 같은 `data/rfp.zip` 으로 extract 했다면 누구 컴퓨터에서나 같은 묶음입니다. 고른 묶음은 주소(`?batch=2`)에 남아 새로고침해도 그대로입니다.
+3. 묶음 고르기: 상단 바에서 맡은 `묶음 1` ~ `묶음 5` 를 누릅니다. 카드를 문서 이름 · 문서 안 위치 순서로 세워 다섯으로 고르게 자르므로 같은 `data/rfp.zip` 으로 extract 했다면 누구 컴퓨터에서나 같은 묶음입니다. 고른 묶음은 주소(`?batch=2`)에 남아 새로고침해도 그대로입니다.
 4. 결과 내보내기: 다 매기면 상단 바의 `결과 내보내기` 를 눌러 `ocr_labels_batchN.jsonl` 을 내려받고, 합치는 사람에게 보냅니다. 저장 중인 라벨이 있으면 저장이 끝날 때까지 이 버튼이 잠기고, 진행 수는 저장을 마친 라벨만 셉니다.
 5. 합치기 (한 사람): 받은 파일을 모두 넘겨 `.venv\Scripts\python -m frontend.ocr_select.merge ocr_labels_batch1.jsonl ocr_labels_batch2.jsonl ...` 를 실행합니다. 묶음마다 매긴 수와 빠진 위치 수를 출력하고 `artifacts/ocr_labels/merged_labels.jsonl` 에 씁니다. 같은 위치를 두 사람이 매겼으면 `labelled_at` 이 늦은 라벨이 남습니다.
 
 결과 — `artifacts/ocr_labels/`
 - `images/<그림 해시>.<확장자>`: 꺼낸 그림. 같은 바이트의 그림은 파일 하나입니다. extract 를 다시 실행하면 이 폴더만 새로 만듭니다.
-- `images.jsonl`: 서로 다른 그림 한 줄씩 — `image_sha256`, `file`, `viewable`, `reason`, `occurrences`(위치마다 `doc_id` · `source` · `document_sha256` · `format`, HWP 는 `image_name` · `marker_start` · `repeated_occurrences`, PDF 는 `page` · `image_index` · `xref` · `bbox_points` — CRAFT 기록과 같은 이름). 문서에 들어 있지만 본문에 `[IMAGE]` 표시가 없는 HWP 그림(쪽에 놓이지 않은 그림 등)은 `marker_start` 가 `null` 이고, 01 전처리 · CRAFT 는 이 그림을 보지 않습니다.
+- `images.jsonl`: 서로 다른 그림 한 줄씩 — `image_sha256`, `file`, `viewable`, `reason`, `occurrences`(위치마다 `doc_id` · `source` · `document_sha256` · `format`, HWP 는 `image_name` · `marker_start` · `repeated_occurrences`, PDF 는 `page` · `image_index` · `xref` · `bbox_points` — CRAFT 기록과 같은 이름). 문서에 들어 있지만 본문에 `[IMAGE]` 표시가 없는 HWP 그림(쪽에 놓이지 않은 그림 등)은 `marker_start` 가 `null` 이고, 저장 OCR 결과가 있으면 01은 문서 끝에 설명을 넣습니다. CRAFT 선별 경로는 이 그림을 보지 않습니다.
 - `labels.jsonl`: 라벨을 누를 때마다 `{image_sha256, label, labelled_at, occurrences}` 한 줄을 덧붙입니다. `occurrences` 에는 매긴 위치 하나가 들어갑니다. 다시 매긴 라벨도 새 줄이고, 위치마다 마지막 줄이 지금 라벨입니다. extract 를 다시 실행해도 지우지 않습니다.
 - `merged_labels.jsonl`: 합친 결과. 매긴 위치마다 한 줄 — `labels.jsonl` 과 같은 모양에 `batch`(묶음 번호)가 더해집니다. 내려받는 `ocr_labels_batchN.jsonl` 도 같은 모양입니다.
+
+## OCR 결과 검토 화면
+
+기존 실행기(`frontend\start.cmd` · `frontend/start.command`)를 열고 질문 화면의 `설정` → `OCR 결과 검토`로 들어갑니다 (`http://localhost:5173/review.html`).
+저장된 캡션의 등장 위치를 그림 해시로 묶어 그림마다 한 장씩 검토합니다. 과거 논리 경로 `data/ocr_captions.jsonl`은 공통 로더가 무시된 `artifacts/local_inputs/ocr_captions.jsonl`로 연결합니다. 파일이 없으면 로컬 Git에서 복원하며, 얕은 clone에는 소유자가 제공한 비공개 묶음이 필요합니다. 아래 로컬 입력 복원 명령을 사용합니다.
+왼쪽에는 `artifacts/ocr_labels/images/`의 원본, 오른쪽에는 저장된 전사를 Markdown 표 · 제목 · 목록으로 표시합니다.
+엔진 · 이미지 유형과 모든 등장 위치(문서 이름, PDF 쪽 또는 HWP 그림 이름 · 표시 위치)를 함께 보여 줍니다.
+문서 · 이미지 유형 · 엔진 · 판정 상태(미검토 포함)로 거르고, 이전/다음 버튼 또는 ← → 키로 이동합니다.
+
+`OK` · `일부 틀림` · `틀림`을 누르면 `artifacts/ocr_labels/reviews.jsonl`에 `{image_sha256, transcription_sha256, verdict, reviewed_at}` 한 줄을 덧붙입니다.
+`transcription_sha256`은 전사 본문 · 엔진 · 이미지 유형의 해시입니다. `verdict` 값은 `ok` · `partly_wrong` · `wrong`이며, 같은 그림과 현재 전사에 매긴 마지막 판정이 표시됩니다.
+본문 · 엔진 · 이미지 유형이 바뀌면 미검토로 표시하고, 이전 결과를 띄운 화면에서 저장하면 새로고침 안내와 함께 거부합니다.
+전사 해시가 없는 이전 판정은 파일에 보존하지만 미검토로 표시하므로 다시 검토해야 합니다. 새로고침해도 같은 전사에 저장한 판정은 유지됩니다.
+전사는 읽기 전용이며 OCR · VLM · LLM을 호출하지 않습니다. 판정은 01 전처리나 청킹에 반영하지 않고 기존 라벨링 화면과 별도로 보관합니다.
+서버는 기존 8766을 그대로 쓰므로 추가 실행 명령은 필요 없습니다.
 
 ## API 사용량 자동 기록
 
@@ -310,8 +366,8 @@ display(coverage_table(scores))
 
 유료 확인은 모든 주제를 포함한 dev 30문항으로 제한합니다. 실행 전에 config 단가로 04 rewrite+answer와 05 두 심판의 견적을 표시하고 승인을 받은 뒤 실행합니다. 실제 비용은 해당 실행의 `api_usage.csv`로 계산합니다. 이전 per-evaluation 행의 질문당 심판 비용은 historical로 표시하며, 새 30문항과 질문·시점이 다르므로 동일 질문의 품질 비교로 해석하지 않습니다.
 
-[30문항 표본 보고서](docs/eval_ir_sample.md)에 표본 구성·라벨 제외율·비용 견적·historical 기준과 실제 실행 결과를 기록합니다.
-보고서의 유료 표본은 dev `ab49a65`의 대화 기반 재작성·재작성 query 라우팅 통합 전 기록입니다. 통합 후 검색 보존 검사는 별도 절에 기록했으며, 추가 유료 평가를 실행한 결과가 아닙니다.
+[개발 검색 평가 절차](docs/eval_ir_sample.md)를 따르며 표본 구성·제외율·견적·실측 결과는 무시된 로컬 보고서에 기록합니다.
+Aggregate measurements and reports may be published with their execution revision and conditions. Keep actual questions, answers, evidence text, and record-level exports private; do not copy them into a report.
 
 ### 최종 test 평가 — 설정을 고정한 뒤 한 번
 
@@ -330,12 +386,25 @@ write_jsonl(test_eval_set, ARTIFACTS / "test_eval_set.jsonl")
 고정한 02 설정으로 04를 한 번 실행하고, 05의 `ANSWERS`를 그 test 파일로 지정해 네 평가를 한 번 실행합니다.
 네 CSV와 제외율·사용량을 최종 결과로 보관합니다. test를 dev 검색 전용 재실행 셀에 넣지 않습니다.
 
-### 평가 데이터셋 (03 검증)
-- `eval/golden/dev.jsonl`: `golden_pipeline` 분할 `final6` 의 dev 분할(30개 문서 408문항). `final2` 의 다섯 주제 396문항을 그대로 두고, 질문이 묻는 문서가 dev 에 있는 새 두 유형 12문항을 더했습니다 — 답할 수 없음(`unanswerable` 8문항: 다른 사업 문서의 속성을 묻고 정답은 `제공된 문서에서 확인할 수 없습니다.`. 검증기가 묻는 문서 전체를 표는 머리글과 함께 읽고도 답하지 못한 질문만 남김)과 틀린 전제(`false_premise` 4문항: 질문의 금액 · 기간 · 개수 · 날짜가 문서와 다르고 정답이 문서의 값으로 바로잡음). 정답은 `answer`, 핵심 사실은 주제별로 뽑습니다 — 수치형은 값+단위(`180일`), 비교형은 고른 쪽(`MAR-006`), 조건형은 조건 문장, 답할 수 없음은 `확인할 수 없`, 틀린 전제는 문서의 값+단위(`12개월`), 표형은 정답 칸(` | ` 로 나뉜 칸은 각각), 다중 근거형은 정답이 언급한 근거 표 칸 값과 칸 속 글머리 항목(◦ · - · o 로 나뉜 줄)(근거 단위마다 따로 찾힘. 문서 3개 이상에서 행 첫 칸으로 되풀이되는 `요구사항 분류` 같은 항목 이름은 빼고, 맨 수는 정답의 단위도 받음 — `47|47개`). 표 칸 값이 없거나, 정답을 바꿔 말해 사실이 정답의 60% 를 못 덮거나, 묻는 항목의 값이 질문에도 다른 뜻으로 나와 질문이 준 값인지 가를 수 없는(분류 '기능' 과 질문의 '지도기반 기능') 다중 근거 24문항은 핵심 사실 없음으로 빠져 384문항이 남습니다.
-- `eval/golden/test.jsonl`: 같은 분할의 test 분할(68개 문서 943문항: `final2` 930문항 + 답할 수 없음 8 · 틀린 전제 5). 03은 검색·생성 없이 근거 라벨 품질만 보고하며 평가셋에는 넣지 않습니다. 설정 선택에 test 검색·생성 결과를 쓰지 않습니다. `manifest.json` 은 두 분할의 개수 · 해시입니다.
-- `eval/eval_questions.yaml`: 직접 만든 RFP 질문(멀티턴 대화 포함). 핵심 사실은 `must_include` (`'A|B'` = 둘 중 하나).
-- 질문 없음 · 중복 질문 · 대화의 후속 질문 · 정답 없음 · 핵심 사실 없음은 사유와 함께 제외합니다.
-- `eval/golden/` 은 `golden_pipeline/outputs/splits/final6/` 를 그대로 복사한 것입니다(`outputs/` 는 커밋되지 않음). 새 릴리스로 바꿀 때는 다시 복사합니다.
+### 로컬 평가 입력과 OCR 캡션 복원
+
+평가 자료와 저장된 OCR 캡션은 Git의 현재 트리에서 내려받지 않는다. 로컬 입력을 먼저 복원한다.
+
+```powershell
+.venv\Scripts\python -m rag.validation.local_inputs
+```
+
+기존 전체 checkout에는 추적 해제 직전의 로컬 Git 객체에서 복원한다. 기존 로컬 원본이 있으면 먼저 사용한다. 네트워크를 사용하지 않으며 원본을 삭제하거나 덮어쓰지 않는다. manifest의 dev/test 바이트 지문이 일치해야 새 파일을 만든다.
+
+새로운 얕은 clone이나 정리된 이력에는 소유자가 제공한 비공개 묶음이 필요하다.
+
+```powershell
+.venv\Scripts\python -m rag.validation.local_inputs --from-directory C:/private/evaluation-bundle
+```
+
+평가 묶음 구조는 `golden/dev.jsonl`, `golden/test.jsonl`, `golden/manifest.json`, `eval_questions.yaml`이다. OCR 캡션은 묶음 루트의 `ocr_captions.jsonl`로 제공한다. 같은 `--from-directory` 명령으로 평가 전용·OCR 전용·둘 다 포함한 묶음을 복원할 수 있다. 평가 파일이 하나라도 있으면 평가 묶음 전체와 manifest 검증이 필요하다. 파일은 무시된 `artifacts/local_inputs/`에 보관한다. 기존 config의 논리 경로는 공통 로더가 이 로컬 경로로 연결하며, OCR 소비자는 평가 릴리스 없이 캡션만 복원한다. test는 복원 중 바이트 지문만 검사하며 검색·튜닝하지 않는다. 필요한 자료가 없으면 복원 명령을 안내하고 멈춘다.
+
+주제별 핵심 사실은 숫자·단위, 비교 선택, 조건 또는 표 칸 값에서 얻는다. 다중 근거는 독립적으로 확인 가능한 사실을 사용한다. 부분 라벨과 누락은 사유별로 분리한다. Actual questions, answers, evidence, and dataset records remain private. Dataset counts, aggregate scores, latency, memory use, and reports discussing those measurements may be published without the underlying records.
 
 ### 골든 문서·청크 라벨 연결 (03)
 
@@ -356,7 +425,6 @@ v11 출력은 요소 메타데이터의 원본 `sha256`·`doc_id`가 현재 청�
 각 참조의 `element_id`와 `location`으로 v11 요소에서 본문을 복원합니다.
 글은 요소의 `[start:end]`, 표는 해당 행의 칸을 열 순서로 ` | `로 잇습니다.
 복원 본문이 context 블록 전체와 일치하는지 확인하고 해당 라벨을 모두 보관합니다.
-dev 716/716, test 1,639/1,639항목이 확인됐으며, 같은 본문이 여러 블록에 반복된 항목은 각각 14개·26개입니다.
 참조 순서와 블록 순서를 짝짓거나 근거 전체를 한 본문으로 합치지 않습니다.
 이 좌표는 골든 본문 복원에만 사용하며 현재 청크의 좌표로 옮기지 않습니다.
 
@@ -366,34 +434,7 @@ dev 716/716, test 1,639/1,639항목이 확인됐으며, 같은 본문이 여러 
 나머지는 일치 청크가 없으면 `not_found`, 둘 이상이면 `ambiguous`입니다.
 20자 하한은 짧은 수·코드·항목 이름만으로 청크를 확정하지 않으려는 고정 규칙이며 test 결과에 맞춰 조절하지 않았습니다.
 
-2026-10-16 로컬 현재 파서 출력(100문서·18,988청크)에서 측정한 결과입니다.
-v11 로더의 ID 보존은 코드상 유지되지만, 이 출력에서는 골든의 원래 청크 ID가 dev 0/716·test 0/1,639항목과 일치합니다.
-
-| 분할 | 원본 SHA → 현재 문서 (서로 다른 SHA) | 문서 연결 근거 항목 | 유일 청크 연결 근거 항목 | 질문: 전체 / 일부 / 없음 |
-| --- | --- | --- | --- | --- |
-| dev | 35/36 (97.22%) | 692/716 (96.65%) | 306/716 (42.74%) | 140 / 125 / 143 |
-| test | 69/70 (98.57%) | 1,620/1,639 (98.84%) | 708/1,639 (43.20%) | 328 / 255 / 360 |
-
-| 분할 | 주제 | 근거 항목 | 청크 연결 | doc_unmapped | not_found | ambiguous | too_short | 질문: 전체 / 일부 / 없음 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| dev | comparison | 137 | 61 (44.53%) | 7 | 3 | 5 | 61 | 9 / 31 / 16 |
-| dev | multi_hop | 190 | 48 (25.26%) | 8 | 14 | 16 | 104 | 5 / 30 / 36 |
-| test | comparison | 291 | 142 (48.80%) | 6 | 21 | 13 | 109 | 31 / 54 / 43 |
-| test | multi_hop | 463 | 141 (30.45%) | 4 | 34 | 16 | 268 | 21 / 71 / 84 |
-
-전체 dev 실패는 `doc_unmapped` 24 · `not_found` 64 · `ambiguous` 32 · `too_short` 290항목,
-test 실패는 각각 19 · 188 · 50 · 674항목입니다. 문서 미연결 목록은 다음과 같습니다.
-
-| 분할 | 골든 원본 문서 | doc_sha |
-| --- | --- | --- |
-| dev | 한국원자력연구원_한국원자력연구원 선량평가시스템 고도화.hwp | `3b643668220fa1ccaec14adea446bb8b7c604c46dfd9b9b428936e6fb06178db` |
-| test | 중앙선거관리위원회_2025년도 행정정보시스템 위탁운영사업.hwp | `73abf8e4f78c36a19e2345a3e2a0be5afd0e8a5a1d27363f665e701b7ecade8d` |
-
-질문 대상 문서는 dev 30개·test 68개지만 `unanswerable`이 다른 사업의 근거도 인용하므로 인용 근거 SHA는 36개·70개입니다.
-그 인용 근거의 라벨이 질문 대상 문서의 정답 근거라는 뜻은 아닙니다.
-라벨 품질 집계는 핵심 사실 점검에서 빠지는 질문까지 포함한 전체 골든 분할을 기준으로 합니다.
-전체 주제별 결과는 03과 `artifacts/golden_mapping.csv`, 문서별 결과는 `golden_documents.csv`,
-블록 대응·ID 감사는 `golden_correspondence.csv`에서 확인합니다.
+문서·청크 매핑 집계와 제외 사유는 실행 후 로컬 보고서에서 확인한다.
 03에는 seed 42로 고른 dev 근거 최대 30쌍의 골든 본문과 연결한 청크 전체 본문이 나란히 표시됩니다.
 라벨된 근거가 30쌍 미만이면 전부 표시하며 0쌍이면 열 이름이 있는 빈 표를 표시합니다. 미연결 사유와 집계는 그대로 저장합니다.
 이 표들은 03을 실행할 때 확인합니다. 저장소의 노트북은 실행 횟수와 출력을 비워 커밋하며,
@@ -402,13 +443,27 @@ test 실패는 각각 19 · 188 · 50 · 674항목입니다. 문서 미연결 �
 입력 경로 회귀 검사는 이전 산출물이 없는 임시 폴더에서 실제 v11 로더 또는 PDF 파서·청킹·저장을 거쳐
 03의 보고·평가셋 저장·표본 셀을 실행합니다. v11, 원본 폴더, 단일 파일, ZIP, 중첩 ZIP, ZIP을 포함한 폴더의 여섯 경로를 확인합니다.
 
-`eval_set.jsonl`에는 기존 점검을 통과한 dev 384문항과 YAML 1문항이 저장됩니다.
+`eval_set.jsonl`에는 점검을 통과한 개발 항목을 저장한다.
 골든 항목은 현재 `doc_ids`와 각 `evidence`의 `text`, `doc_id`, 유일한 `chunk_id` 또는 `reason`을 가지며,
 원래 ID는 `golden_chunk_id`에 남깁니다. YAML 항목은 `evidence_source = "none"`, `doc_ids = []`, `evidence = []`입니다.
 이 라벨은 03이 고정해 저장하며, 05는 연결 규칙을 바꾸지 않고 해당 라벨 수준의 IR 지표를 계산합니다.
 
-## OCR (선택, 기본 꺼짐)
+## OCR (저장 결과와 선택적 Vision 호출)
+
+그림 유형(table · text · diagram)마다 기준 이미지에서 측정한 품질과 이미지당 비용으로 OCR 엔진을 고릅니다.
+허용 엔진은 OpenAI API, OpenAI 호환 엔드포인트를 쓰는 Gemini API,
+로컬 Windows PC의 별도 환경에서 실행하는 PaddleOCR-VL-1.5입니다.
+유료 OCR 호출은 모두 `rag/usage.py`의 `record_usage`로 비용을 기록하고, PaddleOCR는 이미지당 실행 시간을 기록합니다.
+벤치마크 첫 유료 호출과 전체 실행 전에는 모델별 토큰·단가 예상액을 보여 주고 승인을 기다립니다.
+실측 보고서와 엔진 선택 기록은 무시된 artifacts에만 보관한다. [OCR 비교 절차](docs/ocr_benchmark.md)를 따른다.
+
+`OCR = False`이면 01은 `config.yaml`의 `paths.ocr_captions`(기본 논리 경로 `data/ocr_captions.jsonl`)를 공통 로더로 복원·해석한 뒤 그림 위치에 `[그림/도표 설명] …` 레코드를 넣습니다. 이 결과를 읽는 데 API 키나 호출은 필요 없습니다.
+HWP 본문 표시가 없는 그림은 문서 끝에, PDF 그림은 해당 쪽의 이미지 위 본문 다음에 들어갑니다.
+기본 원본 입력(`PREPROCESSED = None`)에서는 설명 청크도 해당 위치에 넣고, 그림 경계에서 나뉜 짧은 본문도 유지합니다.
+기본 캡션을 복원할 수 없으면 안내와 함께 멈추므로 설명이 조용히 빠지지 않습니다. 별도로 지정한 사용자 캡션 경로와 `OCR = True` 경로는 자동 복원 대상이 아닙니다. 01의 위치별 청킹도 복원 후의 실제 파일을 기준으로 결정합니다.
+
 `01_preprocessing.ipynb` 의 `OCR = False` 를 `True` 로 바꾸면, 문서 속 그림을 LangChain `LLMImageBlobParser` + 선택한 OpenAI 비전 모델(`OCR_MODEL`, `.env` 의 `OPENAI_API_KEY`)로 글로 바꿔 청크에 넣습니다.
+`True`에서는 저장 캡션 파일이 있어도 읽지 않고, 기존 Vision OCR·CRAFT 설정과 청크 분할 방식을 사용합니다.
 OCR 모델·추론 강도·출력/추론 토큰 한도의 기본값은 `config.yaml`의 `ocr` 구역에서 읽으며 01의 설정 셀에서 바꿀 수 있습니다.
 여러 쪽에 반복되는 그림(로고 · 장식, `parsing.max_repeat_image_pages` 쪽 이상)은 청크에 넣지 않습니다 — HWP 는 아예 보내지 않고, PDF 는 설명을 받은 뒤 반복된 설명을 뺍니다.
 `False` 면 그림은 API 로 가지 않습니다.
@@ -476,7 +531,7 @@ CRAFT 탐지 결과는 `artifacts/ocr_detector/`에 저장합니다. 이미지 r
 
 #### 6. 검증 범위와 주의사항
 
-최신 dev 기반 로컬 전체 테스트 **453/453 PASS**, Ruff 검사 통과를 확인했습니다. 외부 API를 차단하고 Vision을 Mock으로 대체한 테스트입니다. 기존 50개 판정은 안전한 전달 동작을 확인하는 자료로 재사용했으며, 신규 OCR이나 실제 Vision 정확도 평가를 수행하지 않았습니다.
+외부 API를 차단한 합성 테스트로 상태별 안전한 전달과 검토 보존을 검사한다. 실제 이미지나 과거 분류 식별자를 fixture로 사용하지 않는다.
 
 CRAFT는 사진·로고·표의 의미를 판단하는 분류기가 아닙니다. 작은 글자·스타일 문자·체크기호를 놓칠 수 있고, 일반 사진의 분류 성능은 아직 미검증입니다. **OCR 정확도 향상이나 비용 절감을 검증한 결과가 아니며, 실제 운영 환경 검증도 완료되지 않았습니다.** 검토 큐를 승인된 검색 데이터로 사용하지 마세요.
 
@@ -486,7 +541,7 @@ CRAFT는 사진·로고·표의 의미를 판단하는 분류기가 아닙니다
 - `langchain-community` 는 **0.3.31 로 고정**합니다. ragas 0.4.3 이 community 0.4 에서 사라진 모듈을 import 하기 때문입니다.
 - langchain-community 0.3.31 의 `PyMuPDFParser` 는 그림을 저장하기 전에 빈 버퍼를 검사하는 버그로 모든 그림을 건너뜁니다. `parsing.py` 가 OCR 을 켤 때만 이 부분을 패치합니다.
 - `hwp-hwpx-parser` 의 하이퍼링크 컨트롤 무한 루프 버그도 `parsing.py` 가 패치합니다.
-- `gpt-5-mini` 는 추론 모델이라 `max_tokens`(= `max_completion_tokens`)에 추론 토큰이 포함됩니다. 답이 비면 값을 늘리거나 `reasoning_effort` 를 낮추세요.
+- GPT-6 LUNA and gpt-5-mini include reasoning tokens in `max_tokens` (`max_completion_tokens`). If an answer is empty, inspect token usage before changing the limit or reasoning effort.
 - 배포용(암호화) HWP 는 본문을 읽을 수 없어 건너뜁니다. 한글에서 일반 `.hwp` · `.hwpx` · PDF 로 저장해 넣으세요.
 - HWP 는 쪽 번호가 없어 HWP 청크의 출처는 섹션 경로로 표시됩니다.
 
@@ -509,8 +564,8 @@ ruff check .                              # 함수 복잡도 (C901 ≤ 8, PLR091
 01_preprocessing.ipynb … 05_evaluation.ipynb   파이프라인별 노트북 (설정 · 호출 · 표만)
 config.yaml                설정 (① 전처리 ~ ⑤ 평가 구역)
 eval/
-  golden/                  골든 분할 final6 복사본 — dev.jsonl (03 평가셋) · test.jsonl (03은 라벨 품질만 확인) · manifest.json
-  eval_questions.yaml      평가 질문 세트 (질문 · 정답 · must_include)
+  golden/                  무시된 과거 논리 경로 — dev.jsonl (03 평가셋) · test.jsonl (03은 라벨 품질만 확인) · manifest.json
+  eval_questions.yaml      무시된 과거 논리 경로; 실제 입력은 artifacts/local_inputs/
 rag/
   config.py                config.yaml · .env 읽기, jsonl 읽기/쓰기
   preprocessing/           ① parsing.py · chunking.py
@@ -518,13 +573,12 @@ rag/
   validation/              ③ validation.py
   generation/              ④ generation.py
   evaluation/              ⑤ evaluation.py
-golden_pipeline/           ③ 주제별 골든 데이터 스키마 · 상태 · 저장 규약 · v11 근거 어댑터 (테스트는 tests/golden/)
+golden_pipeline/           ③ 주제별 골든 데이터 스키마 · 상태 · 저장 규약 · v12 근거 어댑터 (테스트는 tests/golden/)
 frontend/                  ⑥ 질문 화면
   server.py                POST /api/ask — answer_question 을 감싸는 FastAPI
-  web/                     React + Vite 화면 (/api 는 server.py, /ocr-api 는 ocr_select/server.py 로 프록시; ocr.html 은 라벨링 화면)
+  web/                     React + Vite 화면 (/api 는 server.py, /ocr-api 는 ocr_select/server.py 로 프록시; ocr.html 은 라벨링, review.html 은 저장 OCR 결과 검토)
   start.cmd · start.command  Windows · macOS 실행기
   ocr_select/              OCR 이미지 라벨링 — extract.py (그림 꺼내기) · server.py (API, 위 실행기가 8766 에 띄움) · merge.py (묶음 결과 합치기)
 tests/test_smoke.py        게이트: rag/ 모든 모듈 import
 artifacts/                 (커밋 안 함) 노트북 사이에 주고받는 파일
 ```
-

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+from hashlib import sha256
+from importlib.metadata import version
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import faiss
 import hanja
@@ -13,6 +16,9 @@ import torch
 from kiwipiepy import Kiwi
 from langchain_core.embeddings import Embeddings
 from sentence_transformers import SentenceTransformer
+
+from ..config import write_jsonl
+from .quantity_metadata import quantity_rows
 
 
 class Embedder(Embeddings):
@@ -42,6 +48,10 @@ class Embedder(Embeddings):
         """임베딩 모델 토크나이저 기준 토큰 수 (특수 토큰 포함 — max_seq_length 와 같은 기준)"""
         return [len(ids) for ids in self._st.tokenizer(texts)["input_ids"]]
 
+    def truncate(self, text: str, budget: int) -> str:
+        ids = self._st.tokenizer.encode(text, add_special_tokens=False)
+        return self._st.tokenizer.decode(ids[:max(0, budget)], skip_special_tokens=True)
+
 
 # 형태소 분석으로 쪼개지는 요구사항 코드를 한 토큰으로도 색인한다
 _CODE_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,5})-?(\d{2,4})(?![A-Za-z0-9])")
@@ -67,20 +77,30 @@ def _canonical(text: str) -> str:
 
 _KIWI_KEEP = ("NNG", "NNP", "NNB", "NR", "NP", "VV", "VA", "XR", "SL", "SH", "SN", "MAG")
 _NEGATION = {("않", "VX"), ("아니", "VCN")}
+_NOISE = {("및", "MAG"), ("하", "VV"), ("되", "VV"), ("있", "VV"), ("등", "NNB"), ("수", "NNB")}
 
 
 def _is_kept(tok) -> bool:
-    return tok.tag.startswith(_KIWI_KEEP) or (tok.form, tok.tag) in _NEGATION
+    return (tok.form, tok.tag) not in _NOISE and (
+        tok.tag.startswith(_KIWI_KEEP) or (tok.form, tok.tag) in _NEGATION)
 
 
 class KiwiTokenizer:
     """한국어 형태소 기반 BM25 토크나이저. 한자 독음과 요구사항 코드도 색인하며 부정어를 남긴다."""
 
     def __init__(self):
+        dictionary = Path(__file__).with_name("kiwi_user_words.json").read_bytes()
+        # 규칙 변경 누락을 막으려고 이 모듈 전체를 지문에 넣는다. 줄바꿈 방식은 무시한다.
+        source = Path(__file__).read_text(encoding="utf-8").encode("utf-8")
+        self.fingerprint = {"source_sha256": sha256(source).hexdigest(),
+                            "dictionary_sha256": sha256(dictionary).hexdigest(),
+                            **{name: version(name) for name in ("kiwipiepy", "kiwipiepy_model", "hanja")}}
         # num_workers=-1: 모든 CPU 코어 사용 (batch 에서 여러 청크를 병렬 분석). 단일 문장(질문)은 그대로 1스레드
         self.kiwi = Kiwi(num_workers=-1)
         for word in _USER_WORDS:
             self.kiwi.add_user_word(word.replace(" ", ""), "NNP", 1.0)
+        for word in json.loads(dictionary):
+            self.kiwi.add_user_word(word, "NNP", 1.0)
 
     def _keep(self, toks, text: str) -> list[str]:
         out = []
@@ -102,17 +122,50 @@ class KiwiTokenizer:
 
 
 def build_index(chunks: list[dict], cfg: dict, out_dir: Path) -> dict:
-    """청크 → out_dir/faiss.index (정확 검색 IndexFlatIP) + out_dir/bm25_tokens.json (청크별 형태소)"""
-    out_dir.mkdir(parents=True, exist_ok=True)
+    """Build coupled artifacts privately and restore the old directory if publication fails."""
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=f".{out_dir.name}-", dir=out_dir.parent) as folder:
+        workspace = Path(folder)
+        staged = workspace / "next"
+        staged.mkdir()
+        result = _build_index(chunks, cfg, staged)
+        _publish_index(staged, out_dir, workspace / "previous")
+    return result
+
+
+def _publish_index(staged, out_dir, previous):
+    if out_dir.exists():
+        out_dir.rename(previous)
+    try:
+        staged.rename(out_dir)
+    except BaseException:
+        if previous.exists():
+            previous.rename(out_dir)
+        raise
+
+
+def _build_index(chunks, cfg, out_dir):
     texts = [c["text"] for c in chunks]
     embedder = Embedder(cfg["embedding"])
     vectors = embedder.encode(texts, progress=True)
     index = faiss.IndexFlatIP(vectors.shape[1])
     index.add(vectors)
     faiss.write_index(index, str(out_dir / "faiss.index"))
-    tokens = KiwiTokenizer().batch(texts)
-    (out_dir / "bm25_tokens.json").write_text(json.dumps(tokens, ensure_ascii=False), encoding="utf-8")
+    tokenizer = KiwiTokenizer()
+    tokens = tokenizer.batch(texts)
+    payload = {"tokenizer": tokenizer.fingerprint, "tokens": tokens}
+    (out_dir / "bm25_tokens.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    build_quantity_index(chunks, embedder, out_dir)
     max_len = int(cfg["embedding"]["max_seq_length"])
     return {"청크": len(chunks), "벡터 차원": int(vectors.shape[1]), "BM25 토큰": sum(map(len, tokens)),
             "BM25 어휘": len({w for t in tokens for w in t}),
             f"임베딩에서 잘린 청크(>{max_len} 토큰)": sum(n > max_len for n in embedder.token_counts(texts))}
+
+
+def build_quantity_index(chunks: list[dict], embedder: Embedder, out_dir: Path):
+    rows = quantity_rows(chunks)
+    phrases = list(dict.fromkeys(r["phrase"] for r in rows))
+    vectors = embedder.encode(phrases, progress=True) if phrases else np.empty((0, 0), dtype=np.float32)
+    write_jsonl(rows, out_dir / "quantities.jsonl")
+    (out_dir / "quantity_phrases.json").write_text(json.dumps(phrases, ensure_ascii=False), encoding="utf-8")
+    np.save(out_dir / "quantity_vectors.npy", vectors)

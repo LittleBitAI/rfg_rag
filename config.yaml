@@ -5,6 +5,7 @@
 paths:
   org_csv: data/data_list.csv   # 담당자가 제공한 파일명 · 발주 기관 목록 (필수)
   input: data/rfp.zip           # ZIP 파일 또는 폴더 (PDF / HWP / HWPX)
+  ocr_captions: data/ocr_captions.jsonl  # 유형별 벤치마크 승자의 저장된 OCR 결과
 
 # ── ① 전처리 (01_preprocessing) ──
 parsing:
@@ -27,6 +28,14 @@ ocr:
   reasoning_effort: low
   usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
 
+ocr_benchmark:
+  # https://developers.openai.com/api/docs/pricing — 2026-10-16, Standard, short context
+  gpt-6-luna:
+    usd_per_1m_tokens: [0.10, 0.01, 0.50]
+  # https://ai.google.dev/gemini-api/docs/pricing#gemini-3.5-flash-lite — 2026-10-16, Standard
+  gemini-3.5-flash-lite:
+    usd_per_1m_tokens: [0.30, 0.03, 2.50]
+
 chunking:
   chunk_size: 700               # 글자 단위
   overlap_ratio: 0.2            # 겹침 = chunk_size × overlap_ratio
@@ -44,15 +53,17 @@ bm25:
   b: 0.75
 
 retrieval:
+  field_similarity: 0.66        # 수량 필드 후보의 코사인 유사도 임계값; 실측 근거는 로컬에 보관
+  filter_token_budget: 16000    # 수량 필터의 모든 일치 문서에 균등 배분
   token_budget: 2500           # 검색 결과 본문 토큰 예산 (임베딩 토크나이저 기준)
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
 
 rewrite:
-  model: gpt-5-mini
+  model: gpt-6-luna
   max_tokens: 2048              # 질문 재작성의 출력·추론 토큰 한도
   reasoning_effort: low
-  usd_per_1m_tokens: [0.25, 0.025, 2.00]
+  usd_per_1m_tokens: [0.10, 0.01, 0.50]
 
 # ── ③ 검증 (03_validation) ──
 validation:
@@ -61,10 +72,10 @@ validation:
 
 # ── ④ 생성 (04_generation) ──
 llm:
-  model: gpt-5-mini
-  max_tokens: 2048              # max_completion_tokens (reasoning 토큰 포함!)
+  model: gpt-6-luna
+  max_tokens: 8192              # 전체 사업 표와 추론 토큰을 함께 담는 max_completion_tokens
   reasoning_effort: low         # minimal | low | medium | high
-  usd_per_1m_tokens: [0.25, 0.025, 2.00]  # 입력 · 캐시 입력 · 출력 단가 (USD / 100만 토큰)
+  usd_per_1m_tokens: [0.10, 0.01, 0.50]  # Input, cached input, output: USD per million tokens.
 
 # ── ⑤ 평가 (05_evaluation) ──
 evaluation:

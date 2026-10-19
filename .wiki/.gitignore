@@ -1,3 +1,6 @@
 trajectory.jsonl
 /.sync
 /corpus.json
+/graph.json
+/decisions/
+/memory/
