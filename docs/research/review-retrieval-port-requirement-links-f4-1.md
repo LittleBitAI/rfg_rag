@@ -106,7 +106,7 @@ Run the graph generator once with the worktree path and once with the main check
 
 ## Result
 
-pending — the fix records what it observed here, with the tests and the commit.
+Observed, not verified: this is still a draft. Before the fix, `repo_graph.build` from the hub (wiki-agent `e821745`) gave `"repo": "retrieval-port-requirement-links"` from this worktree and `"repo": "rfg_rag"` from the main checkout. `git rev-parse --path-format=absolute --git-common-dir` resolved to a parent named `rfg_rag` from both. This reproduced F4. Change (1) landed in the hub, not in this repository: wiki-agent `a011636` (#177, merged into its main) adds `name_of()`, which takes the name from the common dir, and makes `decisions_of()` count only published records. With it, `build()` from both paths gave `"repo": "rfg_rag"` and 0 decisions. The count is 0 because `.wiki/decisions/` is ignored here, so no record is published; the main checkout gives 0 as well. `repo_graph.write` run in this worktree then produced a `.wiki/graph.json` whose only difference from the old refresh at `925bdf0` is line 3 (worktree name → `rfg_rag`). That file is committed with this page, so the next merge refresh should leave it unchanged. Change (2), untracking the graph, was not made: hub `maintenance.py` stages generated files with `git add -f`, so the existing ignore rule would not stop them coming back. The full merge-maintenance refresh is server-owned and was not rerun here. No repository tests changed; the check was the in-memory build above.
 
 ## Unresolved limits
 

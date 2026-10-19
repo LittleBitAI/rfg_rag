@@ -1,6 +1,6 @@
 {
  "ns": "repo",
- "repo": "retrieval-port-requirement-links",
+ "repo": "rfg_rag",
  "nodes_from": ".wiki/corpus.json",
  "edges": [
   {
