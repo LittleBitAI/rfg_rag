@@ -26,7 +26,7 @@ def test_bundles_use_only_eligible_units_once_and_carry_their_context(evidence_r
     assert unit_ids(plan, "condition") == ["u6", "u8"]
     assert plan["planned"] == {"numeric": 1, "table": 1, "condition": 1, "comparison": 0}
     assert plan["coverage"] == {"numeric": {DOC_1: 1}, "table": {DOC_1: 1}, "condition": {DOC_2: 1}}
-    assert plan["v11_manifest_sha256"] == storage._sha256(evidence_run / "manifest.json")
+    assert plan["package_manifest_sha256"] == storage._sha256(evidence_run / "manifest.json")
     assert plan["topic_specs"]["numeric"] == storage._sha256(storage.CONFIGS / "topics" / "numeric.json")
 
     table = next(b for b in plan["bundles"] if b["topic"] == "table")
@@ -153,10 +153,10 @@ def test_table_of_contents_text_is_recognised(text, toc):
 
 
 def test_package_that_differs_from_the_judged_one_stops_the_plan(evidence_run):
-    elements = evidence_run / "final_elements.jsonl"
-    elements.write_text(elements.read_text(encoding="utf-8").replace("130,000,000", "150,000,000"), encoding="utf-8")
+    chunks = evidence_run / evidence.CHUNKS
+    chunks.write_text(chunks.read_text(encoding="utf-8").replace("c-u1", "c-u0"), encoding="utf-8")
 
-    with pytest.raises(evidence.PackageMismatch, match="final_elements.jsonl"):
+    with pytest.raises(evidence.PackageMismatch, match="chunks.jsonl"):
         make_plan("p1", "ev1", COUNTS, 2000, package=evidence_run)
 
 

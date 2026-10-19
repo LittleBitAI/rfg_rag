@@ -11,6 +11,7 @@ import json
 import re
 import unicodedata
 from collections import Counter, deque
+from itertools import takewhile
 from decimal import Decimal
 from functools import lru_cache
 
@@ -207,7 +208,7 @@ def _documents(topic, planned, bundles, candidates):
     run_dir = storage._child(storage.OUTPUTS / "evidence", planned["evidence_run"])
     plan._check_package(evidence.PACKAGE, storage._read_json(run_dir / "manifest.json")["pinned_sha256"])
     asked = {item["candidate_id"]: bundles[item["bundle_id"]]["doc_sha"] for item in candidates}
-    found = plan.document_units(run_dir, evidence.PACKAGE, set(asked.values()))
+    found = plan.document_units(run_dir, set(asked.values()))
     return {candidate_id: found[doc] for candidate_id, doc in asked.items()}
 
 
@@ -632,8 +633,10 @@ def _topic_rule(item, question, units):
 
 
 def _single_unit_verdict(item, units, full, ask, judge):
-    """multi_hop 은 근거 단위를 하나씩만 줬을 때 어느 것으로도 독립 답이 나오지 않아야 한다 (머리글 행은 그 표 행에 붙여 준다)."""
+    """multi_hop 은 근거 단위를 하나씩만 줬을 때 어느 것으로도 독립 답이 나오지 않아야 한다 (표 중간 행에는 머리글 줄을 붙여 준다)."""
     for unit, asked in _single_units(units):
+        if asked is None:
+            return "rejected", f"multi_hop 판정 불가: 근거 {unit['label']} 의 표는 앞에 제목이 붙어 머리글 줄을 가릴 수 없습니다"
         single, error = ask(item["question"], asked)
         if not error and single["answerable"]:
             same, error = _settled(item["question"], units, full["answer"], single["answer"], judge)
@@ -732,12 +735,11 @@ def document_batches(document):
     """대상 문서의 근거 단위를 문서 차례대로 DOCUMENT_BATCH_CHARS 자 안팎씩 나눈다. 라벨(E1 …)은 문서 전체에서 이어 붙인다.
 
     검증기는 묶음마다 따로 읽으므로, 묶음 하나가 홀로 읽혀야 한다.
-    한 표의 행은 한 묶음에 넣고, 한 묶음보다 큰 표는 행 경계에서 나누어 이어지는 묶음마다 그 표의 머리글(0행)을 다시 준다.
+    한 표의 청크는 한 묶음에 넣고, 한 묶음보다 큰 표는 청크 경계에서 나누어 이어지는 묶음마다 그 표의 머리글(0행) 청크를 다시 준다.
     새 묶음은 앞 묶음 끝 DOCUMENT_OVERLAP_CHARS 자를 다시 받는다. 다시 주는 단위는 처음의 라벨을 그대로 쓴다.
-    그렇게 다시 받은 표 행은 머리글 없이 올 수 있지만, 그 행은 앞 묶음에서 머리글과 함께 이미 읽혔다.
-    원본 그리드는 셀이 단위라, 먼저 행 띠(_grid_bands)로 묶어 행 이름 칸과 값 칸이 한 단위가 되게 한다.
+    그렇게 다시 받은 표 청크는 머리글 없이 올 수 있지만, 그 청크는 앞 묶음에서 머리글과 함께 이미 읽혔다.
     """
-    labelled = [{**unit, "label": f"E{n}"} for n, unit in enumerate(_grid_bands(document), 1)]
+    labelled = [{**unit, "label": f"E{n}"} for n, unit in enumerate(document, 1)]
     batches, size, fresh = [[]], 0, 0
     for group in _table_groups(labelled):
         headers = [unit for unit in group if _row(unit) == 0]
@@ -755,43 +757,12 @@ def document_batches(document):
 
 
 def _table_groups(units):
-    """단위를 문서 차례대로 두되, 한 표의 행은 처음 나온 자리에 모은다. 논리 표는 요소, 원본 그리드는 stream · control 이 한 표다.
-
-    논리 표에 이어진 원본 그리드 셀은 그 표의 element_id 를 갖지만 (evidence.grid_units), 행 번호가 다른 따로의 표다.
-    """
+    """단위를 문서 차례대로 두되, 한 표의 청크는 처음 나온 자리에 모은다. 표는 청크의 첫 표 요소로 가린다."""
     groups = {}
     for unit in units:
-        if unit["unit_id"].startswith("grid:"):
-            key = unit["unit_id"].rsplit(":", 2)[0]
-        elif unit["location"]["kind"] == "table":
-            key = unit["element_id"]
-        else:
-            key = unit["unit_id"]
+        key = unit["element_id"] if unit["location"]["kind"] == "table" else unit["unit_id"]
         groups.setdefault(key, []).append(unit)
     return list(groups.values())
-
-
-def _grid_bands(units):
-    """원본 그리드마다 셀을 행 띠 단위로 바꾼다. 띠는 세로로 합친 칸(rowspan)이 걸친 행들이다.
-
-    셀마다 따로 두면 묶음 경계가 행 이름 칸('A시스템')과 그 값 칸('1년') 사이에 떨어질 수 있었다.
-    띠의 글은 한 행의 칸을 ' | ' 로, 행을 줄바꿈으로 잇는다. 띠는 첫 셀의 unit_id · location 을 쓰므로 0행 띠가 머리글이다.
-    """
-    banded = []
-    for group in _table_groups(units):
-        if not group[0]["unit_id"].startswith("grid:"):
-            banded += group
-            continue
-        bands = []
-        for cell in sorted(group, key=lambda unit: (unit["location"]["row"], int(unit["unit_id"].rsplit(":", 1)[1]))):
-            row = cell["location"]["row"]
-            if not bands or row > bands[-1]["end"]:
-                bands.append({"first": cell, "end": row, "rows": {}})
-            bands[-1]["end"] = max(bands[-1]["end"], row + cell["rowspan"] - 1)
-            bands[-1]["rows"].setdefault(row, []).append(cell["text"].strip())
-        banded += [{**band["first"], "text": "\n".join(" | ".join(texts) for texts in band["rows"].values())}
-                   for band in bands]
-    return banded
 
 
 def _row(unit):
@@ -856,19 +827,31 @@ DOCUMENT_TOPICS = ("unanswerable", "false_premise")
 
 
 def _cell(units, row, column):
+    """인용한 표의 머리글에서 열 이름 column 의 자리를 찾고, 그 아래 행 중 행 이름 row 가 든 행의 그 칸.
+
+    표 청크는 행을 줄로, 칸을 ' | ' 로 잇는다. 한 표의 청크들은 머리글 청크부터 차례대로 이어 읽는다.
+    ponytail: 칸 안 줄바꿈으로 이어진 줄은 칸 수가 모자라 행으로 읽히지 않는다. 그 칸을 묻는 질문은 거절된다.
+    """
     tables = {}
     for unit in units:
         if plan._table_row(unit) is not None:
-            tables.setdefault(unit["ref"]["element_id"], {})[plan._table_row(unit)] = unit["text"].split(" | ")
-    for rows in tables.values():
-        header = [_norm(cell) for cell in rows.get(0, [])]
-        if _norm(column) not in header:
-            continue
-        col = header.index(_norm(column))
-        for number, cells in rows.items():
-            if number and _norm(row) in map(_norm, cells) and col < len(cells) and cells[col].strip():
-                return cells[col]
-    return None
+            tables.setdefault(unit["ref"]["element_id"], []).extend(_table_lines(unit["text"]))
+    return next((cell for rows in tables.values() if (cell := _row_cell(rows, row, column))), None)
+
+
+def _table_lines(text):
+    """표 청크 본문의 행들. 칸이 하나뿐인 줄(표 앞의 제목 · 소제목)은 행이 아니다."""
+    return [line.split(" | ") for line in text.split("\n") if " | " in line]
+
+
+def _row_cell(rows, row, column):
+    """첫 행을 머리글로 보고 column 열을 찾아, 행 이름 row 가 든 데이터 행의 그 칸 (빈 칸은 없는 것으로 본다)."""
+    names = [_norm(cell) for cell in rows[0]] if rows else []
+    if _norm(column) not in names:
+        return None
+    col = names.index(_norm(column))
+    return next((cells[col] for cells in rows[1:]
+                 if _norm(row) in map(_norm, cells) and col < len(cells) and cells[col].strip()), None)
 
 
 def _states(answer, phrase):
@@ -1057,20 +1040,32 @@ def _calls_left(item, units, document, replay, instructions):
 
 
 def _validator_unit_lists(item, units, document):
-    """검증기에 묻는 근거 단위 목록들: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 (머리글을 붙여) 한 번 더.
+    """검증기에 묻는 근거 단위 목록들: 독립 답 한 번, multi_hop 이면 근거 단위마다 (그 표 머리글 청크의 첫 줄을 붙여) 한 번 더.
     unanswerable 은 독립 답 대신 대상 문서의 묶음마다 한 번이다 (_verdict 가 묻는 차례와 같다).
     """
     if item["primary_topic"] == "unanswerable":
         return document_batches(document)
     if item["primary_topic"] != "multi_hop":
         return [units]
-    return [units, *(asked for _, asked in _single_units(units))]
+    # 머리글을 가릴 수 없는 단위(None)에서 판정이 멈추므로, 그 앞까지만 묻는다.
+    return [units, *takewhile(lambda asked: asked is not None, (asked for _, asked in _single_units(units)))]
 
 
 def _single_units(units):
-    """multi_hop 에서 하나씩 묻는 근거: 머리글이 아닌 단위마다 (그 단위, 그 표의 머리글을 붙여 검증기에 줄 목록).
+    """multi_hop 에서 하나씩 묻는 근거: 단위마다 (그 단위, 검증기에 줄 목록 또는 None).
 
+    v12 의 0행 청크는 머리글 행과 데이터 행을 함께 담아 그 자체로 답이 나올 수 있으므로 함께 묻는다.
+    표 중간 행 청크에는 머리글 청크 전체가 아니라 그 첫 줄(0행)만 붙인다. 청크 전체를 붙이면 두 근거를 함께 묻는 셈이다.
+    머리글 청크에 표 앞 제목이 있으면(titled) 몇째 줄이 0행인지 알 수 없다. 데이터 행을 붙이거나 열 이름을 빼고 물으면
+    판정이 틀어지므로 목록 대신 None 을 두어 _single_unit_verdict 가 다단계로 확정하지 않게 한다.
     _single_unit_verdict 와 _calls_left 가 함께 써서, 한도에 세는 요청과 실제로 보내는 요청이 어긋나지 않게 한다.
     """
     headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
-    return [(unit, plan._with_headers([unit], headers)) for unit in units if plan._table_row(unit) != 0]
+    return [(unit, _with_header_line(unit, headers)) for unit in units]
+
+
+def _with_header_line(unit, headers):
+    header = headers.get(unit["ref"]["element_id"]) if plan._table_row(unit) else None
+    if header is None:
+        return [unit]
+    return None if header["titled"] else [{**header, "text": header["text"].split("\n")[0]}, unit]

@@ -32,7 +32,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     run_dir = storage._child(storage.OUTPUTS / "evidence", evidence_run)
     pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
     _check_package(package, pinned)
-    units = [unit for unit in eligible_units(run_dir, package) if not _is_toc(unit["text"])]
+    units = [unit for unit in eligible_units(run_dir) if not _is_toc(unit["text"])]
     names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
@@ -57,7 +57,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         "skipped_plans": {skipped_id: sha for skipped_id, (_, sha) in skipped.items()},
         "side": side and {"split": side[0], "part": side[1],
                           "manifest_sha256": storage._sha256(storage.OUTPUTS / "splits" / side[0] / "manifest.json")},
-        "v11_manifest_sha256": pinned["manifest.json"],
+        "package_manifest_sha256": pinned["manifest.json"],
         "topic_specs": {topic: sha for topic, (_, sha) in specs.items()},
         "max_context_chars": max_context_chars,
         "counts": {topic: counts[topic] for topic in specs},
@@ -83,46 +83,30 @@ def topic_spec(topic):
     return storage._read_json(path), storage._sha256(path)
 
 
-def eligible_units(run_dir, package):
-    """eligible 판정을 받은 단위만, 근거 참조 필드와 패키지에서 읽은 본문을 붙여 패키지 순서대로 돌려준다."""
+def eligible_units(run_dir):
+    """eligible 판정을 받은 단위만, 근거 참조 필드와 본문 · 표 앞 제목 여부(titled)를 붙여 패키지 순서대로 돌려준다."""
     eligible = {
         row["unit_id"] for row in evidence._iter_jsonl(run_dir / "judgments.jsonl") if row["judgment"] == "eligible"
     }
-    units = [
-        {"unit_id": unit["unit_id"], "ref": {name: unit[name] for name in EVIDENCE_FIELDS}}
-        for unit in evidence._iter_jsonl(run_dir / "units.jsonl") if unit["unit_id"] in eligible
+    return [
+        {"unit_id": unit["unit_id"], "ref": {name: unit[name] for name in EVIDENCE_FIELDS}, "text": unit["text"],
+         "titled": unit["titled"]}
+        for unit in evidence._iter_jsonl(run_dir / "units.jsonl")
+        if unit["unit_id"] in eligible and unit["text"].strip()
     ]
-    elements = _elements(package, {unit["ref"]["element_id"] for unit in units})
-    for unit in units:
-        unit["text"] = _unit_text(unit["ref"], elements[unit["ref"]["element_id"]])
-    return [unit for unit in units if unit["text"].strip()]
 
 
-def document_units(run_dir, package, docs):
+def document_units(run_dir, docs):
     """문서 SHA → 그 문서의 모든 근거 단위(eligible 과 held) {unit_id, element_id, location, text}, 패키지 순서대로.
 
-    element_id · location 은 표 행이 어느 표의 몇 행인지 알려, 검증기에 나눠 줄 때 머리글과 행을 떼지 않게 한다.
-    원본 그리드 셀은 rowspan 도 함께 준다. 세로로 합친 칸이 걸친 행들을 한 단위로 묶는 데 쓴다 (validation.document_batches).
-
-    문서에 무엇이 없음을 보이려면 보류된 단위(UNVERIFIED 원문, 범위 없는 OCR, 원본 그리드 셀)까지 읽어야 한다.
-    eligible 만 보면 보류된 글에 든 답을 놓친다. 원본 그리드 셀의 글은 원본 그리드 참고 파일에서 읽는다.
+    element_id · location 은 표 청크가 어느 표의 몇 행부터인지 알려, 검증기에 나눠 줄 때 머리글과 행을 떼지 않게 한다.
+    문서에 무엇이 없음을 보이려면 보류된 단위(원본 대조 예외, 범위 없는 OCR)까지 읽어야 한다.
+    eligible 만 보면 보류된 글에 든 답을 놓친다.
     """
-    units = [unit for unit in evidence._iter_jsonl(run_dir / "units.jsonl") if unit["doc_sha"] in docs]
-    elements = _elements(package, {unit["element_id"] for unit in units if unit["chunk_id"]})
-    cells = {
-        f"grid:{grid['source_document_sha256']}:{grid['stream']}:{grid['control']}:{cell['row']}:{cell['col']}": cell
-        for grid in evidence._iter_jsonl(package / evidence.GRIDS) if grid["source_document_sha256"] in docs
-        for cell in grid["cells"]
-    }
     found = defaultdict(list)
-    for unit in units:
-        given = {"unit_id": unit["unit_id"], "element_id": unit["element_id"], "location": unit["location"]}
-        if unit["chunk_id"]:
-            given["text"] = _unit_text(unit, elements[unit["element_id"]])
-        else:
-            cell = cells[unit["unit_id"]]
-            given.update(text=cell["text"], rowspan=cell["rowspan"])
-        found[unit["doc_sha"]].append(given)
+    for unit in evidence._iter_jsonl(run_dir / "units.jsonl"):
+        if unit["doc_sha"] in docs:
+            found[unit["doc_sha"]].append({key: unit[key] for key in ("unit_id", "element_id", "location", "text")})
     return found
 
 
@@ -152,19 +136,19 @@ def asked_document(item):
 def doc_names(package, docs):
     """문서 SHA → {"agency": 발주 기관, "title": 사업 이름}. 문서 98개 가운데 어느 문서의 질문인지 밝히는 데 쓴다.
 
-    v11 레코드의 source_paths 첫 파일 이름("기관_사업명.hwp")으로 패키지 옆 data_list.csv 의 정리된 발주 기관을 찾고,
+    문서의 파일 이름("기관_사업명.hwp")으로 패키지의 data_list.csv 에서 정리된 발주 기관을 찾고,
     사업 이름은 파일 이름의 _ 뒤에서 앞머리 [재공고] 같은 표시를 뺀 것이다. 파일 이름이 잘려 사업 이름도 잘려 있을 수 있다.
     한 기관에 문서가 여럿이라 기관 이름만으로는 문서를 가리지 못한다.
     """
-    with (package.parent / "data_list.csv").open(encoding="utf-8-sig") as f:
+    with (package / evidence.AGENCIES).open(encoding="utf-8-sig") as f:
         agencies = {unicodedata.normalize("NFC", row["파일명"]): row["발주기관"] for row in csv.DictReader(f)}
     names = {}
-    for record in evidence._iter_jsonl(package / evidence.RECORDS):
-        if record["doc_id"] in docs and record["doc_id"] not in names:
+    for doc in evidence._iter_jsonl(package / evidence.DOCS):
+        if doc["doc_id"] in docs:
             # 원본 파일 이름 일부는 한글이 자모로 풀린 NFD 라 csv 의 NFC 이름과 맞지 않는다.
-            file = Path(unicodedata.normalize("NFC", record["source_paths"][0]))
+            file = Path(unicodedata.normalize("NFC", doc["source"]))
             title = re.sub(r"^(\[[^\]]*\])+", "", file.stem.split("_", 1)[-1]).strip()
-            names[record["doc_id"]] = {"agency": agencies[file.name], "title": title}
+            names[doc["doc_id"]] = {"agency": agencies[file.name], "title": title}
     return names
 
 
@@ -178,26 +162,6 @@ def _check_package(package, pinned):
     for name, sha in pinned.items():
         if storage._sha256(package / name) != sha:
             raise evidence.PackageMismatch(f"{name} SHA-256 이 근거 어댑터 run 에 고정된 값과 다릅니다")
-
-
-def _elements(package, wanted):
-    elements = {}
-    for element in evidence._iter_jsonl(package / evidence.ELEMENTS):
-        if element["element_id"] in wanted:
-            cells = (element["table"] or {}).get("cells", [])
-            elements[element["element_id"]] = {
-                "text": element[element["location"]["span_text_field"]],
-                "cells": sorted(cells, key=lambda cell: (cell["row"], cell["col"])),
-            }
-    return elements
-
-
-def _unit_text(ref, element):
-    """글자 span 은 요소 본문의 그 구간, 표 행은 그 행 칸들을 | 로 이은 것이다."""
-    location = ref["location"]
-    if location["kind"] == "char":
-        return element["text"][location["start"]:location["end"]]
-    return " | ".join(cell["text"] for cell in element["cells"] if cell["row"] == location["row"])
 
 
 def _groups(topic, spec, units, used, max_context_chars, names):
@@ -255,9 +219,10 @@ def _spanning(units, size):
 
 
 def _with_headers(chunk, headers):
-    """표 행이 든 묶음 앞에 그 표의 머리글 행(논리 표 0행)을 붙인다. 열 이름 없이는 칸을 가리킬 수 없기 때문이다.
+    """표 중간 행부터 시작하는 청크가 든 묶음 앞에 그 표의 머리글 행(논리 표 0행)부터 시작하는 청크를 붙인다.
+    열 이름 없이는 칸을 가리킬 수 없기 때문이다.
 
-    머리글 행이 eligible 이 아니면 None 을 돌려 그 묶음을 버린다.
+    머리글 행 청크가 eligible 이 아니면 None 을 돌려 그 묶음을 버린다.
     """
     have = {unit["ref"]["element_id"] for unit in chunk if _table_row(unit) == 0}
     need = sorted({unit["ref"]["element_id"] for unit in chunk if _table_row(unit)} - have)
@@ -290,7 +255,7 @@ def _bundle(topic, units, doc):
 
     def header(unit):
         label = unit["label"]
-        # 표 행은 | 로 이은 글이라, 표시가 없으면 생성기는 어느 행이 열 이름을 가진 머리글인지 알 수 없다.
+        # 표는 행을 줄로, 칸을 | 로 이은 글이라, 표시가 없으면 생성기는 그 근거가 열 이름을 가진 머리글 행으로 시작하는지 알 수 없다.
         if _table_row(unit) == 0:
             label += " · 머리글 행"
         # multi_hop 은 청크 둘을 이어야 하는데, 라벨만으로는 생성기가 어느 근거가 같은 청크인지 알 수 없다.

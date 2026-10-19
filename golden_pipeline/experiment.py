@@ -16,11 +16,12 @@ from string import Template
 
 import openai
 
-from golden_pipeline import adoption, evidence, generation, plan, storage, validation
+from golden_pipeline import adoption, generation, plan, storage, validation
 from golden_pipeline.schema import TOPICS
 
-# 주제마다 묶음 10개: train 6 · validation 2 · held-out 2. 몫은 자기 개선과 같은 해시 나눔(adoption.split)으로 정한다.
-PARTS = {"train": 6, "validation": 2, "held_out": 2}
+# 주제마다 묶음 66개: train 6 · validation 30 · held-out 30. 몫은 자기 개선과 같은 해시 나눔(adoption.split)으로 정한다.
+# validation 이 2 묶음이면 두 묶음이 모두 나아져야 채택 하한이 0 을 넘어, 작은 효과는 잴 수 없었다.
+PARTS = {"train": 6, "validation": 30, "held_out": 30}
 BUDGET_FIELDS = ("ceiling_usd", "max_output_tokens", "prices")
 # BPE 토큰은 1 바이트 이상이라 입력 토큰 수는 UTF-8 바이트 수를 넘지 않는다. 메시지마다 역할 표시 몫을 더한다.
 MESSAGE_OVERHEAD_TOKENS = 16
@@ -53,7 +54,7 @@ def freeze(experiment_id, pool_plan_id):
     evidence_manifest = storage._read_json(storage.OUTPUTS / "evidence" / pool["evidence_run"] / "manifest.json")
     record = {
         "experiment": experiment_id, "created_at": frozen["created_at"], "code_commit": frozen["code_commit"],
-        "source": {"evidence_run": pool["evidence_run"], "v11_manifest_sha256": pool["v11_manifest_sha256"],
+        "source": {"evidence_run": pool["evidence_run"], "package_manifest_sha256": pool["package_manifest_sha256"],
                    "pinned_sha256": evidence_manifest["pinned_sha256"]},
         "pool_plan": {"plan_id": pool_plan_id, "sha256": pool_sha},
         "plan": {"plan_id": experiment_id, "sha256": hashlib.sha256(plan_bytes).hexdigest()},
@@ -251,16 +252,17 @@ def estimate(experiment_id, price_in, price_out):
     for topic in TOPICS:
         seen = _history(topic)
         passed = seen["passed"] / seen["outputs"]
-        # A: round 1 은 train 6 묶음, round 2 · 3 은 통과하지 못한 묶음. round 2 · 3 의 채택마다 validation 2 묶음, 처음엔 v0 도.
-        a_expected = 6 * (1 + (1 - passed) + (1 - passed) ** 2) + 6
-        gen = {"expected": 6 + a_expected, "high": 6 + 18 + 6 + 4}
+        # A: round 1 은 train 묶음, round 2 · 3 은 통과하지 못한 묶음. round 2 · 3 의 채택마다 validation 묶음, 처음엔 v0 도.
+        train, checks, held = PARTS["train"], PARTS["validation"], PARTS["held_out"]
+        a_expected = train * (1 + (1 - passed) + (1 - passed) ** 2) + 3 * checks
+        gen = {"expected": train + a_expected, "high": train + 3 * train + 3 * checks + 2 * held}
         per_output = {"expected": seen["val_calls"] / seen["outputs"], "high": seen["val_calls"] / seen["outputs"]}
         if topic == "unanswerable":
             per_output["high"] = max(per_output["high"], sum(batches) / len(batches))
         rows[topic] = {}
         for case in ("expected", "high"):
             out_gen, out_val = (seen["gen_out"], seen["val_out"]) if case == "expected" else (seen["gen_out_p99"], seen["val_out_p99"])
-            val = (gen[case] + 6) * per_output[case]
+            val = (gen[case] + train) * per_output[case]
             usd = (gen[case] * (seen["gen_in"] * price_in + out_gen * price_out)
                    + val * (seen["val_in"] * price_in + out_val * price_out)) / 1_000_000
             rows[topic][case] = {"generation_calls": round(gen[case], 1), "validation_calls": round(val, 1), "usd": round(usd, 4)}
@@ -296,7 +298,7 @@ def _unanswerable_batches(planned):
     """unanswerable 묶음마다 검증기가 읽을 대상 문서 묶음 수 (validation.document_batches)."""
     bundles = [bundle for bundle in planned["bundles"] if bundle["topic"] == "unanswerable"]
     run_dir = storage.OUTPUTS / "evidence" / planned["evidence_run"]
-    found = plan.document_units(run_dir, evidence.PACKAGE, {bundle["doc_sha"] for bundle in bundles})
+    found = plan.document_units(run_dir, {bundle["doc_sha"] for bundle in bundles})
     return [len(validation.document_batches(found[bundle["doc_sha"]])) for bundle in bundles]
 
 

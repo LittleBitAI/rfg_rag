@@ -20,6 +20,15 @@ MESSAGES = [{"role": "system", "content": "시"}, {"role": "user", "content": "a
 RESERVED = ((3 + 16 + 2 + 16) * 1 + 100 * 4) / 1_000_000
 
 
+SMALL_PARTS = {"train": 6, "validation": 2, "held_out": 2}
+
+
+@pytest.fixture(autouse=True)
+def small_parts(monkeypatch):
+    """고정은 몫마다 계획 차례대로 고른다. 그 차례는 몫 크기와 상관없으므로 작은 몫으로 본다."""
+    monkeypatch.setattr(experiment, "PARTS", SMALL_PARTS)
+
+
 def write_pool(outputs, parts):
     """주제마다 묶음 id 와 그 몫을 정한 큰 계획. adoption.split 이 그 몫을 돌려주게 바꾼다."""
     bundles = [{"bundle_id": bundle_id, "topic": topic, "doc_sha": "d", "units": [], "context": "c"}
@@ -28,7 +37,7 @@ def write_pool(outputs, parts):
     for topic in TOPICS:
         (outputs / f"configs/topics/{topic}.json").write_text('{"requires": "r", "structure": {}}', encoding="utf-8")
     specs = {topic: storage._sha256(outputs / f"configs/topics/{topic}.json") for topic in TOPICS}
-    pool = {"plan_id": "pool", "evidence_run": "ev", "v11_manifest_sha256": "v", "topic_specs": specs, "bundles": bundles}
+    pool = {"plan_id": "pool", "evidence_run": "ev", "package_manifest_sha256": "v", "topic_specs": specs, "bundles": bundles}
     (outputs / "outputs/plans").mkdir(parents=True)
     (outputs / "outputs/plans/pool.json").write_text(json.dumps(pool), encoding="utf-8")
     (outputs / "outputs/evidence/ev").mkdir(parents=True)
@@ -87,6 +96,7 @@ from golden_pipeline import adoption, experiment, storage
 root = pathlib.Path(sys.argv[1])
 storage.OUTPUTS, storage.CONFIGS, storage.PROMPTS = root / "outputs", root / "configs", root / "prompts"
 adoption.split = json.loads(sys.argv[2]).get
+experiment.PARTS = json.loads(sys.argv[3])
 real = pathlib.Path.write_bytes
 def write_bytes(self, data):
     if self.name.startswith(".x1.json."):
@@ -105,8 +115,8 @@ def test_a_freeze_killed_while_writing_the_plan_publishes_no_plan_and_a_retry_fr
     monkeypatch.setattr(adoption, "split", split.get)
     plan_path = outputs / "outputs/plans/x1.json"
 
-    killed = subprocess.run([sys.executable, "-c", KILLED_WHILE_WRITING_THE_PLAN, str(outputs), json.dumps(split)],
-                            capture_output=True, text=True)
+    killed = subprocess.run([sys.executable, "-c", KILLED_WHILE_WRITING_THE_PLAN, str(outputs), json.dumps(split),
+                             json.dumps(SMALL_PARTS)], capture_output=True, text=True)
 
     assert killed.returncode == 9, killed.stderr
     assert not plan_path.exists() and (outputs / "outputs/experiments/x1/freeze.json").exists()
