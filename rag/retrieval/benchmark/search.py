@@ -8,7 +8,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 from rag.config import read_jsonl
-from rag.retrieval.indexing import KiwiTokenizer
+from rag.retrieval.indexing import KiwiTokenizer, search_texts
 from rag.retrieval.retrieval import DocRouter, HybridIndex, _link_index, read_csv_orgs
 
 from .common import OUT
@@ -28,7 +28,7 @@ class BenchmarkIndex(HybridIndex):
         tokens = json.loads((OUT / "kiwi_tokens.json").read_text(encoding="utf-8"))
         assert tokens["tokenizer"] == self.kiwi.fingerprint
         self.sparse_indexes = {"kiwi": BM25Okapi(tokens["tokens"], k1=1.5, b=0.75),
-                               "whitespace": BM25Okapi([c["text"].split() for c in self.chunks], k1=1.5, b=0.75)}
+                               "whitespace": BM25Okapi([text.split() for text in search_texts(self.chunks)], k1=1.5, b=0.75)}
         self.router = DocRouter(read_jsonl(OUT / "input/docs.jsonl"), read_csv_orgs(OUT / "input/orgs.csv"))
         self.quantity_rows = read_jsonl(folder / "quantities.jsonl")
         self.quantity_phrases = json.loads((folder / "quantity_phrases.json").read_text(encoding="utf-8"))

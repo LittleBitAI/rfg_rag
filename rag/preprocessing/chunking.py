@@ -165,7 +165,8 @@ def chunk_documents(docs: list[dict], ccfg: dict, *, position_captions=False) ->
 
 def load_v11_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
     """v11의 저장된 청크·요소·레코드를 02 검색이 읽는 문서·청크 형식으로 옮긴다.
-    요구사항 소속 정보(requirement_key · requirement_ids)도 옮겨 02 검색이 나뉜 요구사항 청크를 함께 찾게 한다."""
+    요구사항 소속 정보(requirement_key · requirement_ids)와 표 연결(table_refs)도 옮겨 02 검색이 나뉜 요구사항 · 표 청크를
+    함께 찾게 한다."""
     package_dir = Path(package_dir)
     elements = {e["element_id"]: e for e in read_jsonl(package_dir / "final_elements.jsonl")}
     records_by_doc = {}
@@ -194,7 +195,9 @@ def load_v11_package(package_dir: str | Path) -> tuple[list[dict], list[dict]]:
                        "text": chunk["payload"], "body": chunk["body"],
                        # 요구사항 소속: 청크가 속한 요구사항(ID 와 상세 내용이 다른 청크여도 같은 값)과 요소들이 속한 요구사항 ID
                        "requirement_key": chunk.get("requirement_key"),
-                       "requirement_ids": list(dict.fromkeys(requirement_ids))})
+                       "requirement_ids": list(dict.fromkeys(requirement_ids)),
+                       # 표 연결: 한 표가 여러 청크로 나뉘면 같은 표 참조를 가진다 — 02 가 나뉜 표 청크를 함께 담는다
+                       "table_refs": chunk.get("table_refs", [])})
     return docs, chunks
 
 
