@@ -16,7 +16,7 @@ import yaml
 
 from rag.config import read_jsonl
 from rag.evaluation.ir import coverage_group, label_state
-from rag.retrieval.indexing import KiwiTokenizer, find_codes
+from rag.retrieval.indexing import KiwiTokenizer, find_codes, search_texts
 from rag.retrieval.retrieval import FilterHits
 
 from .common import OUT, RECORD, ROOT, SEED, WEIGHTS, digest, no_network, protected_files, save_json, verify_source
@@ -38,7 +38,7 @@ def configurations(spec):
 
 def build_private_index(embedder, folder):
     chunks = read_jsonl(OUT / "input/chunks.jsonl")
-    texts = [c["text"] for c in chunks]
+    texts = search_texts(chunks)
     folder.mkdir(parents=True, exist_ok=True)
     with ResourceMonitor() as monitor:
         vectors = embedder.encode(texts, progress=True)
@@ -89,7 +89,7 @@ def prepare_sparse():
         return
     chunks = read_jsonl(OUT / "input/chunks.jsonl")
     start = time.perf_counter()
-    tokens = tokenizer.batch([c["text"] for c in chunks])
+    tokens = tokenizer.batch(search_texts(chunks))
     stored = json.loads((ROOT / "artifacts/index/bm25_tokens.json").read_text(encoding="utf-8"))
     assert stored == {"tokenizer": tokenizer.fingerprint, "tokens": tokens}
     save_json(stored, target)

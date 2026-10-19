@@ -77,6 +77,7 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
     index.rcfg = {"token_budget": 2500}
     index.chunk_file = "fixture/chunks.jsonl"
     index.chunks = [hit]
+    index.links = [[]]
     index.embedder = MagicMock()
     index.embedder.token_counts.return_value = [1]
     index.router = MagicMock()
