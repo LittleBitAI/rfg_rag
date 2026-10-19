@@ -17,7 +17,7 @@ from langfuse import observe
 from rank_bm25 import BM25Okapi
 
 from ..config import ROOT, read_jsonl
-from .indexing import Embedder, KiwiTokenizer, find_codes, search_texts, texts_digest
+from .indexing import Embedder, KiwiTokenizer, Reranker, find_codes, search_texts, texts_digest
 from .quantity_filter import choose_values, content_query, introduction, project_condition, substantive
 
 
@@ -127,7 +127,10 @@ def _check_index(index_dir: Path, texts: list[str]):
 class HybridIndex:
     """final = w·Dense + (1-w)·BM25 — 두 후보군을 각각 min-max 정규화한 뒤 가중합 (w = dense_weight, 0=BM25만, 1=Dense만).
     질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter).
-    찾은 청크에 연결 청크(같은 요구사항의 ID · 명칭 / 상세 내용, 같은 표의 나뉜 부분)가 있으면 바로 뒤에 함께 담는다."""
+    찾은 청크에 연결 청크(같은 요구사항의 ID · 명칭 / 상세 내용, 같은 표의 나뉜 부분)가 있으면 바로 뒤에 함께 담는다.
+    retrieval.rerank.enabled 이면 상위 후보를 로컬 크로스 인코더(Reranker)로 다시 정렬한다."""
+
+    reranker: Reranker | None = None
 
     def __init__(self, artifacts: Path, cfg: dict):
         self.tokenizer = KiwiTokenizer()
@@ -136,7 +139,8 @@ class HybridIndex:
             raise ValueError("BM25 tokenizer mismatch or missing fingerprint. "
                              "Rebuild the index with 02_retrieval.ipynb's build_index cell before searching.")
         self.chunks = read_jsonl(artifacts / "chunks.jsonl")
-        _check_index(artifacts / "index", search_texts(self.chunks))
+        self.texts = search_texts(self.chunks)
+        _check_index(artifacts / "index", self.texts)
         self.doc_ids = np.array([c["doc_id"] for c in self.chunks])
         self.code_chunks, self.links = _link_index(self.chunks)
         self.faiss = faiss.read_index(str(artifacts / "index" / "faiss.index"))
@@ -144,6 +148,8 @@ class HybridIndex:
         self.embedder = Embedder(cfg["embedding"])
         self.router = DocRouter(read_jsonl(artifacts / "docs.jsonl"), read_csv_orgs(ROOT / cfg["paths"]["org_csv"]))
         self.rcfg = cfg["retrieval"]
+        if self.rcfg["rerank"]["enabled"]:
+            self.reranker = Reranker(self.rcfg["rerank"])
         self.chunk_file = str((artifacts / "chunks.jsonl").resolve())
         self.quantity_rows = read_jsonl(artifacts / "index" / "quantities.jsonl")
         self.quantity_phrases = json.loads((artifacts / "index" / "quantity_phrases.json").read_text(encoding="utf-8"))
@@ -170,7 +176,9 @@ class HybridIndex:
         groups = groups or [self._rank(query, codes, None)]
         ranked = [hit for hit in chain.from_iterable(zip_longest(*groups)) if hit is not None]
         candidates = self._candidate_snapshot(groups, ranked)
-        packed = [self._pack([(c["index"], c["score"]) for c in group]) for group in groups]
+        # 리랭커를 쓰면 다시 매긴 상위 rerank.top_n 만 컨텍스트에 담는다. 스냅샷은 평가용으로 후보 전체를 둔다
+        limit = int(self.rcfg["rerank"]["top_n"]) if self.reranker else None
+        packed = [self._pack([(c["index"], c["score"]) for c in group[:limit]]) for group in groups]
         return _interleave(packed), candidates
 
     def _filter(self, condition):
@@ -239,11 +247,23 @@ class HybridIndex:
         exact = self._exact(codes, allowed)
         fused |= {i: 0.0 for i in exact - fused.keys()}
         order = sorted(fused, key=lambda i: (self.doc_ids[i] in preferred, i in exact, fused[i]), reverse=True)
+        if self.reranker and order:
+            order, scores = self._rerank(question, order, exact, preferred)
+            fused |= scores
         dense_ranks = {i: rank for rank, i in enumerate(dense_raw, 1)}
         sparse_ranks = {i: rank for rank, i in enumerate(sparse_raw, 1)}
         return [{"index": i, "score": fused[i], "dense_score": dense_raw.get(i), "dense_rank": dense_ranks.get(i),
                  "bm25_score": sparse_raw.get(i), "bm25_rank": sparse_ranks.get(i),
                  "exact_code_match": i in exact} for i in order]
+
+    def _rerank(self, question: str, order: list[int], exact: set[int], preferred: set) -> tuple[list[int], dict]:
+        """하이브리드 상위 rerank.top_n 후보만 리랭커 점수로 다시 정렬한다. 사업명 문서와 요구사항 코드 일치 청크는 계속
+        앞에 둔다. 나머지 후보는 하이브리드 순서 그대로 뒤에 남긴다 — 평가 스냅샷이 후보 전체를 봐야 해서."""
+        n = int(self.rcfg["rerank"]["top_n"])
+        top = order[:n]
+        scores = dict(zip(top, self.reranker.scores(question, [self.texts[i] for i in top])))
+        reranked = sorted(top, key=lambda i: (self.doc_ids[i] in preferred, i in exact, scores[i]), reverse=True)
+        return reranked + order[n:], scores
 
     def _exact(self, codes: set[str], allowed: np.ndarray) -> set[int]:
         """요구사항 코드가 그대로 든 허용 청크"""

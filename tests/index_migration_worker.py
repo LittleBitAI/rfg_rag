@@ -16,7 +16,7 @@ from test_indexing import LocalEmbedder
 
 def exercise(artifacts, operation):
     cfg = {"embedding": {"max_seq_length": 2048}, "bm25": {"k1": 1.2, "b": .75},
-           "retrieval": {"dense_weight": 0, "candidate_k": 10, "token_budget": 1000},
+           "retrieval": {"dense_weight": 0, "candidate_k": 10, "token_budget": 1000, "rerank": {"enabled": False}},
            "paths": {"org_csv": "unused.csv"}}
     texts = ["개인정보처리시스템", "네트워크 보안", "계약 기간"]
     rows = [dict(chunk_id=str(i), doc_id=str(i), text=t, body=t, source=f"{i}.pdf",

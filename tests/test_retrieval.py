@@ -504,3 +504,45 @@ def test_routed_search_ranks_with_the_focused_query():
     index.search("스포츠윤리센터의 「LMS 기능개선」 사업에서 하자보증 기간은 얼마인가?")
 
     assert index._rank.call_args.args[0] == "하자보증 기간은 얼마인가?"
+
+
+def test_reranker_reorders_top_candidates_packs_only_them_and_keeps_every_candidate_in_the_snapshot():
+    index = make_index(["SFR-001 코드 근거", "하이브리드 1위", "하이브리드 2위", "하이브리드 3위"], [1, 1, 1, 1])
+    index.texts = [c["text"] for c in index.chunks]
+    index.rcfg["rerank"] = {"top_n": 3}
+    index._dense = MagicMock(return_value={1: 1.0, 2: 0.5, 3: 0.1})
+    index._sparse = MagicMock(return_value={})
+    index.reranker = MagicMock()
+    index.reranker.scores.return_value = [0.1, 0.2, 0.9]
+
+    hits, candidates = index.search_with_candidates("SFR-001 질문", query="SFR-001 재작성 질문")
+
+    index.reranker.scores.assert_called_once_with("SFR-001 재작성 질문",
+                                                  ["SFR-001 코드 근거", "하이브리드 1위", "하이브리드 2위"])
+    assert [(h["chunk_id"], h["score"]) for h in hits] == [("c0", 0.1), ("c2", 0.9), ("c1", 0.2)]
+    assert [(c["chunk_id"], c["fused_rank"], c["dense_rank"], c["exact_code_match"]) for c in candidates] == [
+        ("c0", 1, None, True), ("c2", 2, 2, False), ("c1", 3, 1, False), ("c3", 4, 3, False)]
+
+
+def test_reranker_is_skipped_when_routed_documents_have_no_candidates():
+    index = make_index(["다른 기관 근거"], [1], doc_ids=["doc-b"])
+    index._dense = MagicMock(return_value={})
+    index._sparse = MagicMock(return_value={})
+    index.reranker = MagicMock()
+
+    assert index._rank("질문", set(), {"doc-a"}) == []
+    index.reranker.scores.assert_not_called()
+
+
+def test_reranker_scores_question_chunk_pairs(monkeypatch):
+    from rag.retrieval import indexing
+    cross_encoder = MagicMock()
+    cross_encoder.return_value.predict.return_value = np.array([0.7, 0.2])
+    monkeypatch.setattr(indexing, "CrossEncoder", cross_encoder)
+    monkeypatch.setattr(indexing.torch.cuda, "is_available", lambda: False)
+
+    reranker = indexing.Reranker({"model": "reranker", "batch_size": 4, "max_length": 512})
+
+    assert reranker.scores("질문", ["청크1", "청크2"]) == [0.7, 0.2]
+    cross_encoder.assert_called_once_with("reranker", device="cpu", max_length=512)
+    cross_encoder.return_value.predict.assert_called_once_with([("질문", "청크1"), ("질문", "청크2")], batch_size=4)

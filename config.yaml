@@ -58,6 +58,12 @@ retrieval:
   token_budget: 2500           # 검색 결과 본문 토큰 예산 (임베딩 토크나이저 기준)
   dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
+  rerank:                       # 로컬 크로스 인코더로 후보 순서를 다시 매김 (GPU, API 비용 없음)
+    enabled: false              # true 면 처음 실행 때 모델(약 2.3GB)을 받고, 순위가 리랭커 순서가 된다
+    model: dragonkue/bge-reranker-v2-m3-ko   # bge-reranker-v2-m3 를 한국어로 추가 학습 (약 0.6B)
+    top_n: 30                   # 하이브리드 상위 후보 중 다시 매겨 컨텍스트에 담을 개수 (나머지는 평가 스냅샷에만 남는다)
+    batch_size: 16
+    max_length: 1024            # 질문 + 청크 토큰 상한 (넘는 부분은 잘라서 점수 매김)
 
 rewrite:
   model: gpt-6-luna
