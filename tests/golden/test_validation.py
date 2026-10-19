@@ -714,3 +714,24 @@ def test_a_table_cell_is_read_from_multi_line_table_chunks_under_their_header(ro
                             "B시스템 | 24개월 | 12개월"),
              table_chunk(3, "C시스템 | 6개월 | 없음")]
     assert validation._cell(units, row, column) == cell
+
+
+def test_a_title_line_naming_the_column_is_not_read_as_the_header():
+    # 표 앞 소제목이 열 이름과 같으면, 소제목을 머리글로 읽어 행 이름을 칸 값으로 돌려줬다.
+    units = [table_chunk(0, "무상 기술지원기간\n시스템 | 무상 기술지원기간\nA시스템 | 12개월")]
+    assert validation._cell(units, "A시스템", "무상 기술지원기간") == "12개월"
+
+
+def test_multi_hop_asks_a_header_chunk_alone_and_gives_later_chunks_only_the_header_line():
+    # v12 의 0행 청크는 데이터 행도 담는다. 단독 검사에서 빼면 그 청크 하나로 답이 나와도 통과했다.
+    first = {**table_chunk(0, "시스템 | 하자담보책임기간\nA시스템 | 12개월"), "label": "E1"}
+    later = {**table_chunk(3, "B시스템 | 24개월"), "label": "E2"}
+    assert [[unit["text"] for unit in asked] for _, asked in validation._single_units([first, later])] == [
+        [first["text"]], ["시스템 | 하자담보책임기간", "B시스템 | 24개월"]]
+
+    def ask(question, units):
+        return verdict("12개월"), None
+
+    assert validation._single_unit_verdict({"question": "A시스템의 하자담보책임기간은?"}, [first, later],
+                                           verdict("12개월"), ask, None) == (
+        "rejected", "multi_hop 아님: 근거 E1 하나로 답이 나옵니다")

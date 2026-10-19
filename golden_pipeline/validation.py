@@ -632,7 +632,7 @@ def _topic_rule(item, question, units):
 
 
 def _single_unit_verdict(item, units, full, ask, judge):
-    """multi_hop 은 근거 단위를 하나씩만 줬을 때 어느 것으로도 독립 답이 나오지 않아야 한다 (머리글 행은 그 표 행에 붙여 준다)."""
+    """multi_hop 은 근거 단위를 하나씩만 줬을 때 어느 것으로도 독립 답이 나오지 않아야 한다 (표 중간 행에는 머리글 줄을 붙여 준다)."""
     for unit, asked in _single_units(units):
         single, error = ask(item["question"], asked)
         if not error and single["answerable"]:
@@ -824,7 +824,7 @@ DOCUMENT_TOPICS = ("unanswerable", "false_premise")
 
 
 def _cell(units, row, column):
-    """인용한 표에서 열 이름 column 이 든 줄을 머리글로 보고, 그 아래 줄 중 행 이름 row 가 든 줄의 그 열 칸.
+    """인용한 표의 머리글에서 열 이름 column 의 자리를 찾고, 그 아래 행 중 행 이름 row 가 든 행의 그 칸.
 
     표 청크는 행을 줄로, 칸을 ' | ' 로 잇는다. 한 표의 청크들은 머리글 청크부터 차례대로 이어 읽는다.
     ponytail: 칸 안 줄바꿈으로 이어진 줄은 칸 수가 모자라 행으로 읽히지 않는다. 그 칸을 묻는 질문은 거절된다.
@@ -832,18 +832,23 @@ def _cell(units, row, column):
     tables = {}
     for unit in units:
         if plan._table_row(unit) is not None:
-            tables.setdefault(unit["ref"]["element_id"], []).extend(
-                line.split(" | ") for line in unit["text"].split("\n"))
-    for lines in tables.values():
-        for at, header in enumerate(lines):
-            names = [_norm(cell) for cell in header]
-            if _norm(column) not in names:
-                continue
-            col = names.index(_norm(column))
-            for cells in lines[at + 1:]:
-                if _norm(row) in map(_norm, cells) and col < len(cells) and cells[col].strip():
-                    return cells[col]
-    return None
+            tables.setdefault(unit["ref"]["element_id"], []).extend(_table_lines(unit["text"]))
+    return next((cell for rows in tables.values() if (cell := _row_cell(rows, row, column))), None)
+
+
+def _table_lines(text):
+    """표 청크 본문의 행들. 칸이 하나뿐인 줄(표 앞의 제목 · 소제목)은 행이 아니다."""
+    return [line.split(" | ") for line in text.split("\n") if " | " in line]
+
+
+def _row_cell(rows, row, column):
+    """첫 행을 머리글로 보고 column 열을 찾아, 행 이름 row 가 든 데이터 행의 그 칸 (빈 칸은 없는 것으로 본다)."""
+    names = [_norm(cell) for cell in rows[0]] if rows else []
+    if _norm(column) not in names:
+        return None
+    col = names.index(_norm(column))
+    return next((cells[col] for cells in rows[1:]
+                 if _norm(row) in map(_norm, cells) and col < len(cells) and cells[col].strip()), None)
 
 
 def _states(answer, phrase):
@@ -1032,7 +1037,7 @@ def _calls_left(item, units, document, replay, instructions):
 
 
 def _validator_unit_lists(item, units, document):
-    """검증기에 묻는 근거 단위 목록들: 독립 답 한 번, multi_hop 이면 머리글이 아닌 근거 단위마다 (머리글을 붙여) 한 번 더.
+    """검증기에 묻는 근거 단위 목록들: 독립 답 한 번, multi_hop 이면 근거 단위마다 (그 표의 머리글 줄을 붙여) 한 번 더.
     unanswerable 은 독립 답 대신 대상 문서의 묶음마다 한 번이다 (_verdict 가 묻는 차례와 같다).
     """
     if item["primary_topic"] == "unanswerable":
@@ -1043,9 +1048,17 @@ def _validator_unit_lists(item, units, document):
 
 
 def _single_units(units):
-    """multi_hop 에서 하나씩 묻는 근거: 머리글이 아닌 단위마다 (그 단위, 그 표의 머리글을 붙여 검증기에 줄 목록).
+    """multi_hop 에서 하나씩 묻는 근거: 단위마다 (그 단위, 검증기에 줄 목록).
 
+    v12 의 0행 청크는 머리글 행과 데이터 행을 함께 담아 그 자체로 답이 나올 수 있으므로 함께 묻는다.
+    표 중간 행 청크에는 머리글 청크 전체가 아니라 머리글 줄만 붙인다. 청크 전체를 붙이면 두 근거를 함께 묻는 셈이다.
     _single_unit_verdict 와 _calls_left 가 함께 써서, 한도에 세는 요청과 실제로 보내는 요청이 어긋나지 않게 한다.
     """
     headers = {unit["ref"]["element_id"]: unit for unit in units if plan._table_row(unit) == 0}
-    return [(unit, plan._with_headers([unit], headers)) for unit in units if plan._table_row(unit) != 0]
+    return [(unit, _with_header_line(unit, headers)) for unit in units]
+
+
+def _with_header_line(unit, headers):
+    header = headers.get(unit["ref"]["element_id"]) if plan._table_row(unit) else None
+    rows = header and _table_lines(header["text"])
+    return [{**header, "text": " | ".join(rows[0])}, unit] if rows else [unit]
