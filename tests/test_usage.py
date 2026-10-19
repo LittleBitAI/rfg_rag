@@ -75,11 +75,14 @@ def test_cached_input_and_reasoning_costs_with_concurrent_csv_writes(tmp_path):
     assert not (tmp_path / "api_usage.csv").read_bytes().startswith(b"\xef\xbb\xbf")
 
 
-def test_old_csv_without_reasoning_effort_column_is_upgraded_before_appending(tmp_path):
-    """reasoning_effort 열이 생기기 전 파일에 덧붙여도 값이 한 칸씩 밀리지 않는다"""
+def test_old_csv_without_reasoning_effort_column_is_summarized_and_upgraded_before_appending(tmp_path):
+    """reasoning_effort 열이 생기기 전 파일도 새 호출 없이 요약되고, 덧붙여도 값이 한 칸씩 밀리지 않는다"""
     old = ("timestamp,stage,evaluation,subject,model,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens,cost_usd\n"
            "2026-10-16T00:00:00+00:00,judge,retrieval,,gpt-5-nano,1000,0,80,0,0.000132\n")
     (tmp_path / "api_usage.csv").write_text(old, encoding="utf-8")
+
+    summary, = usage.usage_summary("judge").to_dict("records")
+    assert (summary["model"], summary["reasoning_effort"], summary["calls"]) == ("gpt-5-nano", "", 1)
 
     usage.record_usage("judge", "gpt-6-luna", TOKENS, PRICES, "none", evaluation="retrieval")
 

@@ -73,6 +73,8 @@ def usage_summary(stage: str) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=[*groups, "calls", *totals])
     rows = pd.read_csv(path, keep_default_na=False)
+    if "reasoning_effort" not in rows:  # 열이 생기기 전 파일 — 다음 호출 때 _append_row 가 새 열 구성으로 다시 쓴다
+        rows["reasoning_effort"] = ""
     rows = rows[rows["stage"] == stage]
     aggregations = {"calls": ("stage", "size"), **{name: (name, "sum") for name in totals}}
     return rows.groupby(groups).agg(**aggregations).reset_index()
