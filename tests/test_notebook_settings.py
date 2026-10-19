@@ -111,7 +111,7 @@ def test_preprocessing_notebook_selects_input(tmp_path, package, captions_presen
                  "collect_inputs": MagicMock(return_value=["test.pdf"]),
                  "parse_documents": MagicMock(return_value=docs),
                  "chunk_documents": MagicMock(return_value=chunks),
-                 "load_v11_package": MagicMock(return_value=(docs, chunks)),
+                 "load_package": MagicMock(return_value=(docs, chunks)),
                  "save_chunks": MagicMock(), "parsing_summary": MagicMock(),
                  "chunk_summary": MagicMock(), "display": MagicMock(),
                  "local_input": MagicMock(return_value=resolved_captions)}
@@ -135,9 +135,9 @@ def test_preprocessing_notebook_selects_input(tmp_path, package, captions_presen
             namespace["local_input"].assert_not_called()
         namespace["chunk_documents"].assert_called_once_with(
             docs, defaults["chunking"], position_captions=captions_present and not ocr)
-        namespace["load_v11_package"].assert_not_called()
+        namespace["load_package"].assert_not_called()
     else:
-        namespace["load_v11_package"].assert_called_once_with(tmp_path / package)
+        namespace["load_package"].assert_called_once_with(tmp_path / package)
         for name in ["collect_inputs", "parse_documents", "chunk_documents", "parsing_summary"]:
             namespace[name].assert_not_called()
         namespace["local_input"].assert_not_called()
