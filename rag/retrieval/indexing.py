@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from kiwipiepy import Kiwi
 from langchain_core.embeddings import Embeddings
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from ..config import write_jsonl
 from .quantity_metadata import quantity_rows
@@ -51,6 +51,23 @@ class Embedder(Embeddings):
     def truncate(self, text: str, budget: int) -> str:
         ids = self._st.tokenizer.encode(text, add_special_tokens=False)
         return self._st.tokenizer.decode(ids[:max(0, budget)], skip_special_tokens=True)
+
+
+class Reranker:
+    """질문과 청크를 한 입력으로 함께 읽는 크로스 인코더. 로컬(GPU)에서 돌아 API 비용이 없다.
+    임베딩은 질문과 청크를 따로 벡터로 만들어 비교하지만, 리랭커는 둘을 같이 읽어 관련도를 더 정확히 매긴다."""
+
+    def __init__(self, rcfg: dict):
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.batch_size = int(rcfg["batch_size"])
+        self._ce = CrossEncoder(rcfg["model"], device=device, max_length=int(rcfg["max_length"]))
+        if device == "cuda":
+            self._ce.model.half()  # fp16: 메모리 절반, 텐서코어 사용
+
+    def scores(self, query: str, texts: list[str]) -> list[float]:
+        """질문과 각 청크의 관련도 (0~1, 클수록 관련)"""
+        pairs = [(query, text) for text in texts]
+        return self._ce.predict(pairs, batch_size=self.batch_size).tolist()
 
 
 # 형태소 분석으로 쪼개지는 요구사항 코드를 한 토큰으로도 색인한다

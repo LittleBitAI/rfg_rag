@@ -41,7 +41,8 @@ def setup_index(monkeypatch, tmp_path):
     monkeypatch.setattr(retrieval, "read_csv_orgs", lambda path: {})
     cfg = {"embedding": {"max_seq_length": 2048}, "bm25": {"k1": 1.2, "b": .75},
            "retrieval": {"field_similarity": .8, "filter_token_budget": 1000, "dense_weight": .5,
-                         "candidate_k": 10, "token_budget": 1000}, "paths": {"org_csv": "unused.csv"}}
+                         "candidate_k": 10, "token_budget": 1000, "rerank": {"enabled": False}},
+           "paths": {"org_csv": "unused.csv"}}
     write_jsonl(chunks(1), tmp_path / "chunks.jsonl")
     write_jsonl([], tmp_path / "docs.jsonl")
     directory = tmp_path / "index"
