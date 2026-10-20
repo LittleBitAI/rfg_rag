@@ -456,11 +456,15 @@ Both reasons map to `invalid_comparison` in A's failure memory. Only names expli
 entities proceed to the existing independent answer checks. Uncited headers cannot authorize names.
 Comparisons citing no requirement IDs retain their existing behavior.
 
-Before reading roles, each consumer follows the generation run → pinned plan → evidence run and
-checks `corpus/chunks.jsonl` against the evidence run's SHA-256. It also compares cited plan roles
-with the source roles. Changes to bodies, requirement links or annotations stop processing before
-judgments, calls or output writes. The role cache includes the chunk hash, which is checked even
-on cache hits. Rename still reads the current `data/data_list.csv` for updated organization names.
+Before reading roles, each consumer verifies the generation run's plan SHA, then checks the source
+package's `manifest.json` against the plan's `package_manifest_sha256`. It reads the chunk hash
+from that verified manifest's file declarations and checks `corpus/chunks.jsonl` before using roles.
+Rewriting the evidence-run manifest cannot authorize a changed source; rewriting the source manifest
+also fails the plan's fixed hash. Cited plan roles must still match source roles. Changes to bodies,
+requirement links or annotations stop processing before judgments, calls or output writes, including
+on role-cache hits. Whole-document validation uses the same anchor for all source files. Rename
+checks the fixed manifest and chunks while still reading current `data/data_list.csv` contents for
+updated organization names.
 
 To use requirement comparisons from an old package, its owner must prepare a new package with
 trusted annotations and updated manifest hashes, then create a new evidence run, plan and generation
@@ -468,7 +472,7 @@ run. Existing outputs are not rewritten. Legacy unannotated requirement comparis
 when validated or rechecked by release/rename. This change includes no dataset migration or paid
 annotation calls; the producer-to-consumer contract is tested with synthetic source packages.
 
-The validator version is `validation-11`. B/C validation and A loops started with versions 7–10
+The validator version is `validation-12`. B/C validation and A loops started with versions 7–11
 must use new runs, preventing old and new criteria from being mixed within a run.
 
 거절은 끝 상태라 사람이 되돌릴 수 없습니다.

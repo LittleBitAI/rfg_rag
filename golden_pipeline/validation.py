@@ -19,7 +19,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-11"
+VALIDATOR_VERSION = "validation-12"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -206,7 +206,7 @@ def _documents(topic, planned, bundles, candidates):
     if topic not in DOCUMENT_TOPICS:
         return {}
     run_dir = storage._child(storage.OUTPUTS / "evidence", planned["evidence_run"])
-    plan._check_package(evidence.PACKAGE, storage._read_json(run_dir / "manifest.json")["pinned_sha256"])
+    _planned_package(planned, evidence.PINNED[1:])
     asked = {item["candidate_id"]: bundles[item["bundle_id"]]["doc_sha"] for item in candidates}
     found = plan.document_units(run_dir, set(asked.values()))
     return {candidate_id: found[doc] for candidate_id, doc in asked.items()}
@@ -684,11 +684,18 @@ def _pinned_roles(item):
     planned, sha = plan.load_plan(generated["plan_id"])
     if sha != generated["plan_sha256"]:
         raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {item['run_id']} 을 만든 뒤 바뀌었습니다")
-    evidence_dir = storage._child(storage.OUTPUTS / "evidence", planned["evidence_run"])
-    pinned = storage._read_json(evidence_dir / "manifest.json")["pinned_sha256"]
-    # rename 은 현재 기관 이름을 써야 하므로 이름 파일이 아니라 판정에 쓰는 청크의 해시만 확인한다.
-    plan._check_package(evidence.PACKAGE, {evidence.CHUNKS: pinned[evidence.CHUNKS]})
+    # Rename may update agency names; only the source chunks affect role judgments.
+    pinned = _planned_package(planned, [evidence.CHUNKS])
     return evidence.role_annotations(evidence.PACKAGE, pinned[evidence.CHUNKS])
+
+
+def _planned_package(planned, files):
+    """Read file hashes only from the package manifest anchored in the fixed plan."""
+    plan._check_package(evidence.PACKAGE, {"manifest.json": planned["package_manifest_sha256"]})
+    declared = storage._read_json(evidence.PACKAGE / "manifest.json")["files"]
+    pinned = {name: declared[name]["sha256"] for name in files}
+    plan._check_package(evidence.PACKAGE, pinned)
+    return pinned
 
 
 def _single_unit_verdict(item, units, full, ask, judge):

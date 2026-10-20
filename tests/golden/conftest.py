@@ -163,7 +163,9 @@ def evidence_run(outputs, tmp_path, monkeypatch):
     ])
     (package / evidence.AGENCIES).write_text(
         "파일명,발주기관\n사단법인가기관_가사업 구축.hwp,가기관\n나기관_[재공고]나사업 운영.hwp,나기관\n", encoding="utf-8")
-    (package / "manifest.json").write_text('{"package": "fake v12"}', encoding="utf-8")
+    (package / "manifest.json").write_text(json.dumps({"package": "fake v12", "files": {
+        name: {"sha256": storage._sha256(package / name)} for name in evidence.PINNED[1:]
+    }}), encoding="utf-8")
 
     run_dir = outputs / "outputs" / "evidence" / "ev1"
     run_dir.mkdir(parents=True)

@@ -4,7 +4,7 @@ from collections import deque
 
 import pytest
 
-from golden_pipeline import generation, improvement, report, storage, validation
+from golden_pipeline import evidence, generation, improvement, report, storage, validation
 from golden_pipeline.generation import comparison_answer, generate, import_c, with_document
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.plan import topic_spec as load_topic_spec
@@ -499,7 +499,7 @@ def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_agains
 
 
 @pytest.mark.parametrize("method", ["B", "C"])
-@pytest.mark.parametrize("previous_version", ["validation-7", "validation-8", "validation-9", "validation-10"])
+@pytest.mark.parametrize("previous_version", ["validation-7", "validation-8", "validation-9", "validation-10", "validation-11"])
 def test_resume_refuses_pending_candidates_validated_under_previous_versions(config, monkeypatch, tmp_path, method, previous_version):
     current = validation.VALIDATOR_VERSION
     generator = Generator(NUMERIC)
@@ -575,6 +575,28 @@ def borrowed(config):
     """p3: 문서 1 의 근거(E1 · E2 = u1 · u2)로 문서 2 에 묻는 unanswerable 묶음 하나."""
     make_plan("p3", "ev1", {"unanswerable": 1}, 2000, package=config.parent / "v12")
     return config
+
+
+@pytest.mark.parametrize("topic", ["unanswerable", "false_premise"])
+def test_document_validation_rejects_source_changes_even_if_evidence_hash_is_rewritten(config, topic):
+    package = config.parent / "v12"
+    make_plan("p-document", "ev1", {topic: 1}, 2000, package=package)
+    row = (unanswerable("계약 기간은 얼마인가?", "계약 기간", ["계약"], ["E1"]) if topic == "unanswerable"
+           else {"question": "계약 기간 9개월은 언제 끝나나?", "answer": "계약 기간은 9개월이 아니라 12개월이다.",
+                 "evidence": ["E1"], "structure": {"stated": "9개월", "actual": "12개월"}, "secondary_tags": []})
+    generate("A", topic, "p-document", "a-document", config, Generator(row))
+    path = package / evidence.CHUNKS
+    path.write_text(path.read_text(encoding="utf-8") + '\n', encoding="utf-8")
+    manifest_path = storage.OUTPUTS / "evidence/ev1/manifest.json"
+    manifest = storage._read_json(manifest_path)
+    manifest["pinned_sha256"][evidence.CHUNKS] = storage._sha256(path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    before = storage.snapshot(storage.OUTPUTS)
+    validator = Validator({"*": verdict("12개월", answerable=topic != "unanswerable")})
+    with pytest.raises(evidence.PackageMismatch, match="SHA-256"):
+        validate(topic, "A", "a-document", config, validator)
+    assert validator.requests == []
+    assert storage.snapshot(storage.OUTPUTS) == before
 
 
 def test_an_attribute_found_only_in_a_held_unit_of_the_asked_document_is_rejected(borrowed):

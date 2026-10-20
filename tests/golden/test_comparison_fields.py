@@ -59,7 +59,8 @@ def field_run(evidence_run, make_item, tmp_path, request):
     if case == "missing_roles":
         # New plans exclude unannotated requirements; only this case models a legacy plan.
         path.parent.mkdir()
-        write_json(path, {"evidence_run": "ev-roles", "topic_specs": {"comparison": plan.topic_spec("comparison")[1]}, "bundles": [bundle]})
+        write_json(path, {"evidence_run": "ev-roles", "package_manifest_sha256": storage._sha256(evidence_run / "manifest.json"),
+                          "topic_specs": {"comparison": plan.topic_spec("comparison")[1]}, "bundles": [bundle]})
     else:
         spec_path = storage.CONFIGS / "topics/comparison.json"
         write_json(spec_path, {**plan.topic_spec("comparison")[0], "bundle_units": 1})
@@ -133,20 +134,34 @@ def test_single_requirement_fields_are_rejected_without_calls_in_every_consumer(
 
 @pytest.mark.parametrize("stage", ["validate", "release", "rename"])
 @pytest.mark.parametrize("change", ["body", "requirement_ids", "roles"])
-def test_changed_package_stops_comparison_rules_before_any_writes_or_calls(field_run, evidence_run, stage, change):
+@pytest.mark.parametrize("repin", ["none", "evidence", "evidence_and_package"])
+@pytest.mark.parametrize("field_run", ["detail_entities"], indirect=True)
+def test_changed_package_stops_comparison_rules_before_any_writes_or_calls(field_run, evidence_run, stage, change, repin):
     item, units, config, run_dir = field_run
     previously_accepted(item, stage)
     # 캐시를 채운 뒤 같은 경로의 파생 패키지를 바꿔도 고정 해시를 다시 확인해야 한다.
     validation.rule_reason(item, units)
-    before = storage.snapshot(storage.OUTPUTS)
     [chunk] = storage._read_jsonl(evidence_run / evidence.CHUNKS)
-    chunk[change] = {"body": "다른 본문", "requirement_ids": [], "roles": {"fields": [], "entities": ["고유번호", "분류"]}}[change]
+    chunk[change] = {"body": chunk["body"] + "\nchanged body", "requirement_ids": [],
+                     "roles": {"fields": [], "entities": ["고유번호", "분류"]}}[change]
     _write_jsonl(evidence_run / evidence.CHUNKS, [chunk])
+    if repin != "none":
+        path = storage.OUTPUTS / "evidence/ev-roles/manifest.json"
+        manifest = storage._read_json(path)
+        manifest["pinned_sha256"][evidence.CHUNKS] = storage._sha256(evidence_run / evidence.CHUNKS)
+        if repin == "evidence_and_package":
+            package_path = evidence_run / "manifest.json"
+            package_manifest = storage._read_json(package_path)
+            package_manifest["files"][evidence.CHUNKS]["sha256"] = manifest["pinned_sha256"][evidence.CHUNKS]
+            write_json(package_path, package_manifest)
+            manifest["pinned_sha256"]["manifest.json"] = storage._sha256(package_path)
+        write_json(path, manifest)
+    before = storage.snapshot(storage.OUTPUTS)
 
     def no_calls(**kwargs):
         raise AssertionError("패키지가 바뀌면 호출 전에 멈춰야 합니다")
 
-    with pytest.raises(evidence.PackageMismatch, match="corpus/chunks.jsonl SHA-256"):
+    with pytest.raises(evidence.PackageMismatch, match="SHA-256"):
         if stage == "validate":
             validation.validate("comparison", "C", "c1", config, no_calls)
         elif stage == "release":

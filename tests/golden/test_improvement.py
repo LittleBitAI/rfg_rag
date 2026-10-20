@@ -235,6 +235,10 @@ def write_requirements(package, doc, records, roles):
         json.dumps({"doc_id": doc, "chunk_id": f"c-{rid}", "requirement_ids": [rid], "body": body,
                     "roles": roles.get(rid)}, ensure_ascii=False) + "\n"
         for rid, body in records.items()), encoding="utf-8")
+    package_path = package / "manifest.json"
+    manifest = storage._read_json(package_path)
+    manifest["files"][evidence.CHUNKS]["sha256"] = storage._sha256(package / evidence.CHUNKS)
+    package_path.write_text(json.dumps(manifest), encoding="utf-8")
     path = storage.OUTPUTS / "evidence/ev1/manifest.json"
     path.write_text(json.dumps({"pinned_sha256": {name: storage._sha256(package / name) for name in evidence.PINNED}}),
                     encoding="utf-8")
@@ -315,6 +319,7 @@ def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits,
     ("validator_version_8", ["thresholds"]),
     ("validator_version_9", ["thresholds"]),
     ("validator_version_10", ["thresholds"]),
+    ("validator_version_11", ["thresholds"]),
 ])
 def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, monkeypatch, change, changed):
     # 이어 돌면서 한도 · 계획 · 검증 기준이 바뀌면 한 loop 의 round 들이 서로 다른 조건으로 돌고 report 가 그것을 숨긴다.
@@ -548,7 +553,9 @@ def planned_item(item, text, roles=None):
     """규칙 검사가 읽을 고정 계획을 쓰고 run 의 생성 정보를 돌려준다."""
     plan_path = storage.OUTPUTS / "plans" / f"p-{item['run_id']}.json"
     plan_path.parent.mkdir(exist_ok=True)
-    plan_path.write_text(json.dumps({"evidence_run": "ev1", "bundles": [{"bundle_id": item["bundle_id"],
+    pinned = storage._read_json(storage.OUTPUTS / "evidence/ev1/manifest.json")["pinned_sha256"]
+    plan_path.write_text(json.dumps({"evidence_run": "ev1", "package_manifest_sha256": pinned["manifest.json"],
+                                   "bundles": [{"bundle_id": item["bundle_id"],
                                        "units": [{"ref": item["evidence"][0], "text": text, "roles": roles}]}]}), encoding="utf-8")
     return {"plan_id": f"p-{item['run_id']}", "plan_sha256": storage._sha256(plan_path)}
 
