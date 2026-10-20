@@ -22,7 +22,7 @@ from test_usage import _answer_row
     ("rewrite.output_tokens", 1.5), ("rewrite.cached_input_tokens", True), ("rewrite.reasoning_tokens", None),
     ("rewrite.cost_usd", None), ("rewrite.cost_usd", "0.1"), ("rewrite.cost_usd", False),
     ("rewrite.cost_usd", float("nan")), ("rewrite.cost_usd", float("inf")), ("rewrite.cost_usd", float("-inf")),
-    ("retrieval_settings", None), ("retrieval_settings.dense_weight", "0.6"),
+    ("retrieval_settings", None), ("retrieval_settings.fusion", None), ("retrieval_settings.dense_weight", "0.6"),
     ("retrieval_settings.candidate_k", 50.5), ("retrieval_settings.token_budget", True),
     ("retrieval_settings.chunk_file", None), ("retrieval_settings.k_values", "5,10,20"),
     ("retrieval_settings.k_values.0", True), ("retrieval_settings.stored_rewrites_reused", "false"),

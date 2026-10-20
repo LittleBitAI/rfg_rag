@@ -362,7 +362,7 @@ ANSWER_FIELDS = {
     "answer": str, "contexts": [str], "trace_id": _NULLABLE_TEXT, "latency_s": _NUMERIC_TYPES,
     **_USAGE_FIELDS, "primary_topic": _NULLABLE_TEXT, "context_chunk_ids": [str],
     "rewrite": {"question": str, **_USAGE_FIELDS},
-    "retrieval_settings": {"dense_weight": _NUMERIC_TYPES, "candidate_k": int, "token_budget": int,
+    "retrieval_settings": {"fusion": str, "dense_weight": _NUMERIC_TYPES, "candidate_k": int, "token_budget": int,
                            "chunk_file": str, "k_values": [int], "stored_rewrites_reused": bool},
     "ranked_candidates": [{"chunk_id": str, "doc_id": str, "fused_rank": int,
                            "dense_score": (*_NUMERIC_TYPES, type(None)), "dense_rank": (int, type(None)),

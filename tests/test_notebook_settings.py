@@ -72,7 +72,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
     namespace = {"cfg": deepcopy(defaults), "ARTIFACTS": tmp_path, "write_jsonl": write_jsonl}
     _run_cell("02_retrieval.ipynb", "REWRITE_MODEL =", namespace,
               REWRITE_MODEL="selected-rewrite-model", REWRITE_REASONING_EFFORT="high",
-              REWRITE_MAX_TOKENS=1234, REWRITE_PRICES=[1.0, 0.1, 4.0], DENSE_WEIGHT=0.25)
+              REWRITE_MAX_TOKENS=1234, REWRITE_PRICES=[1.0, 0.1, 4.0], FUSION="minmax", DENSE_WEIGHT=0.25)
     namespace.update(load_config=lambda: deepcopy(defaults), read_jsonl=read_jsonl)
     _run_cell("04_generation.ipynb", "import pandas", namespace)
     _run_cell("04_generation.ipynb", "LLM_MODEL =", namespace,
@@ -86,6 +86,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
     _run_cell("04_generation.ipynb", "eval_set =", namespace)
 
     used_cfg = namespace["HybridIndex"].call_args.args[1]
+    assert used_cfg["retrieval"]["fusion"] == "minmax"
     assert used_cfg["retrieval"]["dense_weight"] == 0.25
     assert used_cfg["rewrite"] == {**defaults["rewrite"], "model": "selected-rewrite-model",
                                    "reasoning_effort": "high", "max_tokens": 1234,

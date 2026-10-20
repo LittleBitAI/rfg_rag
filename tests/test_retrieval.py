@@ -6,7 +6,7 @@ import pytest
 
 from rag.preprocessing import parsing
 from rag.retrieval.indexing import Embedder, KiwiTokenizer, find_codes, search_texts, texts_digest
-from rag.retrieval.retrieval import DocRouter, HybridIndex, _check_index, _link_index, read_csv_orgs
+from rag.retrieval.retrieval import DocRouter, HybridIndex, _check_index, _link_index, _rrf, read_csv_orgs
 
 
 def ranked(pairs):
@@ -25,7 +25,7 @@ def make_index(bodies, costs, budget=2500, doc_ids=None, requirements=None, tabl
                     for i, (body, doc, req, table) in enumerate(zip(bodies, doc_ids, requirements, tables))]
     index.doc_ids = np.array(doc_ids)
     index.code_chunks, index.links = _link_index(index.chunks)
-    index.rcfg = {"token_budget": budget, "dense_weight": 0.6, "candidate_k": 50}
+    index.rcfg = {"token_budget": budget, "fusion": "minmax", "dense_weight": 0.6, "candidate_k": 50}
     index.chunk_file = "fixture/chunks.jsonl"
     index.embedder = MagicMock()
     index.embedder.token_counts.side_effect = lambda texts: [costs[bodies.index(text)] for text in texts]
@@ -568,3 +568,26 @@ def test_reranker_scores_question_chunk_pairs(monkeypatch):
     assert reranker.scores("질문", ["청크1", "청크2"]) == [0.7, 0.2]
     cross_encoder.assert_called_once_with("reranker", device="cpu", max_length=512)
     cross_encoder.return_value.predict.assert_called_once_with([("질문", "청크1"), ("질문", "청크2")], batch_size=4)
+
+
+# ── RRF: Dense · BM25 를 점수가 아니라 순위로 합친다 ──
+def test_rrf_sums_reciprocal_ranks_so_chunks_high_in_both_searches_come_first():
+    dense = {0: 0.91, 1: 0.90, 2: 0.10}        # 코사인: 0 > 1 > 2
+    sparse = {1: 35.0, 2: 30.0, 3: 2.0}        # BM25: 1 > 2 > 3 (척도가 달라도 순위만 쓴다)
+
+    fused = _rrf(dense, sparse)
+
+    assert fused == pytest.approx({0: 1 / 61, 1: 1 / 62 + 1 / 61, 2: 1 / 63 + 1 / 62, 3: 1 / 63})
+    assert sorted(fused, key=fused.get, reverse=True) == [1, 2, 0, 3]
+
+
+def test_rank_orders_by_rrf_and_keeps_exact_code_chunks_first():
+    index = make_index(["SFR-001 코드 근거", "두 검색 모두 2위", "Dense 1위", "BM25 1위"], [1, 1, 1, 1])
+    index.rcfg["fusion"] = "rrf"
+    index._dense = MagicMock(return_value={2: 0.9, 1: 0.8})
+    index._sparse = MagicMock(return_value={3: 9.0, 1: 8.0})
+
+    ranked = index._rank("질문", {"SFR-001"}, None)
+
+    assert [c["index"] for c in ranked] == [0, 1, 2, 3]  # 코드 일치 · 양쪽 2위(2/62) > 한쪽 1위(1/61)
+    assert ranked[1]["dense_rank"] == ranked[1]["bm25_rank"] == 2  # 성분 순위는 그대로 남는다

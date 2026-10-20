@@ -283,7 +283,7 @@ def _answer_row() -> dict:
                                    "dense_rank": 1, "dense_score": 0.7, "bm25_rank": 1,
                                    "bm25_score": 2.0, "exact_code_match": False}],
             "context_chunk_ids": ["c1"],
-            "retrieval_settings": {"dense_weight": 0.6, "candidate_k": 50, "token_budget": 2500,
+            "retrieval_settings": {"fusion": "rrf", "dense_weight": 0.6, "candidate_k": 50, "token_budget": 2500,
                                    "chunk_file": "fixture/chunks.jsonl", "k_values": [5, 10, 20],
                                    "stored_rewrites_reused": False},
             "rewrite": {"question": "재작성 질문", "input_tokens": 20, "cached_input_tokens": 0, "output_tokens": 10,
@@ -365,7 +365,7 @@ def test_each_evaluation_function_saves_scores_without_notebook(monkeypatch, tmp
     "ranked_candidates.chunk_id", "ranked_candidates.doc_id", "ranked_candidates.fused_rank",
     "ranked_candidates.dense_score", "ranked_candidates.dense_rank", "ranked_candidates.bm25_score",
     "ranked_candidates.bm25_rank", "ranked_candidates.exact_code_match", "evidence.doc_id", "evidence.chunk_id",
-    "retrieval_settings.dense_weight", "retrieval_settings.candidate_k", "retrieval_settings.token_budget",
+    "retrieval_settings.fusion", "retrieval_settings.dense_weight", "retrieval_settings.candidate_k", "retrieval_settings.token_budget",
     "retrieval_settings.chunk_file", "retrieval_settings.k_values", "retrieval_settings.stored_rewrites_reused",
 ])
 def test_incomplete_answers_stop_before_ragas_is_paid(monkeypatch, tmp_path, name, field):

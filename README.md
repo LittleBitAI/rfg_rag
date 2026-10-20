@@ -189,11 +189,12 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 | 노트북 | 설정 셀에서 조절하는 값 |
 |---|---|
 | 01 전처리 | `OCR`, `OCR_MODEL`, `OCR_REASONING_EFFORT`, `OCR_MAX_TOKENS`, `OCR_PRICES`, `CHUNK_SIZE` |
-| 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `REWRITE_PRICES`, `DENSE_WEIGHT` (BM25는 `1 - DENSE_WEIGHT`) |
+| 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `REWRITE_PRICES`, `FUSION` (`"rrf"` 순위 합 / `"minmax"` 점수 가중합), `DENSE_WEIGHT` (`minmax` 일 때, BM25는 `1 - DENSE_WEIGHT`) |
 | 04 생성 | `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_TOKENS`, `LLM_PRICES` |
 | 05 평가 | `JUDGE` (`"ragas"` gpt 심판 / `"local"` 로컬 리랭커, API 0원), `JUDGE_MODEL`, `JUDGE_REASONING_EFFORT`, `JUDGE_MAX_TOKENS`, `JUDGE_PRICES` (`ragas` 일 때만) |
 
-예를 들어 02 설정 셀의 `DENSE_WEIGHT = cfg["retrieval"]["dense_weight"]`를 `DENSE_WEIGHT = 0.8`로 바꾸면 Dense 80%·BM25 20%로 검색합니다.
+Dense · BM25 후보(각각 상위 `candidate_k` 50개)는 기본으로 RRF(Reciprocal Rank Fusion, 후보마다 `Σ 1/(60 + 순위)`)로 합칩니다 — 점수 크기가 아니라 각 검색의 순위만 써서, 척도가 다른 두 점수를 비율로 섞지 않습니다.
+예를 들어 02 설정 셀에서 `FUSION = "minmax"`, `DENSE_WEIGHT = 0.8`로 바꾸면 두 점수를 0~1로 맞춘 뒤 Dense 80%·BM25 20%로 섞습니다. 7모델 벤치마크는 가중치를 바꿔 재므로 늘 `minmax`로 돕니다.
 설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
 기존 색인을 재사용할 때도 02의 설정 셀을 실행해 이 파일을 만든 뒤 04를 실행하세요. 단, 토크나이저 지문이 없거나 현재 코드·사전·패키지와 다르면 검색 시 오류로 중단합니다. 이번 Kiwi 변경 전 색인은 재사용할 수 없으므로 02의 불러오기·설정 셀과 `1. 색인 만들기`의 `build_index` 셀을 실행한 뒤 04나 질문 화면을 실행하세요. 이 색인 재구축은 로컬 작업이며 유료 질문 재작성 예제 셀을 실행할 필요가 없습니다.
 `bm25_tokens.json`은 토큰과 지문을 함께 저장합니다. 지문은 줄바꿈을 정규화한 `indexing.py` 전체 코드, 생성 사전, `kiwipiepy`·모델 데이터·`hanja` 버전을 포함합니다. 따라서 이 모듈의 토큰 규칙 외 변경도 보수적으로 재구축을 요구합니다. 청킹 크기를 바꾸면 01부터 다시 실행합니다. 검색 설정 조절은 저장 rewrite가 있는 dev에서 아래 검색 전용 재실행으로 비교할 수 있습니다. 새 설정의 답변·심판 결과가 필요하면 04도 다시 실행합니다.
@@ -208,7 +209,7 @@ Rolling back code after rebuilding also requires a coordinated index downgrade. 
 질문마다 재작성 API 호출 비용이 추가되며, 04의 `answers.jsonl`에는 검색용 질문·모델·토큰·비용·지연 시간을 `rewrite` 필드에 별도로 저장합니다.
 답변 생성도 실제 응답 모델·캐시 입력 토큰·비용을 저장합니다. 05는 저장된 비용을 사용하므로 평가 시 설정을 바꿔도 이전 생성 비용이 바뀌지 않습니다.
 `latency_s`는 재작성·검색·답변 생성 전체 시간입니다. `end_to_end.csv`의 `cost_usd`는 rewrite + 답변 생성 비용이며 `rewrite_cost_usd`, `answer_cost_usd`로 구분됩니다. OCR과 평가 비용은 별도로 집계합니다.
-04는 `ranked_candidates`에 패킹 전 후보의 `chunk_id`, `doc_id`, `fused_rank`, `dense_score`, `dense_rank`, `bm25_score`, `bm25_rank`, `exact_code_match`를 저장합니다. 순위는 1부터 시작하며 해당 성분의 후보가 아니면 점수·순위는 null입니다. `context_chunk_ids`는 실제 LLM에 보낸 청크 ID입니다. `retrieval_settings`는 `dense_weight`, `candidate_k`, `token_budget`, 활성 `chunk_file`, `k_values`(5,10,20), `stored_rewrites_reused`를 기록합니다.
+04는 `ranked_candidates`에 패킹 전 후보의 `chunk_id`, `doc_id`, `fused_rank`, `dense_score`, `dense_rank`, `bm25_score`, `bm25_rank`, `exact_code_match`를 저장합니다. 순위는 1부터 시작하며 해당 성분의 후보가 아니면 점수·순위는 null입니다. `context_chunk_ids`는 실제 LLM에 보낸 청크 ID입니다. `retrieval_settings`는 `fusion`, `dense_weight`, `candidate_k`, `token_budget`, 활성 `chunk_file`, `k_values`(5,10,20), `stored_rewrites_reused`를 기록합니다.
 04는 라벨 필드가 없는 옛 eval_set을, 05의 네 함수는 새 검색 기록·rewrite 등이 없는 옛 answers를 유료 호출 전에 거부합니다. 빠진 필드를 확인하고 03 → 02 설정 셀 → 04 → 05를 실행하세요. `search()`의 반환값은 유지하며, `search_with_candidates()`는 같은 검색 결과와 읽기 전용 후보 스냅샷을 함께 반환합니다.
 
 ## 질문 화면 — 브라우저에서 묻고 답 받기
@@ -356,7 +357,7 @@ from rag.evaluation.evaluation import rerun_retrieval, evaluate_retrieval
 from rag.evaluation.ir import component_table, coverage_table
 
 cfg = load_config()
-cfg["retrieval"].update(dense_weight=0.5, candidate_k=50, token_budget=2500)
+cfg["retrieval"].update(fusion="minmax", dense_weight=0.5, candidate_k=50, token_budget=2500)
 path = ARTIFACTS / "dev_rerun" / "answers.jsonl"
 rerun_retrieval(ARTIFACTS / "answers.jsonl", path, HybridIndex(ARTIFACTS, cfg))
 scores = evaluate_retrieval(path, cfg)

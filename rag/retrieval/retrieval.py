@@ -91,6 +91,19 @@ def _minmax(d: dict[int, float]) -> dict[int, float]:
     return {k: (v - lo) / (hi - lo) for k, v in d.items()}
 
 
+_RRF_K = 60  # RRF 상수 — 1위와 10위의 차이를 완만하게 한다 (RRF 원 논문 · 대부분 구현의 기본값)
+
+
+def _rrf(*rankings: dict[int, float]) -> dict[int, float]:
+    """Reciprocal Rank Fusion — 후보마다 Σ 1 / (_RRF_K + 순위). 점수 크기가 아니라 각 검색에서의 순위만 쓴다.
+    Dense(코사인)와 BM25 점수는 척도가 달라 비율로 섞으면 질문마다 뜻이 달라지는데, 순위는 그렇지 않다"""
+    fused: dict[int, float] = defaultdict(float)
+    for scores in rankings:
+        for rank, i in enumerate(sorted(scores, key=scores.get, reverse=True), 1):
+            fused[i] += 1 / (_RRF_K + rank)
+    return dict(fused)
+
+
 def _link_index(chunks: list[dict]) -> tuple[dict[str, set[int]], list[list[int]]]:
     """(요구사항 코드 → 청크들, 청크마다 함께 담을 연결 청크들 — 담을 우선순위 순서).
     전처리 패키지의 연결 정보를 쓴다. 우선순위는 묶음의 첫 청크(표 머리글 · 요구사항 ID 와 명칭 — v11 의 이어지는 표
@@ -135,7 +148,9 @@ def _check_index(index_dir: Path, texts: list[str]):
 
 
 class HybridIndex:
-    """final = w·Dense + (1-w)·BM25 — 두 후보군을 각각 min-max 정규화한 뒤 가중합 (w = dense_weight, 0=BM25만, 1=Dense만).
+    """Dense · BM25 후보(각각 상위 candidate_k)를 retrieval.fusion 으로 합친다.
+      rrf     순위 역수 합 — 두 검색 모두에서 위에 있는 청크가 앞에 온다 (기본값)
+      minmax  w·Dense + (1-w)·BM25 — 두 후보군을 각각 min-max 정규화한 뒤 가중합 (w = dense_weight, 0=BM25만, 1=Dense만)
     질문에 발주기관이 나오면 그 기관 문서 안에서만 찾는다 (DocRouter).
     찾은 청크에 연결 청크(같은 요구사항의 ID · 명칭 / 상세 내용, 같은 표의 나뉜 부분)가 있으면 바로 뒤에 함께 담는다.
     retrieval.rerank.enabled 이면 상위 후보를 로컬 크로스 인코더(Reranker)로 다시 정렬한다."""
@@ -258,12 +273,7 @@ class HybridIndex:
     def _rank(self, question: str, codes: set[str], doc_ids: set | None, preferred: set = frozenset()) -> list[dict]:
         """preferred 문서(질문에 사업명이 나온 문서)의 후보를 먼저, 같은 기관의 다른 사업 문서는 그 뒤에 둔다"""
         allowed = np.isin(self.doc_ids, list(doc_ids)) if doc_ids else np.ones(len(self.chunks), dtype=bool)
-        w = float(self.rcfg["dense_weight"])
-        # 가중치 0 인 쪽은 후보도 내지 않는다 — 내면 점수 0 짜리 무관한 청크가 결과에 섞인다
-        dense_raw = self._dense(question, allowed) if w > 0 else {}
-        sparse_raw = self._sparse(question, allowed) if w < 1 else {}
-        dense, sparse = _minmax(dense_raw), _minmax(sparse_raw)
-        fused = {i: w * dense.get(i, 0.0) + (1 - w) * sparse.get(i, 0.0) for i in dense.keys() | sparse.keys()}
+        fused, dense_raw, sparse_raw = self._fuse(question, allowed)
         exact = self._exact(codes, allowed)
         fused |= {i: 0.0 for i in exact - fused.keys()}
         order = sorted(fused, key=lambda i: (self.doc_ids[i] in preferred, i in exact, fused[i]), reverse=True)
@@ -275,6 +285,19 @@ class HybridIndex:
         return [{"index": i, "score": fused[i], "dense_score": dense_raw.get(i), "dense_rank": dense_ranks.get(i),
                  "bm25_score": sparse_raw.get(i), "bm25_rank": sparse_ranks.get(i),
                  "exact_code_match": i in exact} for i in order]
+
+    def _fuse(self, question: str, allowed: np.ndarray) -> tuple[dict, dict, dict]:
+        """(합친 점수, Dense 원점수, BM25 원점수). 7모델 벤치마크는 dense_weight 를 바꿔 재므로 minmax 로 고정한다"""
+        if self.rcfg["fusion"] == "rrf":
+            dense_raw, sparse_raw = self._dense(question, allowed), self._sparse(question, allowed)
+            return _rrf(dense_raw, sparse_raw), dense_raw, sparse_raw
+        w = float(self.rcfg["dense_weight"])
+        # 가중치 0 인 쪽은 후보도 내지 않는다 — 내면 점수 0 짜리 무관한 청크가 결과에 섞인다
+        dense_raw = self._dense(question, allowed) if w > 0 else {}
+        sparse_raw = self._sparse(question, allowed) if w < 1 else {}
+        dense, sparse = _minmax(dense_raw), _minmax(sparse_raw)
+        return ({i: w * dense.get(i, 0.0) + (1 - w) * sparse.get(i, 0.0) for i in dense.keys() | sparse.keys()},
+                dense_raw, sparse_raw)
 
     def _rerank(self, question: str, order: list[int], exact: set[int], preferred: set) -> tuple[list[int], dict]:
         """하이브리드 상위 rerank.top_n 후보만 리랭커 점수로 다시 정렬한다. 사업명 문서와 요구사항 코드 일치 청크는 계속

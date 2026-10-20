@@ -56,7 +56,8 @@ retrieval:
   field_similarity: 0.66        # 수량 필드 후보의 코사인 유사도 임계값; 실측 근거는 로컬에 보관
   filter_token_budget: 16000    # 수량 필터의 모든 일치 문서에 균등 배분
   token_budget: 2500           # 검색 결과 본문 토큰 예산 (임베딩 토크나이저 기준)
-  dense_weight: 0.6             # Dense 비율 (BM25 비율 = 1 - dense_weight)
+  fusion: rrf                   # Dense · BM25 합치기 — rrf = 순위 역수 합 Σ 1/(60 + 순위) | minmax = 정규화 점수 가중합
+  dense_weight: 0.6             # fusion: minmax 일 때 Dense 비율 (BM25 비율 = 1 - dense_weight)
   candidate_k: 50               # Dense·BM25 각각에서 뽑는 후보 수
   rerank:                       # 로컬 크로스 인코더로 후보 순서를 다시 매김 (GPU, API 비용 없음)
     enabled: false              # true 면 처음 실행 때 모델(약 2.3GB)을 받고, 순위가 리랭커 순서가 된다
