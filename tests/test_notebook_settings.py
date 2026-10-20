@@ -24,7 +24,7 @@ def test_ocr_parser_uses_selected_model_and_effort(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     cfg = {"model": "gpt-5-mini", "max_tokens": 1234, "reasoning_effort": "high"}
 
-    parser = parsing._ocr_parser(cfg, UsageCallback("ocr", [0.25, 0.025, 2.0]))
+    parser = parsing._ocr_parser(cfg, UsageCallback("ocr", [0.25, 0.025, 2.0], "high"))
 
     assert parser.model.model_name == cfg["model"]
     assert parser.model.max_tokens == 1234
@@ -72,7 +72,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
     namespace = {"cfg": deepcopy(defaults), "ARTIFACTS": tmp_path, "write_jsonl": write_jsonl}
     _run_cell("02_retrieval.ipynb", "REWRITE_MODEL =", namespace,
               REWRITE_MODEL="selected-rewrite-model", REWRITE_REASONING_EFFORT="high",
-              REWRITE_MAX_TOKENS=1234, REWRITE_PRICES=[1.0, 0.1, 4.0], DENSE_WEIGHT=0.25)
+              REWRITE_MAX_TOKENS=1234, REWRITE_PRICES=[1.0, 0.1, 4.0], FUSION="minmax", DENSE_WEIGHT=0.25)
     namespace.update(load_config=lambda: deepcopy(defaults), read_jsonl=read_jsonl)
     _run_cell("04_generation.ipynb", "import pandas", namespace)
     _run_cell("04_generation.ipynb", "LLM_MODEL =", namespace,
@@ -86,6 +86,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
     _run_cell("04_generation.ipynb", "eval_set =", namespace)
 
     used_cfg = namespace["HybridIndex"].call_args.args[1]
+    assert used_cfg["retrieval"]["fusion"] == "minmax"
     assert used_cfg["retrieval"]["dense_weight"] == 0.25
     assert used_cfg["rewrite"] == {**defaults["rewrite"], "model": "selected-rewrite-model",
                                    "reasoning_effort": "high", "max_tokens": 1234,
@@ -94,7 +95,7 @@ def test_retrieval_notebook_overrides_reach_generation(tmp_path):
         [{"id": "q1", "question": "질문"}], index,
         {**defaults["llm"], "model": "selected-answer-model", "reasoning_effort": "medium", "max_tokens": 2345,
          "usd_per_1m_tokens": [2.0, 0.2, 8.0]},
-        used_cfg["rewrite"])
+        used_cfg["rewrite"], checkpoint_dir=tmp_path / "checkpoints" / "answers")
 
 
 @pytest.mark.parametrize("package,captions_present,ocr", [(None, False, False), (None, True, False),
@@ -111,7 +112,7 @@ def test_preprocessing_notebook_selects_input(tmp_path, package, captions_presen
                  "collect_inputs": MagicMock(return_value=["test.pdf"]),
                  "parse_documents": MagicMock(return_value=docs),
                  "chunk_documents": MagicMock(return_value=chunks),
-                 "load_v11_package": MagicMock(return_value=(docs, chunks)),
+                 "load_package": MagicMock(return_value=(docs, chunks)),
                  "save_chunks": MagicMock(), "parsing_summary": MagicMock(),
                  "chunk_summary": MagicMock(), "display": MagicMock(),
                  "local_input": MagicMock(return_value=resolved_captions)}
@@ -127,16 +128,17 @@ def test_preprocessing_notebook_selects_input(tmp_path, package, captions_presen
         namespace["collect_inputs"].assert_called_once()
         namespace["parse_documents"].assert_called_once_with(
             ["test.pdf"], defaults["parsing"], ocr=ocr, ocr_cfg=defaults["ocr"],
-            captions_path=resolved_captions if not ocr else None)
+            captions_path=resolved_captions if not ocr else None,
+            cache_dir=tmp_path / "artifacts" / "checkpoints" / "parsed")
         if not ocr:
             namespace["local_input"].assert_called_once_with(tmp_path, tmp_path / defaults["paths"]["ocr_captions"])
         else:
             namespace["local_input"].assert_not_called()
         namespace["chunk_documents"].assert_called_once_with(
             docs, defaults["chunking"], position_captions=captions_present and not ocr)
-        namespace["load_v11_package"].assert_not_called()
+        namespace["load_package"].assert_not_called()
     else:
-        namespace["load_v11_package"].assert_called_once_with(tmp_path / package)
+        namespace["load_package"].assert_called_once_with(tmp_path / package)
         for name in ["collect_inputs", "parse_documents", "chunk_documents", "parsing_summary"]:
             namespace[name].assert_not_called()
         namespace["local_input"].assert_not_called()

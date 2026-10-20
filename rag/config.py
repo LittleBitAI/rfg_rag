@@ -22,11 +22,34 @@ def load_config() -> dict:
 
 
 def write_jsonl(rows: list[dict], path: Path):
+    """임시 파일에 쓴 뒤 바꿔치기해, 쓰는 도중 끊겨도 반쯤 쓰인 파일이 남지 않는다"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+    tmp.replace(path)
 
 
 def read_jsonl(path: Path) -> list[dict]:
     with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def append_jsonl(row: dict, path: Path):
+    """체크포인트에 한 줄 덧붙인다 (04 답변 · 05 점수를 하나 끝낼 때마다)"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def read_checkpoint(path: Path) -> list[dict]:
+    """체크포인트를 읽는다. 쓰다 끊긴 마지막 줄부터는 버린다 (없으면 빈 목록).
+    한글 글자 중간에서 끊길 수 있으므로 파일 전체가 아니라 줄마다 UTF-8 로 푼다."""
+    rows = []
+    if path.exists():
+        for line in path.read_bytes().splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:  # JSONDecodeError · UnicodeDecodeError 둘 다
+                break
+    return rows

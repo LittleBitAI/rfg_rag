@@ -36,7 +36,7 @@ class BenchmarkIndex(HybridIndex):
         self.configure("kiwi", 0.6, "integrated")
 
     def configure(self, sparse, weight, mode):
-        self.rcfg["dense_weight"] = weight
+        self.rcfg["fusion"], self.rcfg["dense_weight"] = "minmax", weight
         self.bm25 = self.sparse_indexes[sparse]
         self.tokenizer = self.kiwi if sparse == "kiwi" else str.split
         self.mode = mode

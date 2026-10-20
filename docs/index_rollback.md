@@ -70,6 +70,7 @@ there is no fallback reader, new configuration or automatic tokenizer conversion
    query = "개인정보처리시스템"
    assert index.bm25.corpus_size == len(index.chunks)
    assert len(index.bm25.get_scores(index.tokenizer(query))) == len(index.chunks)
+   index.rcfg["fusion"] = "minmax"  # dense_weight 0 = BM25만은 minmax 에서만 뜻이 있다
    for weight in (0, cfg["retrieval"]["dense_weight"]):
        index.rcfg["dense_weight"] = weight
        hits = index.search(query)
