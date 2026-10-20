@@ -1,147 +1,174 @@
-"""③ 검증 — 평가 데이터셋 만들기: 청크로 QA 생성 → 근거 키워드 정리 → train/valid/test 분할,
-골든 셋·평가 질문 + test QA 를 점검해 평가에 쓸 수 있는 항목만 남긴다.
+"""③ 검증 — 평가 데이터셋 만들기: 골든 dev 분할 · 평가 질문을 같은 형식으로 모아 점검해
+평가에 쓸 수 있는 항목만 남긴다.
 담당: 검증.  결과(artifacts/eval_set.jsonl)를 04 생성이 답하고 05 평가가 채점한다."""
 from __future__ import annotations
 
-import json
-import random
 import re
-from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 
-import openai
 import pandas as pd
 import yaml
-from sklearn.model_selection import train_test_split
 
 from ..config import ROOT, read_jsonl
-
-QA_PROMPT = """다음은 공공기관 제안요청서(RFP)의 일부입니다. 이 내용만으로 답할 수 있는 실무형 질문 1개를 만드세요.
-- 질문에는 어느 사업인지 알 수 있게 사업명/기관명을 자연스럽게 포함
-- 정답은 원문 근거로 1~3문장
-- evidence_keywords: 정답의 근거가 되는 핵심 키워드 3~6개 (원문에 '그대로' 등장하는 단어/수치)
-- question_type: 사실형 | 수치형 | 절차형 | 자격요건형 | 표해석형 중 하나
-JSON 으로만 출력: {{"question": "...", "answer": "...", "evidence_keywords": ["..."], "question_type": "..."}}
-
-[문서] {title} (p.{page}, {kind})
-[내용]
-{body}"""
+from .local_inputs import local_input
 
 
 # ====================================================================================================
-# QA 생성 · 근거 키워드 정리 · 분할
+# 평가 항목: 골든 dev 분할 · 평가 질문 → 같은 형식으로 모아 점검
 # ====================================================================================================
-def _pick_chunks(chunks: list[dict], per_doc: int, min_chars: int, seed: int) -> list[dict]:
-    """문서마다 min_chars 이상인 청크를 무작위로 per_doc 개"""
-    rng = random.Random(seed)
-    by_doc: dict[str, list[dict]] = {}
-    for c in chunks:
-        if len(c["body"]) >= min_chars:
-            by_doc.setdefault(c["doc_id"], []).append(c)
-    picked = []
-    for doc_id in sorted(by_doc):
-        cs = by_doc[doc_id][:]
-        rng.shuffle(cs)
-        picked += cs[:per_doc]
-    return picked
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
 
 
-def _qa_for_chunk(client: openai.OpenAI, chunk: dict, vcfg: dict, model: str) -> dict | None:
-    prompt = QA_PROMPT.format(title=chunk["title"], page=chunk["page"], kind=chunk["kind"], body=chunk["body"][:3000])
-    try:
-        resp = client.chat.completions.create(
-            model=model, messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"},
-            max_completion_tokens=int(vcfg["qa_max_tokens"]), reasoning_effort=vcfg["qa_reasoning_effort"])
-        qa = json.loads(resp.choices[0].message.content or "")
-    except (openai.APIError, json.JSONDecodeError) as e:  # 수천 번 호출 중 한두 번의 실패로 전체를 버리지 않는다
-        print(f"QA 생성 실패 {chunk['chunk_id']}: {type(e).__name__}")
+def _raw_cells(context: str) -> list[list[str]]:
+    """골든 근거 글 → 근거 단위([E1] …)마다 ' | ' 로 나눈 표 칸 (줄바꿈 그대로)"""
+    return [unit.split(" | ") for unit in re.split(r"^\[E\d+[^\]\n]*\]$", context, flags=re.M)]
+
+
+def _cells(context: str) -> list[list[str]]:
+    return [[_squash(cell) for cell in cells] for cells in _raw_cells(context)]
+
+
+def _cell_items(cell: str) -> list[str]:
+    """칸 전체와 그 안의 글머리 항목(줄, 또는 한 줄 안의 ' o ' ' - ' 등으로 이어 적힌 항목) — 칸 하나에 사실 여럿이
+    적힌 경우, 정답이 그중 일부만 옮겨도 그 항목들이 따로 사실이 된다. 쉼표로는 나누지 않는다(2,150 · 이름 속 쉼표)"""
+    items = re.split(r"\n|(?:^|\s)(?:[◦○●•·∘ㅇo*\-‑–]|\d+[.)])(?=\s)", cell)
+    return [_squash(cell)] + [_squash(item) for item in items]
+
+
+def _field_names(rows: list[dict]) -> set[str]:
+    """여러 문서(3개 이상)에서 표 행의 첫 칸으로 되풀이되는 글 — '요구사항 분류' 같은 항목 이름.
+    첫 칸이 값('DAR-002')인 행도 있어 자리만으로는 가를 수 없다. 값은 한두 문서에만 나온다."""
+    docs = {}
+    for row in rows:
+        for cells in _cells(row.get("context") or ""):
+            if len(cells) > 1:
+                docs.setdefault(cells[0], set()).update(ref["doc_sha"] for ref in row["evidence"])
+    # 행 번호(1 · 2 · 3)도 첫 칸으로 되풀이되지만 이름이 아니다 — 배점 4 같은 값을 지운다
+    return {name for name, shas in docs.items() if len(shas) >= 3 and re.search(r"[^\W\d_]", name)}
+
+
+def _quantity(number: str, answer: str) -> str | None:
+    """표의 수와 정답에 붙은 단위를 함께 허용하되 날짜 등 더 긴 수의 일부는 제외한다."""
+    found = re.search(rf"(?<![\d.,]){re.escape(number)}(?![\d]|[.,]\d)([가-힣%]*)", answer)
+    if not found:
         return None
-    return {"id": f"qa_{chunk['chunk_id']}", "chunk_id": chunk["chunk_id"], "doc_id": chunk["doc_id"],
-            "question": str(qa.get("question", "")).strip(), "reference": str(qa.get("answer", "")).strip(),
-            "evidence_keywords": [k.strip() for k in qa.get("evidence_keywords", []) if isinstance(k, str) and k.strip()],
-            "evidence_text": chunk["body"]}
+    return f"{number}|{number}{found[1]}" if found[1] else number
 
 
-def generate_qa(chunks: list[dict], vcfg: dict, model: str) -> list[dict]:
-    """문서당 qa_per_doc 개 청크를 골라 청크마다 gpt 로 (질문, 정답, 근거 키워드) 1개"""
-    picked = _pick_chunks(chunks, int(vcfg["qa_per_doc"]), int(vcfg["qa_min_chunk_chars"]), int(vcfg["seed"]))
-    rows = []
-    with openai.OpenAI(max_retries=3) as client, ThreadPoolExecutor(max_workers=int(vcfg["qa_workers"])) as ex:
-        for i, row in enumerate(ex.map(lambda c: _qa_for_chunk(client, c, vcfg, model), picked), 1):
-            if row and row["question"]:
-                rows.append(row)
-            if i % 50 == 0 or i == len(picked):
-                print(f"QA {i}/{len(picked)}")
-    return rows
+_ENDINGS = re.compile(r"은|는|이|가|을|를|의|에|와|과|및|로|로는|으로|이며|이고|이다|하며|한다|함|등|그")
 
 
-def _compact(s: str) -> str:
-    """키워드 매칭용: 공백/기호 제거 + 소문자"""
-    return re.sub(r"[\s\W_]+", "", s).lower()
+def _letters(text: str) -> int:
+    return len(re.findall(r"[가-힣A-Za-z0-9]", text))
 
 
-def filter_qa(rows: list[dict], vcfg: dict) -> list[dict]:
-    """근거 청크에 실제로 있는 근거 키워드만 남기고(최대 max_keywords 개), min_keywords 개보다 적으면 그 QA 를 뺀다"""
-    out = []
-    for r in rows:
-        context = _compact(r["evidence_text"])
-        kws = [k for k in dict.fromkeys(r["evidence_keywords"]) if _compact(k) and _compact(k) in context]
-        kws = kws[: int(vcfg["max_keywords"])]
-        if len(kws) >= int(vcfg["min_keywords"]):
-            out.append({**r, "evidence_keywords": kws})
-    return out
+def _coverage(row: dict, facts: list[str], field_names: set[str]) -> float:
+    """정답 글자 중 사실이 덮는 몫. 항목 이름 · 'X:' 꼴 이름 · 질문에 있는 낱말 · 조사뿐인 낱말은 셈에서 뺀다"""
+    answer = _squash(row["answer"])
+    rest = answer
+    for fact in sorted({alt for f in facts for alt in f.split("|")}, key=len, reverse=True):
+        rest = rest.replace(fact, " ")
+    covered = _letters(answer) - _letters(rest)
+    for word in sorted(field_names | set(_squash(row["question"]).split()), key=len, reverse=True):
+        if len(word) > 1:
+            rest = rest.replace(word, " ")
+    rest = re.sub(r"[^\s:;.]+(?: [^\s:;.]+)?\s*:", " ", rest)
+    left = sum(_letters(w) for w in re.findall(r"[가-힣A-Za-z0-9‧/]+", rest) if not _ENDINGS.fullmatch(w))
+    return covered / (covered + left)
 
 
-def _doc_labels(rows: list[dict]) -> list[str] | None:
-    """문서(doc_id)별 층화 라벨. QA 가 1개뿐인 문서는 '__rare__' 로 묶고, 그것도 1개면 가장 큰 문서에 넣는다"""
-    raw = [r["doc_id"] for r in rows]
-    count = Counter(raw)
-    labels = [x if count[x] >= 2 else "__rare__" for x in raw]
-    if Counter(labels)["__rare__"] == 1:
-        top = Counter(labels).most_common(1)[0][0]
-        labels = [top if x == "__rare__" else x for x in labels]
-    return labels if len(set(labels)) > 1 else None
+def _starts(text: str, part: str) -> list[int]:
+    return [m.start() for m in re.finditer(re.escape(part), text)]
 
 
-def _split(rows: list[dict], share: float, seed: int) -> tuple[list[dict], list[dict]]:
-    if share <= 0 or len(rows) < 2:
-        return rows, []
-    try:
-        return train_test_split(rows, test_size=share, random_state=seed, stratify=_doc_labels(rows))
-    except ValueError:  # 층(문서) 수가 나눌 개수보다 많으면 층화 없이 나눈다
-        return train_test_split(rows, test_size=share, random_state=seed)
+def _copied(value: str, answer: str, question: str) -> bool:
+    """정답의 모든 출현이 질문을 옮긴 자리인지 인접 글자까지 확인한다."""
+    v, a, q = (re.sub(r"\s+", "", t) for t in (value, answer, question))
+    return all((s > 0 and a[s - 1:s + len(v)] in q) or (s + len(v) < len(a) and a[s:s + len(v) + 1] in q)
+               for s in _starts(a, v))
 
 
-def split_qa(rows: list[dict], vcfg: dict) -> dict[str, list[dict]]:
-    """split_ratio [train, valid, test] 로 문서별 층화 분할"""
-    train_r, valid_r, test_r = (float(r) / sum(vcfg["split_ratio"]) for r in vcfg["split_ratio"])
-    seed = int(vcfg["seed"])
-    rest, test = _split(rows, test_r, seed)
-    train, valid = _split(rest, valid_r / (train_r + valid_r), seed)
-    return {"train": train, "valid": valid, "test": test}
+def _inside_longer(value: str, answer: str, found: list[str]) -> bool:
+    """더 긴 값 밖에도 독립적으로 나온 짧은 값은 제외하지 않는다."""
+    spans = [(s, s + len(other)) for other in found if value != other and value in other for s in _starts(answer, other)]
+    return all(any(b <= s and s + len(value) <= e for b, e in spans) for s in _starts(answer, value))
 
 
-# ====================================================================================================
-# 평가 항목: 골든 셋 · 평가 질문 · test QA → 같은 형식으로 모아 점검
-# ====================================================================================================
-def _eval_item(row: dict) -> dict:
+def _asked_value_in_question(row: dict, field_names: set[str], answer: str, question: str) -> bool:
+    """같은 값이 질문의 조건인지 질문이 요구하는 값인지 구별할 수 없으면 제외한다."""
+    for cells in _raw_cells(row["context"]):
+        label = _squash(cells[0])
+        if len(cells) < 2 or label not in field_names or label.split()[-1] not in question:
+            continue
+        for value in (item for cell in cells[1:] for item in _cell_items(cell)):
+            if len(value) > 1 and value in answer and value in question and not _copied(value, answer, question):
+                return True
+    return False
+
+
+def _multi_hop_key_facts(row: dict, field_names: set[str]) -> list[str]:
+    """정답 글이 언급한 근거 표 칸 값 · 칸 속 글머리 항목 — 05 평가는 사실을 이어진 글자로 찾으므로, 근거 단위마다
+    따로 찾을 수 있는 값이어야 근거를 모두 검색했을 때 만점이 된다. 항목 이름과 질문에 이미 있는 값은 뺀다.
+    정답을 바꿔 말해 사실이 정답의 60% 를 못 덮으면 [] — 답의 일부만으로 만점이 나지 않게 점검에서 뺀다.
+    적용 근거와 데이터셋별 관측은 무시된 로컬 보고서에만 보관한다."""
+    answer, question = _squash(row["answer"]), _squash(row["question"])
+    if _asked_value_in_question(row, field_names, answer, question):
+        return []
+    # 여러 칸 행의 첫 칸은 줄로 나누지 않는다 — '세부\n내용' 처럼 이름이 줄바꿈된 칸이다
+    values = {item for cells in _raw_cells(row["context"]) for i, cell in enumerate(cells)
+              for item in (_cell_items(cell) if i or len(cells) == 1 else [_squash(cell)])} - field_names
+    found = [v for v in values if (len(v) > 1 or v.isdigit()) and v in answer and v not in question]
+    facts = [v for v in found if not _inside_longer(v, answer, found)]
+    facts = [f for f in (_quantity(v, answer) if re.fullmatch(r"[\d,.]+", v) else v for v in facts) if f]
+    return sorted(facts) if facts and _coverage(row, facts, field_names) >= 0.6 else []
+
+
+def _golden_key_facts(row: dict, field_names: set[str]) -> list[str]:
+    """주제별 structure 값 — 골든 검증이 근거와 대조한 값이라 문장형 정답보다 답에 그대로 나올 가능성이 높다"""
+    topic, s = row["primary_topic"], row["structure"]
+    if topic == "numeric":
+        return [s["value"] + s["unit"]]
+    if topic == "comparison":
+        return [s["choice"]]  # 비교 질문은 모두 '어느 쪽' 을 묻는다. 값은 질문에 이미 적혀 있기도 하다
+    if topic == "condition":
+        return [s["condition"]]
+    if topic == "multi_hop":
+        return _multi_hop_key_facts(row, field_names)
+    if topic == "unanswerable":
+        return ["확인할 수 없"]  # 문서에 없는 내용 — 04 생성의 거절 문장 '제공된 문서에서 확인할 수 없습니다.' 를 찾는다
+    if topic == "false_premise":
+        return [s["actual"]]  # 질문의 틀린 전제를 바로잡은 문서의 값
+    # 표 칸 안의 ' | ' 는 칸 구분선이다. 05 평가의 'A|B'(둘 중 하나)로 읽히지 않게 칸마다 따로 요구한다
+    return [part.strip() for part in row["answer"].split(" | ")]
+
+
+def _golden_row(row: dict, field_names: set[str]) -> dict:
+    """골든 릴리스 행 → 평가 질문과 같은 필드"""
+    return {"id": row["candidate_id"], "question": row["question"], "reference": row["answer"],
+            "key_facts": _golden_key_facts(row, field_names), "answerable": row["primary_topic"] != "unanswerable"}
+
+
+def _eval_item(row: dict, field_names: set[str]) -> dict:
+    labels = {"evidence_source": "none", "primary_topic": None, "golden_evidence": [], "golden_context": ""}
+    if "candidate_id" in row:
+        labels = {"evidence_source": "golden", "primary_topic": row["primary_topic"],
+                  "golden_evidence": row["evidence"], "golden_context": row["context"]}
+        row = _golden_row(row, field_names)
     return {"id": row["id"], "question": (row.get("question") or "").strip(), "reference": row.get("reference") or "",
-            "key_facts": row.get("key_facts") or row.get("must_include") or [], "conv": row.get("conv")}
+            "key_facts": row.get("key_facts") or row.get("must_include") or [], "conv": row.get("conv"),
+            "reset_context": bool(row.get("reset_context")), "answerable": row.get("answerable", True), **labels}
 
 
 def load_eval_items(paths: list[str]) -> list[dict]:
-    """골든 셋(jsonl)·평가 질문(yaml) → {id, question, reference, key_facts, conv}"""
+    """골든 릴리스(jsonl)·평가 질문(yaml) → 평가 항목과 라벨 연결용 골든 참조·context.
+    answerable 은 답이 문서에 있는가 — 골든 unanswerable 만 False 이고, 05 평가가 그 질문에 맞지 않는 지표를 뺀다"""
     items = []
     for path in paths:
-        path = ROOT / path
+        path = local_input(ROOT, path)
         rows = yaml.safe_load(path.read_text(encoding="utf-8")) if path.suffix == ".yaml" else read_jsonl(path)
-        items += [_eval_item(r) for r in rows]
+        field_names = _field_names(rows)
+        items += [_eval_item(r, field_names) for r in rows]
     return items
-
-
-def qa_eval_items(test_qa: list[dict], max_qa: int) -> list[dict]:
-    """test QA 앞 max_qa 개 → 평가 항목 (핵심 사실 = 근거 키워드)"""
-    return [_eval_item({**r, "key_facts": r["evidence_keywords"]}) for r in test_qa[:max_qa]]
 
 
 def _problem(item: dict, questions: set, convs: set) -> str:
@@ -158,8 +185,13 @@ def _problem(item: dict, questions: set, convs: set) -> str:
     return ""
 
 
+# 평가 데이터셋(artifacts/eval_set.jsonl) 한 항목의 필드. 04 생성은 이 필드가 모두 있는지 보고 나서 답하기 시작한다.
+EVAL_ITEM_FIELDS = ("id", "question", "reference", "key_facts", "reset_context", "answerable", "primary_topic", "evidence")
+
+
 def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:
-    """평가에 쓸 수 없는 항목을 사유와 함께 걸러낸다 → (평가 데이터셋 {id, question, reference, key_facts}, 점검 표)"""
+    """평가에 쓸 수 없는 항목을 사유와 함께 걸러낸다
+    → (평가 데이터셋 {id, question, reference, key_facts, reset_context, answerable}, 점검 표)"""
     kept, report, questions, convs = [], [], set(), set()
     for it in items:
         problem = _problem(it, questions, convs)
@@ -169,5 +201,5 @@ def check_eval_items(items: list[dict]) -> tuple[list[dict], pd.DataFrame]:
         if not problem:
             # 통과한 항목만 질문을 차지한다 — 정답 없는 골든 항목이 같은 질문의 온전한 yaml 항목을 막지 않게
             questions.add(it["question"])
-            kept.append({k: it[k] for k in ("id", "question", "reference", "key_facts")})
+            kept.append({k: v for k, v in it.items() if k != "conv"})
     return kept, pd.DataFrame(report)

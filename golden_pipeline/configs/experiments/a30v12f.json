@@ -1,0 +1,5 @@
+{
+  "ceiling_usd": 3.5,
+  "max_output_tokens": 20000,
+  "prices": {"gpt-5-mini": [0.25, 2.0]}
+}

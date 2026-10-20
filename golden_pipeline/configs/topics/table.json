@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "requires": "표의 한 행과 한 열이 만나는 칸을 묻는 질문. 답은 그 칸의 값이다. 근거 중 표 행을 하나 이상 써야 한다.",
+  "structure": {
+    "row": "행을 가리키는 이름. 표에 적힌 그대로",
+    "column": "열을 가리키는 이름. 표에 적힌 그대로"
+  },
+  "pattern": null,
+  "table_only": true,
+  "bundle_units": 3
+}

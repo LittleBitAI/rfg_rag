@@ -2,7 +2,8 @@
 # rag/ 와 노트북이 직접 import 하는 패키지 + torch · ruff · pytest · ipykernel 만 적습니다 (CLAUDE.md 2절).
 # ── PyTorch 는 먼저 CUDA 12.8+ 빌드로 설치하세요 (sentence-transformers 가 씀)
 #    RTX 50(5070 Ti, Blackwell sm_120) 은 cu128 이상 필수 — cu124 이하는 'no kernel image' 오류
-#    pip install torch --index-url https://download.pytorch.org/whl/cu128
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#    torchvision 도 함께: easyocr 가 요구해, 없으면 PyPI 의 CPU 빌드가 깔리며 torch 까지 CPU 빌드로 바뀝니다
 torch>=2.7
 
 # ── LangChain (Python 3.10+)
@@ -20,23 +21,31 @@ langfuse>=4.0           # 검색·생성 추적 (.env 에 키가 있을 때만 L
 # ── 검색
 faiss-cpu>=1.8          # GPU 검색을 원하면 conda 의 faiss-gpu 사용
 rank-bm25>=0.2.2
-kiwipiepy>=0.20         # 한국어 형태소 BM25 토크나이저
+kiwipiepy==0.24.0       # 한국어 형태소 BM25 토크나이저
 hanja>=0.15             # 한자 → 한글 독음 (必 → 必(필))
 sentence-transformers>=3.3   # KURE-v1 임베딩
+transformers>=4.41
+huggingface-hub>=0.28
+psutil>=5.9
 
 # ── 문서 로더
 pypdf>=4.0              # PDF 본문
 pymupdf>=1.24           # LangChain PyMuPDFLoader (PDF 표 Markdown · 이미지)
-langchain-hwp-hwpx-loader>=0.1.1   # HwpHwpxLoader (HWP 5.x / HWPX 본문·표·이미지)
+langchain-hwp-hwpx-loader>=0.1.1,<0.2   # HwpHwpxLoader (HWP 5.x / HWPX 본문·표·이미지)
+#   0.2 부터 그림을 '하위폴더/image_0000.png' 번호 이름으로 저장해, 본문 [IMAGE: BIN0003.bmp] 표시로 그림 파일을 찾지 못함
 hwp-hwpx-parser>=1.0,<2            # (위 로더의 내부 파서 — 무한 루프 버그 패치 때문에 직접 import)
 pillow>=10              # (OCR) 그림 크기 확인
+
+# ── 질문 화면 (frontend/server.py)
+fastapi>=0.115
+uvicorn>=0.30
 
 # ── 기타
 numpy>=1.26
 pandas>=2.0
-scikit-learn>=1.3       # QA train/valid/test 분할
 pyyaml>=6
 python-dotenv>=1.0
 ipykernel>=6            # 노트북 실행 커널
 ruff>=0.12              # 함수 복잡도 검사 (pyproject.toml)
 pytest>=8               # 게이트 (tests/)
+easyocr==1.7.2

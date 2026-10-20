@@ -1,0 +1,192 @@
+/* 값의 근거는 frontend/DESIGN.md — 질문 화면(App.css)과 같은 토큰 */
+:root {
+  --bg: #ffffff;
+  --surface: #f6f6f4;
+  --border: #e3e3df;
+  --text: #1c1c1a;
+  --muted: #5f5f5a;
+  --accent: #0f766e;
+  --accent-soft: #e3f1ef;
+  --on-accent: #ffffff;
+  --danger: #b42318;
+
+  --container: 1400px;
+  --gutter: 32px;
+  --bar: 60px;
+  --radius: 10px;
+  --font: "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 17px/1.75 var(--font);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 타입 단계: body · label · meta ── */
+.label { margin: 0; font-size: 15px; line-height: 1.5; font-weight: 600; }
+.meta, .error, .badge, .placeholder span:last-child { font-size: 15px; line-height: 1.6; font-weight: 400; }
+.error { margin: 0; color: var(--danger); }
+
+.bar {
+  position: sticky; top: 0; z-index: 1;
+  min-height: var(--bar);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.bar-inner {
+  min-height: var(--bar);
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 8px var(--gutter);
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
+  font-weight: 600;
+}
+.bar-inner .meta { color: var(--muted); }
+
+/* 묶음 고르기 · 진행 수 · 결과 내보내기 — 좁은 화면에서는 줄을 바꿔 바가 높아진다 */
+.tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 16px; }
+.batches { display: flex; }
+.batches button {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 15px; font-weight: 600;
+}
+.batches button + button { margin-left: -1px; }
+.batches button:first-child { border-radius: 8px 0 0 8px; }
+.batches button:last-child { border-radius: 0 8px 8px 0; }
+.batches button:hover { background: var(--surface); }
+.batches button[aria-pressed="true"] { position: relative; background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ghost {
+  padding: 4px 14px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg);
+  color: var(--text); text-decoration: none;
+  font-size: 15px;
+}
+.ghost:hover { background: var(--surface); }
+.ghost:disabled { color: var(--muted); background: var(--bg); cursor: default; }
+
+.page {
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 var(--gutter) 48px;
+}
+.lead { margin: 20px 0; color: var(--muted); }
+
+/* ── 카드 격자: 그림 · 문서 이름 · 위치 · CRAFT · 라벨 버튼 ── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 24px;
+}
+.card {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.preview {
+  width: 100%; height: 220px;
+  object-fit: contain;
+  background: var(--surface);
+  border-radius: 6px;
+}
+.zoom-open { display: block; padding: 0; border: 0; border-radius: 6px; background: none; cursor: zoom-in; }
+.zoom-open .preview { display: block; }
+.placeholder {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.badges { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.badge {
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.where { margin: -4px 0 0; color: var(--muted); }
+
+.choices { margin-top: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.choices button {
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 15px; font-weight: 600;
+}
+.choices button:hover { background: var(--surface); }
+.choices button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+/* ── 크게 보기: 창을 덮는 어두운 바탕 · 그림 · 문서 이름과 위치 한 줄 · 양옆 ◀ ▶ ── */
+.zoom {
+  position: fixed; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  padding: 24px 72px;
+  background: rgb(28 28 26 / 0.88);
+  cursor: zoom-out;
+}
+/* 112px = 위아래 여백 48 + 간격 12 + 설명 한 줄 · 여유. --ratio 를 모르는 첫 순간에는 max-* 가 창 안에 묶는다 */
+.zoom img {
+  flex: none;
+  width: min(100%, (100vh - 112px) * var(--ratio));
+  max-width: 100%; max-height: calc(100vh - 112px);
+  background: var(--bg);
+  border-radius: 6px;
+  cursor: default;
+}
+.caption {
+  max-width: 100%;
+  display: flex; align-items: baseline; gap: 12px;
+  color: var(--on-accent);
+  cursor: default;
+}
+.caption .label { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 원본 보기: 강조색은 라벨 · 묶음에만 쓰므로 둘레 글자색 그대로 밑줄만 */
+.source-link {
+  flex: none;
+  padding: 0; border: 0; background: none;
+  color: inherit; font-size: 15px; font-weight: 400;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+/* HWP 원본 보기: 그림 표시 앞뒤 본문. 표는 Markdown 글 그대로 보인다 */
+.context {
+  width: 100%; max-width: 860px; max-height: 100%;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 20px 24px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  cursor: default;
+}
+.context-text { margin: 0; font-size: 15px; line-height: 1.7; white-space: pre-wrap; }
+.context-text mark { padding: 0 4px; border-radius: 4px; background: var(--accent-soft); font-weight: 600; }
+.step {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px;
+  border: 0; border-radius: 50%;
+  background: rgb(255 255 255 / 0.16);
+  color: var(--on-accent);
+}
+.step:hover { background: rgb(255 255 255 / 0.28); }
+.prev { left: 16px; }
+.next { right: 16px; }
+
+@media (max-width: 480px) {
+  :root { --gutter: 16px; }
+}

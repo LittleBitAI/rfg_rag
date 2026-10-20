@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import math
 import os
 import re
@@ -14,13 +15,17 @@ import unicodedata
 import zipfile
 from collections import Counter
 from itertools import groupby
+from pathlib import Path
+
+from rag.preprocessing.ocr_selection import SelectionParser
 
 import hanja
 import numpy as np
 import pandas as pd
 
+from ..usage import UsageCallback
+
 SUPPORTED = (".pdf", ".hwp", ".hwpx")
-OCR_MODEL = "gpt-5-mini"
 
 
 # ====================================================================================================
@@ -364,10 +369,17 @@ def _ocr_hwp_images(text: str, image_dir: str, image_parser, max_repeat: int) ->
     def sub(m: re.Match) -> str:
         name = (m.group(1) or "").strip()
         path = os.path.join(image_dir, name)
-        if counts[name] >= max_repeat or not os.path.isfile(path):
+        if isinstance(image_parser, SelectionParser):
+            image_parser.set_location(format="hwp", image_name=name, marker_start=m.start(), repeated_occurrences=counts[name])
+            if not os.path.isfile(path):
+                image_parser.record_error("Extracted HWP image file missing")
+                return ""
+        if (counts[name] >= max_repeat and not isinstance(image_parser, SelectionParser)) or not os.path.isfile(path):
             return ""
         if name not in done:
             done[name] = _ocr_image_file(path, image_parser)
+        elif isinstance(image_parser, SelectionParser):
+            image_parser.record_repeated_image(name)
         if not done[name]:
             return ""
         captions.append(done[name])
@@ -409,11 +421,17 @@ def _hwp_records(body: str, captions: list[str]) -> list[dict]:
     return records
 
 
-def _parse_hwp(path: str, pcfg: dict, image_parser) -> tuple[list[dict], str]:
+def _parse_hwp(path: str, pcfg: dict, image_parser, saved_rows=None) -> tuple[list[dict], str]:
     """HWP/HWPX → (레코드들, 표지 텍스트). 쪽 정보가 없어 '앞 N쪽' 대신 표지·목차를 자동 감지해 뺀다"""
-    text, captions = _hwp_text(path, pcfg, image_parser)
+    from .ocr_captions import front_captions, hwp_caption_text
+
+    text, captions = (_hwp_text(path, pcfg, image_parser) if saved_rows is None
+                      else hwp_caption_text(path, saved_rows))
     front, body = split_front_matter(text) if int(pcfg["skip_first_pages"]) > 0 else ("", text)
-    return _hwp_records(body, captions), normalize_text(re.sub(r"\[\[IMG:\d+\]\]", "", front))
+    records = _hwp_records(body, captions)
+    if saved_rows is not None:
+        records = front_captions(front, captions) + records
+    return records, normalize_text(re.sub(r"\[\[IMG:\d+\]\]", "", front))
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -421,10 +439,10 @@ def _parse_hwp(path: str, pcfg: dict, image_parser) -> tuple[list[dict], str]:
 # ----------------------------------------------------------------------------------------------------
 # hwp-hwpx-parser 가 탭 제어문자(8 wchar) 일부를 글자로 내보내는 문제 정리: '\t洴ȃ 1' → '\t 1', '개요  練ȃ  1' → '개요   1'
 TAB_GARBAGE = re.compile(r"(?<=[\t ])[^\s가-힣A-Za-z0-9|]{0,2}[Ā-˿](?=[\s|]|$)")
-TOC_MARK = re.compile(r"(?:^|\|)[\s\-–\[\(<【]*(?:목\s*차|차\s*례|CONTENTS|Contents)[\s\-–\]\)>】]*(?:\||$)")
+TOC_MARK = re.compile(r"(?:^|\|)[\s\-–•·\[\(<【]*(?:목\s*차|차\s*례|CONTENTS|Contents)[\s\-–•·\]\)>】]*(?:\||$)")
 TOC_LINE = re.compile(r"(?:\.{3,}|·{3,}|…{2,}|\s\d{1,3})\s*\|?\s*$")
 MULTI_ENTRY = re.compile(r"\s\d{1,3}(?=\s|$)")
-NEUTRAL = re.compile(r"^\s*$|^[\s|:\-]+$|^(?:\|\s*)+\|?\s*$")      # 빈 줄, |---|, 빈 셀 행
+NEUTRAL = re.compile(r"^\s*$|^[\s|:\-•·]+$|^(?:\|\s*)+\|?\s*$")      # 빈 줄, |---|, 빈 셀 행
 BODY_START = re.compile(r"^\s*(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ][.\s]|제\s*1\s*[장편]|1\.\s|<[^>]{2,20}>|□|❏)")
 
 
@@ -502,11 +520,12 @@ def repair_md_tables(text: str) -> str:
 # ====================================================================================================
 # OCR (OCR=True 일 때만): 그림 → 글자. LangChain LLMImageBlobParser + OpenAI 비전 모델 (OPENAI_API_KEY)
 # ====================================================================================================
-def _ocr_parser():
+def _ocr_parser(ocr_cfg: dict, callback: UsageCallback):
     from langchain_community.document_loaders.parsers.images import LLMImageBlobParser
     from langchain_openai import ChatOpenAI
 
-    return LLMImageBlobParser(model=ChatOpenAI(model=OCR_MODEL, max_tokens=2048, reasoning_effort="low"))
+    return LLMImageBlobParser(model=ChatOpenAI(model=ocr_cfg["model"], max_tokens=int(ocr_cfg["max_tokens"]),
+                                            reasoning_effort=ocr_cfg["reasoning_effort"], callbacks=[callback]))
 
 
 def _ocr_image_file(path: str, image_parser) -> str:
@@ -514,13 +533,29 @@ def _ocr_image_file(path: str, image_parser) -> str:
     from PIL import Image
 
     if path.lower().endswith((".wmf", ".emf")):
+        if isinstance(image_parser, SelectionParser):
+            image_parser.record_error("Unsupported vector image encoding")
         return ""
     try:
         with Image.open(path) as img:
             rgb = img.convert("RGB")
     except OSError:
+        if isinstance(image_parser, SelectionParser):
+            image_parser.record_error("HWP image decode failed")
         return ""
     return image_parser._analyze_image(rgb)
+
+
+def _image_selection_location(parser, page, image_index, xref):
+    if isinstance(parser, SelectionParser):
+        parser.set_location(format="pdf", page=page.number + 1, image_index=image_index,
+                            xref=xref, bbox_points=[])
+        parser.location["bbox_points"] = [list(rect) for rect in page.get_image_rects(xref)]
+
+
+def _image_selection_error(parser, reason):
+    if isinstance(parser, SelectionParser):
+        parser.record_error(reason)
 
 
 def _patch_pymupdf_image_extraction():
@@ -537,13 +572,15 @@ def _patch_pymupdf_image_extraction():
         import pymupdf
 
         images = []
-        for img in page.get_images():
+        for image_index, img in enumerate(page.get_images()):
             try:
+                _image_selection_location(self.images_parser, page, image_index, img[0])
                 pix = pymupdf.Pixmap(doc, img[0])
                 if pix.n - pix.alpha >= 4:  # CMYK → RGB
                     pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
                 arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, -1)
             except Exception:  # noqa: BLE001  손상·특수 인코딩 이미지는 건너뜀
+                _image_selection_error(self.images_parser, "PDF image location/decode failed")
                 continue
             buf = io.BytesIO()
             np.save(buf, arr)
@@ -561,25 +598,75 @@ def _patch_pymupdf_image_extraction():
 # ====================================================================================================
 # 문서 → 레코드
 # ====================================================================================================
-def parse_documents(files: list[str], pcfg: dict, ocr: bool) -> list[dict]:
+def _cache_file(cache_dir: Path, path: str, pcfg: dict, ocr: bool, ocr_cfg: dict, saved_rows) -> Path:
+    """문서 하나의 파싱 결과 파일. 원본 내용 · 파싱 설정 · OCR 설정 · 저장 캡션이 모두 같을 때만 같은 이름이 되므로,
+    원본 파일이나 설정을 바꾸면 옛 결과를 쓰지 않는다 (단가는 결과에 영향이 없어 뺀다)"""
+    ocr_key = {k: ocr_cfg[k] for k in ("model", "max_tokens", "reasoning_effort")} if ocr else None
+    key = json.dumps({"file": hashlib.sha256(Path(path).read_bytes()).hexdigest(), "parsing": pcfg, "ocr": ocr_key,
+                      "captions": saved_rows}, sort_keys=True, ensure_ascii=False)
+    return cache_dir / f"{make_doc_id(path)}_{hashlib.sha1(key.encode()).hexdigest()[:8]}.json"
+
+
+def _parse_or_load(path: str, pcfg: dict, image_parser, saved_rows, cache_file: Path | None) -> dict:
+    """저장된 결과가 있으면 읽고, 없으면 파싱해서 저장한다. 임시 파일에 쓴 뒤 바꿔치기해서,
+    쓰는 도중 컴퓨터가 꺼져도 반쯤 쓰인 파일이 남지 않는다"""
+    if cache_file is not None and cache_file.exists():
+        return json.loads(cache_file.read_text(encoding="utf-8"))
+    doc = _parse_file(path, pcfg, image_parser, saved_rows)
+    if cache_file is not None:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(cache_file)
+    return doc
+
+
+def parse_documents(files: list[str], pcfg: dict, ocr: bool, ocr_cfg: dict, captions_path=None,
+                    cache_dir: Path | None = None) -> list[dict]:
     """문서마다 {doc_id, source, title, doc_type, cover_text, head_text, records}.
-    ocr=False 면 그림을 API 로 보내지 않는다. True 면 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다."""
-    image_parser = _ocr_parser() if ocr else None
+    ocr=False 면 저장 캡션을 읽고 그림을 API 로 보내지 않는다.
+    True 면 저장 캡션 대신 로고·장식(반복 그림)을 뺀 그림을 OCR 해 image_caption 레코드로 넣는다.
+    cache_dir 를 주면 문서 하나를 끝낼 때마다 저장하므로, 중간에 끊겨도 다시 실행하면 끝낸 문서는 건너뛰고
+    (OCR 비용도 다시 들지 않음) 이어서 한다. 오류가 난 문서는 저장하지 않아 다음 실행에서 다시 시도한다."""
+    from .ocr_captions import load_captions
+
+    saved = {} if ocr else load_captions(captions_path)
+    callback = UsageCallback("ocr", ocr_cfg["usd_per_1m_tokens"], ocr_cfg["reasoning_effort"]) if ocr else None
+    image_parser = _ocr_parser(ocr_cfg, callback) if ocr else None
+    if image_parser is not None and pcfg.get("craft", {}).get("enabled", False):
+        image_parser = SelectionParser(image_parser, pcfg["craft"])
     docs = []
     for i, path in enumerate(files, 1):
+        if callback is not None:
+            callback.subject = os.path.basename(path)
+        saved_rows = saved.get(make_doc_id(path))
+        cache_file = _cache_file(cache_dir, path, pcfg, ocr, ocr_cfg, saved_rows) if cache_dir else None
+        reused = " (저장된 결과)" if cache_file and cache_file.exists() else ""
         try:
-            docs.append(_parse_file(path, pcfg, image_parser))
+            docs.append(_parse_or_load(path, pcfg, image_parser, saved_rows, cache_file))
         except Exception as e:  # noqa: BLE001  손상된 문서 하나 때문에 나머지 문서 파싱을 버리지 않는다
+            if saved_rows is not None:
+                raise
             print(f"({i}/{len(files)}) ❌ {os.path.basename(path)}: {type(e).__name__}: {e}")
             continue
-        print(f"({i}/{len(files)}) {docs[-1]['source']}: 블록 {len(docs[-1]['records'])}개")
+        print(f"({i}/{len(files)}) {docs[-1]['source']}: 블록 {len(docs[-1]['records'])}개{reused}")
     return docs
 
 
-def _parse_file(path: str, pcfg: dict, image_parser) -> dict:
+def _parse_file(path: str, pcfg: dict, image_parser, saved_rows=None) -> dict:
+    if saved_rows is not None:
+        from .ocr_captions import check_document
+        check_document(path, saved_rows)
+    if isinstance(image_parser, SelectionParser):
+        image_parser.set_source(path)
     ext = os.path.splitext(path)[1].lower()
-    parse = _parse_pdf if ext == ".pdf" else _parse_hwp
-    records, cover = parse(path, pcfg, image_parser)
+    if ext == ".pdf":
+        records, cover = _parse_pdf(path, pcfg, image_parser if saved_rows is None else None)
+        if saved_rows is not None:
+            from .ocr_captions import add_pdf_captions
+            records = add_pdf_captions(records, saved_rows, path)
+    else:
+        records, cover = _parse_hwp(path, pcfg, image_parser, saved_rows)
     for r in records:
         r["text"] = apply_hanja(normalize_text(r["text"]), pcfg["hanja_mode"])
     records = [r for r in records if r["text"].strip()]

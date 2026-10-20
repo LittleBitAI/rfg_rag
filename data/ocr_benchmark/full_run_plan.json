@@ -1,0 +1,124 @@
+{
+  "restoration_note": "정리 전 원본의 역사적 집계와 실행 조건이다. 이번 복원에서 재측정하지 않았다. 원시 전사·이미지별 결과·위치 목록은 무시된 로컬 artifacts에 보관한다.",
+  "status": "Completed: 320 winning outputs and 391 saved caption places",
+  "distinct_images": 320,
+  "places": 391,
+  "reused_benchmark_images": 55,
+  "new_images": 265,
+  "winners": {
+    "table": "gemini-3.5-flash-lite",
+    "text": "gemini-3.5-flash-lite",
+    "diagram": "gpt-6-luna"
+  },
+  "models": [
+    {
+      "engine": "PaddleOCR-VL-1.5",
+      "new_images": 0,
+      "by_type": [
+        {
+          "image_type": "table",
+          "new_images": 0,
+          "expected_seconds_per_image": 42.433762849999766
+        },
+        {
+          "image_type": "text",
+          "new_images": 0,
+          "expected_seconds_per_image": 45.79651534666967
+        },
+        {
+          "image_type": "diagram",
+          "new_images": 0,
+          "expected_seconds_per_image": 17.902917734997754
+        }
+      ],
+      "expected_seconds": 0.0
+    },
+    {
+      "engine": "gpt-6-luna",
+      "new_images": 130,
+      "by_type": [
+        {
+          "image_type": "table",
+          "new_images": 0,
+          "expected_seconds_per_image": 17.65030505500181,
+          "expected_input_tokens_per_image": 686.0,
+          "expected_output_tokens_per_image": 1717.25
+        },
+        {
+          "image_type": "text",
+          "new_images": 0,
+          "expected_seconds_per_image": 20.003968106668133,
+          "expected_input_tokens_per_image": 1188.7333333333333,
+          "expected_output_tokens_per_image": 1901.0
+        },
+        {
+          "image_type": "diagram",
+          "new_images": 130,
+          "expected_seconds_per_image": 10.652848690000246,
+          "expected_input_tokens_per_image": 628.8,
+          "expected_output_tokens_per_image": 921.45
+        }
+      ],
+      "expected_seconds": 1384.870329700032,
+      "expected_input_tokens_per_image": 628.8,
+      "expected_output_tokens_per_image": 921.45,
+      "usd_per_1m_tokens": [
+        0.1,
+        0.01,
+        0.5
+      ],
+      "expected_usd": 0.06806865,
+      "estimate_with_8192_output_usd": 0.5406544,
+      "estimate_with_2000_input_and_output_usd": 0.156
+    },
+    {
+      "engine": "gemini-3.5-flash-lite",
+      "new_images": 135,
+      "by_type": [
+        {
+          "image_type": "table",
+          "new_images": 130,
+          "expected_seconds_per_image": 2.8243312400009017,
+          "expected_input_tokens_per_image": 1168.7,
+          "expected_output_tokens_per_image": 396.9
+        },
+        {
+          "image_type": "text",
+          "new_images": 5,
+          "expected_seconds_per_image": 2.866839853334629,
+          "expected_input_tokens_per_image": 1170.0666666666666,
+          "expected_output_tokens_per_image": 355.6666666666667
+        },
+        {
+          "image_type": "diagram",
+          "new_images": 0,
+          "expected_seconds_per_image": 2.381538009994256,
+          "expected_input_tokens_per_image": 1167.55,
+          "expected_output_tokens_per_image": 156.25
+        }
+      ],
+      "expected_seconds": 381.49726046679035,
+      "expected_input_tokens_per_image": 1168.7506172839508,
+      "expected_output_tokens_per_image": 395.37283950617285,
+      "usd_per_1m_tokens": [
+        0.3,
+        0.03,
+        2.5
+      ],
+      "expected_usd": 0.18077273333333332,
+      "estimate_with_8192_output_usd": 2.8121343999999997,
+      "estimate_with_2000_input_and_output_usd": 0.756
+    }
+  ],
+  "expected_api_usd": 0.24884138333333333,
+  "estimate_with_8192_output_usd": 3.3527888,
+  "estimate_with_2000_input_and_output_usd": 0.912,
+  "note": "Token estimates use type-specific reference means, no cache discount; these are estimates, not spending caps.",
+  "full_run_approval": {
+    "user_response": "1번.",
+    "approved_at": "2026-10-16T13:26:57.496026+00:00",
+    "scope": "265 new winning-engine calls plus 55 reused benchmark outputs; 391 saved caption places",
+    "presented_expected_usd": 0.24884138333333333,
+    "presented_8192_output_scenario_usd": 3.3527888
+  }
+}

@@ -42,6 +42,20 @@ Complexity is measured by ruff, configured in `pyproject.toml`.
 - When a function fails, split it or simplify it. Never silence it with `noqa` or by raising a limit.
 - `ruff check .` reports nothing today; keep it that way.
 
+### 1.4 Keep actual dataset records private; allow measurements
+
+Never commit or upload actual dataset records, such as real questions, answers,
+document or evidence text, saved OCR transcriptions, or exports that disclose those
+records. This includes JSONL files and actual records copied into other formats.
+Keep these under ignored `artifacts/` locally.
+
+Aggregate measurements and descriptive statistics may be committed, including
+dataset counts, quality scores, latency, resource usage, and reports discussing
+those values, provided they do not include actual dataset records or excerpts.
+Source code, model configuration, generic instructions, and independently authored
+synthetic fixtures are also allowed. Ignore rules do not remove already tracked
+files; flag pre-existing tracked actual datasets before any push.
+
 ## 2. Dependencies
 
 - A package goes into `requirements.txt` only when this repository's code imports it directly,
@@ -63,7 +77,8 @@ This table overrides any outside rule that asks for a different language, includ
 
 ## 4. Pipelines and ownership
 
-The work is split into five pipelines, listed in data-flow order. Each pipeline has exactly one owner.
+The work is split into five pipelines, listed in data-flow order, plus the frontend that sits on top of them.
+Each has exactly one owner.
 
 | # | Pipeline | Covers | Hands on |
 |---|---|---|---|
@@ -72,6 +87,7 @@ The work is split into five pipelines, listed in data-flow order. Each pipeline 
 | 3 | Validation | Building and checking the evaluation dataset | Evaluation dataset |
 | 4 | Generation | Answering questions from retrieved chunks | Answers |
 | 5 | Evaluation | Four evaluations of one answers file: Retrieval, Generation, Grounding, End-to-End | Four score tables and CSV files |
+| 6 | Frontend | `frontend/`: the question screen, the OCR image labelling screen and the saved OCR result review screen (`frontend/ocr_select/`), with their launchers; wraps `answer_question` and reuses preprocessing functions, holds no RAG logic | Answers on screen, OCR image labels and review verdicts in `artifacts/ocr_labels/` |
 
 | # | Notebook | Modules |
 |---|---|---|
@@ -84,11 +100,22 @@ The work is split into five pipelines, listed in data-flow order. Each pipeline 
 `rag/config.py` holds the shared config and `.env` loading.
 Each notebook reads the previous notebook's outputs from `artifacts/`.
 Notebooks hold only configuration, function calls and display of results.
-All logic lives in modules under `rag/`.
+All logic lives in modules under `rag/`, with one exception: `golden_pipeline/`.
 
-Images in documents become text only through the OpenAI API (LangChain's `LLMImageBlobParser`),
-and only when `OCR = True` in `01_preprocessing.ipynb`; it is `False` by default.
-Do not add a local OCR model or a local VLM such as Qwen2.5-VL; the team decided against running one.
+`golden_pipeline/` belongs to pipeline 3, Validation, and has the same owner.
+It builds, validates and releases per-topic golden datasets,
+kept apart from `rag/validation/validation.py` on purpose.
+It imports nothing from `rag/` and writes only under `golden_pipeline/outputs/`.
+Its tests live in `tests/golden/`, so the gate runs them.
+
+Choose the OCR engine separately for each image type using measured quality and measured
+cost per image on a reference set. Allowed engines are the OpenAI API, the Gemini API
+through its OpenAI-compatible endpoint, and PaddleOCR-VL-1.5 in its own environment
+on the local Windows PC. Log every paid OCR call and its cost through `rag/usage.py`;
+record seconds per image for PaddleOCR. Before the benchmark's first paid call and
+before the full run, show a per-model token-price estimate and wait for approval.
+01 reads saved captions without API calls. The existing `OCR = True` path still uses
+LangChain's `LLMImageBlobParser` and optional CRAFT selection; its default is `False`.
 
 ## 5. Evaluation results
 
@@ -97,8 +124,8 @@ so a bad answer can be traced to where it went wrong.
 
 | Evaluation | Judges | Metrics | CSV |
 |---|---|---|---|
-| Retrieval | Did search bring back what the answer needs | RAGAS context_precision, context_recall; key facts in retrieved chunks | `artifacts/retrieval.csv` |
-| Generation | Does the answer address the question and hold the key facts | RAGAS answer_relevancy; key facts in the answer | `artifacts/generation.csv` |
+| Retrieval | Did search rank and send the gold evidence | Deterministic document/chunk Recall@k, MRR@k, Evidence Coverage; key fact string matches in context | `artifacts/retrieval.csv` |
+| Generation | Does the answer contain the key fact strings | Key fact string matches in the answer | `artifacts/generation.csv` |
 | Grounding | Does the answer stay within the retrieved chunks | RAGAS faithfulness | `artifacts/grounding.csv` |
 | End-to-End | Is the final answer right, and what did it cost | RAGAS factual_correctness; latency, tokens, estimated cost | `artifacts/end_to_end.csv` |
 
@@ -109,9 +136,50 @@ so a bad answer can be traced to where it went wrong.
 
 Team members have no Langfuse keys, so every code path must run without them.
 
+Only faithfulness and factual_correctness use LLM judges. Key fact matches are string matches,
+not semantic correctness. Grounding and End-to-End keep their existing CSV columns and judge behavior.
+Actual API calls, including judge retries, still append usage to `api_usage.csv`.
+
+Ranking (A) uses the candidates before deduplication and token-budget packing, at k = 5, 10, 20.
+Document Recall@k is the share of gold documents represented by the top-k chunks; document MRR@k
+is the reciprocal chunk position of the first gold-document hit, or zero if none within k.
+Do not deduplicate documents before taking k. Chunk Recall@k and MRR@k use gold chunk IDs.
+Each level requires every evidence entry to have that level's label. Exclude partly/unlabelled
+questions, report their counts by topic, and show the mapping exclusion rate beside scores.
+Its denominator is answerable questions with golden evidence. Exclude and count unanswerable
+questions and YAML items without golden evidence separately. Do not score a labelled subset.
+
+Compare fused, dense-only and BM25-only Recall@k in one table per level, plus exact-code
+membership recall without k. Component ranks preserve per-agency interleaving; a disabled
+component contributes no candidates. Exact-code membership is a set, not another ranking.
+Context (B) uses the chunk IDs actually sent to the LLM. Evidence Coverage is the share of
+gold chunks sent; full coverage is one only when all were sent. Report single evidence and
+multi evidence (multi_hop, comparison, or multiple evidence entries) separately. MRR never
+measures multi-evidence completeness. Coverage also requires fully chunk-labelled questions.
+
+`search()` must keep its return values and order. `search_with_candidates()` adds a read-only
+pre-packing snapshot: chunk_id, doc_id, fused rank, raw dense/BM25 scores and ranks, exact-code
+membership. 04 saves this as `ranked_candidates`, plus `rewrite`, `context_chunk_ids` and
+`retrieval_settings` (fusion, dense_weight, candidate_k, token_budget, active chunk_file, k_values,
+stored_rewrites_reused). 05 rejects incomplete answers before any paid call.
+`rerun_retrieval` searches dev again using each stored rewritten query, without rewrite,
+generation or judge API calls, and writes the same row format in a separate experiment folder.
+It retains the old answers and clears trace IDs; score that file only for Retrieval.
+Preserve the integrated dev behavior: 04 passes recent conversation history to rewriting
+and generation; both search entry points route using the rewritten query (original on empty
+rewrite). Retrieval-only reruns reuse that stored query for routing and ranking without API calls.
+
+Use dev to tune. Build a separate labelled test evaluation set with 03's existing functions,
+then run 04 and all four 05 evaluations once with fixed settings for the final result.
+Do not run test during retrieval-metrics development. Before the paid 30-question dev sample,
+show the config-price estimate for rewrite, answer and both judges and wait for approval.
+Report actual usage and compare judge cost per question with earlier per-evaluation usage
+rows labelled historical. Different questions and dates do not establish a paired quality comparison.
+
 ## 6. Before every commit
 
 1. `ruff check .` reports nothing new (section 1.3).
-2. The gate passes: `.venv\Scripts\python -m pytest -q tests`.
+2. The gate passes: `.venv\Scripts\python -m pytest -q tests` on Windows,
+   `.venv/bin/python -m pytest -q tests` on Linux (the team VM `codeit`).
    `.venv` is the Python 3.10 environment set up as `README.md` describes.
 3. `git diff --no-index CLAUDE.md AGENTS.md` prints nothing.

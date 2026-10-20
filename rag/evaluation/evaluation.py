@@ -1,114 +1,474 @@
 """⑤ 평가 — 04 생성의 answers.jsonl 하나를 네 가지로 나눠 채점한다. 나쁜 답이 어디서 왔는지 가르기 위해서다.
-  Retrieval    검색이 정답 근거를 가져왔나       context_precision · context_recall · 근거 속 핵심 사실 비율
-  Generation   답이 질문에 맞고 핵심을 담았나    answer_relevancy · 답변 속 핵심 사실 비율
+  Retrieval    검색이 정답 근거를 가져왔나       Recall@k · MRR@k · Evidence Coverage · 문자열 일치
+  Generation   답이 핵심을 담았나              답변 속 핵심 사실 문자열 일치
   Grounding    답이 검색 근거 안에서만 나왔나    faithfulness
   End-to-End   최종 답이 정답과 맞나, 얼마 들었나  factual_correctness · 지연 시간 · 토큰 · 예상 비용
+faithfulness · factual_correctness 의 심판은 evaluation.judge 로 고른다.
+  ragas  RAGAS + gpt 심판 (유료, 기본값)
+  local  02 의 로컬 리랭커(크로스 인코더)로 같은 지표를 계산한다. API 를 부르지 않아 비용 0원
 .env 에 Langfuse 키가 있으면 질문별 점수를 04 생성의 추적(answer-question)에 붙인다.
+RAGAS 점수는 몇 문항씩 채점할 때마다 체크포인트에 저장해, 끊겨도 남은 문항만 채점한다.
 담당: 평가."""
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
 from langchain_openai import ChatOpenAI
 from langfuse import get_client
 from ragas import EvaluationDataset, evaluate
-from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import (FactualCorrectness, Faithfulness, LLMContextPrecisionWithReference, LLMContextRecall,
-                           ResponseRelevancy)
+from ragas.metrics import FactualCorrectness, Faithfulness
 
-from ..config import read_jsonl
-from ..retrieval.indexing import Embedder
+from ..config import append_jsonl, read_checkpoint, read_jsonl, write_jsonl
+from ..retrieval.indexing import Reranker
+from ..retrieval.retrieval import retrieval_fields
+from ..usage import UsageCallback
+from .ir import coverage_group, exclusion_report, ir_scores, label_state
 
 os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")  # ragas 사용 통계 전송 끔
 
 
-def _ragas(rows: list[dict], metrics: list, cfg: dict, embeddings=None) -> list[dict]:
-    """RAGAS 채점 → 질문마다 {지표 이름: 점수}"""
-    ecfg = cfg["evaluation"]
+_JUDGE_BATCH = 16  # 이 문항 수만큼 채점할 때마다 점수를 저장한다 (끊기면 이 묶음 하나만 다시 채점)
+
+
+def _judge(ecfg: dict, evaluation: str) -> LangchainLLMWrapper:
     judge = ChatOpenAI(model=ecfg["judge_model"], max_tokens=int(ecfg["judge_max_tokens"]),
-                       reasoning_effort=ecfg["judge_reasoning_effort"], timeout=180, max_retries=3)
+                       reasoning_effort=ecfg["judge_reasoning_effort"], timeout=180, max_retries=3,
+                       callbacks=[UsageCallback("judge", ecfg["judge_usd_per_1m_tokens"],
+                                                ecfg["judge_reasoning_effort"], evaluation)])
     # 추론 모델은 temperature·n 을 받지 않으므로 RAGAS 가 넣지 못하게 한다
-    llm = LangchainLLMWrapper(judge, bypass_temperature=True, bypass_n=True)
-    data = EvaluationDataset.from_list([{"user_input": r["question"], "retrieved_contexts": r["contexts"] or [""],
-                                         "response": r["answer"], "reference": r["reference"]} for r in rows])
-    emb = LangchainEmbeddingsWrapper(embeddings) if embeddings else None
-    return evaluate(data, metrics=metrics, llm=llm, embeddings=emb).scores
+    return LangchainLLMWrapper(judge, bypass_temperature=True, bypass_n=True)
 
 
-def _norm(s: str) -> str:
-    return re.sub(r"[\s,]", "", s).lower()
+def _score_key(row: dict, metrics: list, ecfg: dict) -> str:
+    """지표 · 심판 설정 · 문항(질문 · 근거 · 답 · 정답)이 모두 같을 때만 같은 키 — 04 를 다시 돌려 답이 바뀐 문항은 새로 채점한다"""
+    key = json.dumps({"metrics": [m.name for m in metrics],
+                      "judge": [ecfg["judge_model"], ecfg["judge_reasoning_effort"], ecfg["judge_max_tokens"]],
+                      "row": [row["question"], row["contexts"], row["answer"], row["reference"]]}, ensure_ascii=False)
+    return hashlib.sha1(key.encode()).hexdigest()
+
+
+def _saved_scores(path: Path) -> dict[str, dict]:
+    saved = read_checkpoint(path)
+    write_jsonl(saved, path)  # 쓰다 끊긴 마지막 줄을 잘라 내고 그 뒤에 덧붙인다
+    return {s["key"]: s["scores"] for s in saved}
+
+
+def _ragas(rows: list[dict], metrics: list, cfg: dict, evaluation: str, checkpoint: Path) -> list[dict]:
+    """RAGAS 채점 → 질문마다 {지표 이름: 점수}. checkpoint 에 저장된 문항은 다시 채점하지 않는다.
+    NaN(심판 호출 실패 포함)은 저장하지 않아 다음 실행에서 다시 채점한다."""
+    keys = [_score_key(r, metrics, cfg["evaluation"]) for r in rows]
+    scores = _saved_scores(checkpoint)
+    todo = [i for i, key in enumerate(keys) if key not in scores]
+    print(f"{evaluation}: {len(rows)}문항 중 저장된 점수 {len(rows) - len(todo)}개, 채점할 문항 {len(todo)}개 — {checkpoint}")
+    llm = _judge(cfg["evaluation"], evaluation) if todo else None
+    for start in range(0, len(todo), _JUDGE_BATCH):
+        batch = todo[start:start + _JUDGE_BATCH]
+        data = EvaluationDataset.from_list([{"user_input": rows[i]["question"],
+                                             "retrieved_contexts": rows[i]["contexts"] or [""],
+                                             "response": rows[i]["answer"], "reference": rows[i]["reference"]}
+                                            for i in batch])
+        for i, s in zip(batch, evaluate(data, metrics=metrics, llm=llm).scores):
+            scores[keys[i]] = s
+            if not any(math.isnan(v) for v in s.values()):
+                append_jsonl({"key": keys[i], "scores": s}, checkpoint)
+    return [scores[key] for key in keys]
+
+
+def _checkpoint(answers_path: Path, evaluation: str) -> Path:
+    """평가별 점수 체크포인트 — answers.jsonl 옆 checkpoints/judge/<평가>.jsonl"""
+    return answers_path.with_name("checkpoints") / "judge" / f"{evaluation}.jsonl"
+
+
+_DIGITS = r"\d+(?:,\d{3})*(?:\.\d+)?"
+_UNITS = "원|초|분|시간|개월|년|월|일|명|개|건|회|%|조|항|호|차|점|장|단계"
+# '글자-' 바로 뒤 숫자는 SFR-009 같은 식별자의 일부라 수량이 아니다 — 'SFR-009\n분류' 가 9분이 되지 않게
+_NUMBER = re.compile(rf"(?<![\d.,])(?<![^\W\d_]-){_DIGITS}(?:\s*[억만천백](?:\s*{_DIGITS})?)*(?:\s*(?:{_UNITS}))?")
+_NUMBER_PART = re.compile(rf"({_DIGITS})?([억만천백])|({_DIGITS})")
+_MULTIPLIERS = {"억": 100_000_000, "만": 10_000, "천": 1_000, "백": 100}
+_TIME = r"(?:\d{1,2}:\d{2}|(?:오전|오후)\s*\d{1,2}시(?:\s*\d{1,2}분)?)"
+_DATE = re.compile(r"(?<!\d)(?P<year>\d{4})[.\-년]\s*(?P<month>\d{1,2})[.\-월]\s*"
+                   r"(?P<day>\d{1,2})(?:일)?(?!\d)(?:\s*\([월화수목금토일](?:요일)?\))?"
+                   rf"(?:\s*(?P<time>{_TIME}))?")
+
+
+def _parse_number(value: str) -> str:
+    total = Decimal(0)
+    section = Decimal(0)
+    for match in _NUMBER_PART.finditer(value):
+        digits, scale, plain = match.groups()
+        number = Decimal((digits or plain or "1").replace(",", ""))
+        multiplier = _MULTIPLIERS.get(scale, 1)
+        if multiplier >= 10_000:
+            total += (section + (number if digits else 0)) * multiplier
+            section = Decimal(0)
+        else:
+            section += number * multiplier
+    return _number_token(total + section, re.sub(rf"{_DIGITS}|[억만천백\s]", "", value))
+
+
+def _number_token(value: Decimal, unit: str) -> str:
+    return f"⟦number:{value.normalize()}:{unit}⟧"
+
+
+def _parse_time(value: str) -> str:
+    hour, *minutes = map(int, re.findall(r"\d+", value))
+    if "오전" in value or "오후" in value:
+        hour = hour % 12 + (12 if "오후" in value else 0)
+    return f"⟦time:{hour:02}:{minutes[0] if minutes else 0:02}⟧"
+
+
+def _date_spans(match: re.Match) -> list[tuple[int, int, str]]:
+    # 날짜를 년·월·일 숫자로 풀어 '3월 10일' 같은 부분 날짜 사실도 맞게 한다
+    token = "".join(_number_token(Decimal(match[name]), unit)
+                    for name, unit in (("year", "년"), ("month", "월"), ("day", "일")))
+    end = match.start("time") if match["time"] else match.end()
+    spans = [(match.start(), end, token)]
+    if match["time"]:
+        spans.append((match.start("time"), match.end(), _parse_time(match["time"])))
+    return spans
+
+
+def _number_spans(text: str, start: int, end: int) -> list[tuple[int, int, str]]:
+    return [(m.start(), m.end(), _parse_number(m[0])) for m in _NUMBER.finditer(text, start, end)]
+
+
+def _semantic_spans(text: str) -> list[tuple[int, int, str]]:
+    spans = []
+    start = 0
+    for match in _DATE.finditer(text):
+        spans.extend(_number_spans(text, start, match.start()))
+        spans.extend(_date_spans(match))
+        start = match.end()
+    spans.extend(_number_spans(text, start, len(text)))
+    return spans
+
+
+def _plain_text(text: str, start: int, end: int) -> tuple[str, list[tuple[int, int]]]:
+    chars, positions = [], []
+    for i in range(start, end):
+        if text[i].isspace() or text[i] == ",":
+            continue
+        lowered = text[i].lower()  # 'İ' 처럼 소문자가 두 글자가 되기도 해서 글자마다 위치를 남긴다
+        chars.append(lowered)
+        positions.extend([(i, i + 1)] * len(lowered))
+    return "".join(chars), positions
+
+
+def _canonical_text(text: str) -> tuple[str, list[tuple[int, int]]]:
+    parts, positions = [], []
+    cursor = 0
+    for start, end, token in _semantic_spans(text):
+        plain, offsets = _plain_text(text, cursor, start)
+        parts.extend((plain, token))
+        positions.extend(offsets)
+        positions.extend([(start, end)] * len(token))
+        cursor = end
+    plain, offsets = _plain_text(text, cursor, len(text))
+    parts.append(plain)
+    positions.extend(offsets)
+    return "".join(parts), positions
+
+
+def _negated(text: str, start: int, end: int) -> bool:
+    if start > 0 and text[start - 1] in "미불비" or re.search(r"않|제외|없", text[end:end + 6]):
+        return True
+    # '별도' 는 '부가세 별도' 처럼 말이 끝날 때만 부정이다. '별도 시건장치' · '별도로' 처럼 뒤를 꾸미면 '따로' 다
+    separate = re.search(r"별도", text[end:end + 6])
+    return separate is not None and not re.match(r"\s*\w", text[end + separate.end():])
+
+
+def _fact_pattern(fact: str) -> str:
+    """사실을 검색 패턴으로. 억·만 등으로 줄인 단위 없는 금액('1,000만')만 본문 쪽 '원'을 허용한다"""
+    parts, cursor = [], 0
+    for start, end, token in _semantic_spans(fact):
+        parts.append(re.escape(_plain_text(fact, cursor, start)[0]))
+        if token.endswith(":⟧") and re.search("[억만천백]", fact[start:end]):
+            parts.append(re.escape(token[:-1]) + "(?:원)?⟧")
+        else:
+            parts.append(re.escape(token))
+        cursor = end
+    parts.append(re.escape(_plain_text(fact, cursor, len(fact))[0]))
+    # 식별자 숫자는 글자 그대로 찾으므로 앞뒤에 숫자가 더 붙으면 다른 값이다 (SFR-009 ≠ SFR-0091)
+    return ("(?<!\\d)" if fact[:1].isdigit() else "") + "".join(parts) + ("(?!\\d)" if fact[-1:].isdigit() else "")
+
+
+def _fact_matches(fact: str, hay: str, positions: list[tuple[int, int]], text: str) -> bool:
+    pattern = _fact_pattern(fact)
+    if not re.search(r"\d", fact):
+        hay, positions = _plain_text(text, 0, len(text))
+    for match in re.finditer(pattern, hay):
+        if not pattern or not _negated(text, positions[match.start()][0], positions[match.end() - 1][1]):
+            return True
+    return False
 
 
 def _key_fact_ratio(facts: list[str], text: str) -> float:
     """핵심 사실 중 text 에 들어 있는 비율. 'A|B' 는 둘 중 하나만 있어도 맞음"""
-    hay = _norm(text)
-    return sum(any(_norm(alt) in hay for alt in str(f).split("|")) for f in facts) / len(facts)
+    hay, positions = _canonical_text(text)
+    return sum(any(_fact_matches(alt, hay, positions, text) for alt in str(f).split("|"))
+               for f in facts) / len(facts)
+
+
+# ====================================================================================================
+# 로컬 심판 (evaluation.judge: local) — RAGAS 와 같은 열 이름의 점수를 API 없이 계산한다
+#   faithfulness         답 문장 중 검색 근거로 지지되는 비율
+#   factual_correctness  답 문장이 정답으로 지지되는 비율(정밀도)과 정답 문장이 답으로 지지되는 비율(재현율)의 F1
+# "지지"는 리랭커가 (문장, 근거)를 관련 있다고 보고, 문장 속 숫자 · 날짜가 근거에 모두 있다는 뜻이다
+# ====================================================================================================
+_SUPPORT_SCORE = 0.5  # 리랭커 점수(0~1)가 이 이상이면 문장이 근거와 관련 있다고 본다
+_NO_ANSWER = "제공된 문서에서 확인할 수 없습니다"  # 04 답변 프롬프트의 '답 없음' 문장 — 주장이 아니므로 채점하지 않는다
+_CITATION = re.compile(r"\[\d+(?:\s*,\s*\d+)*\]")
+_LIST_MARK = re.compile(r"^\s*(?:[-*•·>#]+|\d+[.)]|[가-하][.)])\s*")
+_SENTENCE_END = re.compile(r"(?<=[.!?。])\s+")
+_TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}")
+_rerankers: dict[str, Reranker] = {}
+
+
+def _local_model(cfg: dict) -> Reranker:
+    """리랭커를 한 번만 읽어 두 평가가 같이 쓴다"""
+    rerank = cfg["retrieval"]["rerank"]
+    if rerank["model"] not in _rerankers:
+        _rerankers[rerank["model"]] = Reranker(rerank)
+    return _rerankers[rerank["model"]]
+
+
+def _sentences(text: str) -> list[str]:
+    """채점할 문장들. 출처 표시 [1] · 목록 기호 · 표 머리글과 구분선 · 너무 짧은 제목과 '답 없음' 문장은 뺀다"""
+    lines = _CITATION.sub("", text).splitlines()
+    header = {i - 1 for i, line in enumerate(lines) if _TABLE_RULE.match(line)}  # 구분선 바로 윗줄 = 표 머리글
+    out = []
+    for i, line in enumerate(lines):
+        if i in header:
+            continue
+        for part in _SENTENCE_END.split(line):
+            sentence = _LIST_MARK.sub("", part.replace("|", " ").replace("**", "")).strip()
+            if len(re.sub(r"\W", "", sentence)) >= 6 and _NO_ANSWER not in sentence:
+                out.append(sentence)
+    return out
+
+
+def _claims(text: str) -> list[str]:
+    """채점할 문장. 문장 거르기(_sentences)에서 모두 빠지는 짧은 글('180일' · '1식' · '12개월')은 글 전체를 한 문장으로 —
+    빼면 짧은 정답의 질문은 생성을 잘해도 늘 0점이 된다. '답 없음' 문장은 그대로 뺀다"""
+    whole = _LIST_MARK.sub("", _CITATION.sub("", text).replace("|", " ").replace("**", "")).strip()
+    return _sentences(text) or ([whole] if re.search(r"\w", whole) and _NO_ANSWER not in whole else [])
+
+
+def _numbers(text: str) -> set[str]:
+    """단위까지 맞춘 숫자 · 날짜 토큰 ('3 초' = '3초', '5천만 원' = '5,000만원')"""
+    return {token for _, _, token in _semantic_spans(text)}
+
+
+def _relevance(claims: list[str], passages: list[str], cfg: dict) -> list[list[float]]:
+    """claims × passages 리랭커 점수. 문장이 근거에 글자 그대로(띄어쓰기 · 숫자 표기 차이는 무시) 있거나, 근거가 문장으로
+    거르면 남지 않는 짧은 값('180일' · '1식')이고 그 값이 문장 안에 있으면 1 — 리랭커는 짧은 글의 관련도를 낮게 매긴다.
+    정답이 '180일' 이고 답이 '사업기간은 180일입니다' 이면 그 답 문장은 정답으로 지지된다"""
+    reranker = _local_model(cfg)
+    return [[1.0 if _contains(claim, passage) else score
+             for passage, score in zip(passages, reranker.scores(claim, passages))] for claim in claims]
+
+
+def _contains(claim: str, passage: str) -> bool:
+    return _key_fact_ratio([claim], passage) == 1 or (not _sentences(passage) and _key_fact_ratio([passage], claim) == 1)
+
+
+def _supported(claims: list[str], passages: list[str], scores: list[list[float]], question: str) -> list[bool]:
+    """질문에 나온 숫자는 근거에 없어도 된다 — '5초가 아니라 3초' 처럼 잘못된 전제를 바로잡는 문장도 지지로 본다"""
+    numbers = _numbers(" ".join(passages)) | _numbers(question)
+    return [max(row) >= _SUPPORT_SCORE and _numbers(claim) <= numbers for claim, row in zip(claims, scores)]
+
+
+def _ratio(flags: list[bool]) -> float:
+    return sum(flags) / len(flags) if flags else math.nan
+
+
+def _local_grounding(row: dict, cfg: dict) -> dict:
+    """답에 채점할 문장이 없으면(빈 답 · '답 없음'만) RAGAS 처럼 NaN"""
+    claims, contexts = _claims(row["answer"]), [c for c in row["contexts"] if c.strip()]
+    if not claims or not contexts:
+        return {"faithfulness": math.nan if not claims else 0.0}
+    scores = _relevance(claims, contexts, cfg)
+    return {"faithfulness": _ratio(_supported(claims, contexts, scores, row["question"]))}
+
+
+def _windows(sentences: list[str], size: int = 3) -> list[str]:
+    """이어진 문장 size 개씩 묶는다 — 정답 한 문장의 내용이 답의 여러 문장에 나뉘어 있어도 지지로 본다"""
+    return [" ".join(sentences[i:i + size]) for i in range(max(1, len(sentences) - size + 1))]
+
+
+def _local_end_to_end(row: dict, cfg: dict) -> dict:
+    answer, references = _claims(row["answer"]), _claims(row["reference"])
+    if not answer and not references and _NO_ANSWER in row["answer"] and _NO_ANSWER in row["reference"]:
+        return {"factual_correctness": 1.0}  # 답 없음 질문에 바르게 거절했다
+    if not answer or not references:
+        return {"factual_correctness": 0.0}
+    reference = [" ".join(references)]
+    precision = _ratio(_supported(answer, reference, _relevance(answer, reference, cfg), row["question"]))
+    windows = _windows(answer)
+    recall = _ratio(_supported(references, windows, _relevance(references, windows, cfg), row["question"]))
+    return {"factual_correctness": 2 * precision * recall / (precision + recall) if precision + recall else 0.0}
+
+
+def _judge_scores(rows: list[dict], cfg: dict, evaluation: str, answers_path: Path) -> list[dict]:
+    """질문마다 {표 열 이름: 점수}. judge 가 local 이면 API 를 부르지 않는다"""
+    if cfg["evaluation"]["judge"] == "local":
+        print(f"{evaluation}: 로컬 심판으로 {len(rows)}문항 채점 (API 호출 없음)")
+        local = _local_grounding if evaluation == "grounding" else _local_end_to_end
+        return [local(r, cfg) for r in rows]
+    metric, name, column = ((Faithfulness(), "faithfulness", "faithfulness") if evaluation == "grounding"
+                            else (FactualCorrectness(), "factual_correctness(mode=f1)", "factual_correctness"))
+    scores = _ragas(rows, [metric], cfg, evaluation, _checkpoint(answers_path, evaluation))
+    return [{column: s[name]} for s in scores]
 
 
 def _send_scores(rows: list[dict], scores: list[dict]):
     """질문별 점수를 그 질문의 Langfuse 추적에 붙인다. trace_id 가 없으면(키 없이 생성한 답) 보내지 않는다"""
+    if not any(r["trace_id"] for r in rows):
+        return
     langfuse = get_client()
     for r, s in zip(rows, scores):
         if not r["trace_id"]:
             continue
         for name, value in s.items():
-            if not math.isnan(value):
+            if isinstance(value, (int, float)) and not math.isnan(value):
                 langfuse.create_score(trace_id=r["trace_id"], name=name, value=value, data_type="NUMERIC")
     langfuse.flush()
 
 
-def _table(rows: list[dict], scores: list[dict]) -> pd.DataFrame:
-    """질문별 표 + 맨 아래 '평균' 행"""
+def _table(rows: list[dict], scores: list[dict], path: Path) -> pd.DataFrame:
+    """질문별 표 + 맨 아래 '평균' 행을 반환하고 CSV로 자동 저장한다."""
     df = pd.DataFrame([{"id": r["id"], "question": r["question"], **s} for r, s in zip(rows, scores)])
     mean = df.mean(numeric_only=True).to_frame().T.assign(id="평균", question="")
-    return pd.concat([df, mean], ignore_index=True).round(4)
+    table = pd.concat([df, mean], ignore_index=True).round(
+        {name: 8 if name.endswith("cost_usd") else 4 for name, value in scores[0].items()
+         if isinstance(value, (int, float))})
+    table.to_csv(path, index=False, encoding="utf-8")
+    return table
+
+
+# JSON으로 저장된 04 출력 중 05가 소비하는 필드만 검사한다. 생산자의 추가 메타데이터는 보존한다.
+_NUMERIC_TYPES = (int, float)
+_NULLABLE_TEXT = (str, type(None))
+_USAGE_FIELDS = {"input_tokens": int, "output_tokens": int, "cached_input_tokens": int,
+                 "reasoning_tokens": int, "cost_usd": _NUMERIC_TYPES}
+ANSWER_FIELDS = {
+    "id": str, "question": str, "reference": str, "key_facts": [str], "answerable": bool,
+    "answer": str, "contexts": [str], "trace_id": _NULLABLE_TEXT, "latency_s": _NUMERIC_TYPES,
+    **_USAGE_FIELDS, "primary_topic": _NULLABLE_TEXT, "context_chunk_ids": [str],
+    "rewrite": {"question": str, **_USAGE_FIELDS},
+    "retrieval_settings": {"fusion": str, "dense_weight": _NUMERIC_TYPES, "candidate_k": int, "token_budget": int,
+                           "chunk_file": str, "k_values": [int], "stored_rewrites_reused": bool},
+    "ranked_candidates": [{"chunk_id": str, "doc_id": str, "fused_rank": int,
+                           "dense_score": (*_NUMERIC_TYPES, type(None)), "dense_rank": (int, type(None)),
+                           "bm25_score": (*_NUMERIC_TYPES, type(None)), "bm25_rank": (int, type(None)),
+                           "exact_code_match": bool}],
+    "evidence": [{"doc_id": _NULLABLE_TEXT, "chunk_id": _NULLABLE_TEXT}],
+}
+
+
+def _invalid_record_fields(record, fields: dict, prefix: str) -> list[str]:
+    if not isinstance(record, dict):
+        return [prefix]
+    invalid = []
+    for field, expected in fields.items():
+        path = f"{prefix}.{field}"
+        invalid.extend([path] if field not in record else _invalid_field_value(record[field], expected, path))
+    return invalid
+
+
+def _invalid_list_items(value, expected: list, prefix: str) -> list[str]:
+    if not isinstance(value, list):
+        return [prefix]
+    return [field for i, item in enumerate(value) for field in _invalid_field_value(item, expected[0], f"{prefix}[{i}]")]
+
+
+def _invalid_field_value(value, expected, prefix: str) -> list[str]:
+    if isinstance(expected, dict):
+        return _invalid_record_fields(value, expected, prefix)
+    if isinstance(expected, list):
+        return _invalid_list_items(value, expected, prefix)
+    types = expected if isinstance(expected, tuple) else (expected,)
+    # bool은 int의 하위 클래스지만 토큰·비용·순위의 숫자로 허용하지 않는다.
+    if type(value) not in types:
+        return [prefix]
+    return [prefix] if type(value) is float and not math.isfinite(value) else []
+
+
+def _read_answers(answers_path: Path) -> list[dict]:
+    """모든 행의 필수 값·자료형을 검사한 뒤 반환한다. 잘못된 값은 유료 호출 전에 멈춘다."""
+    answers = read_jsonl(answers_path)
+    invalid = [field for i, row in enumerate(answers, 1) for field in _invalid_record_fields(row, ANSWER_FIELDS, f"row[{i}]")]
+    if invalid:
+        raise ValueError(f"{answers_path} 에 {invalid} 필드가 없거나 형식이 잘못되었습니다. "
+                         "03 → 02 설정 셀 → 04 를 다시 실행해 답변 파일을 만드세요")
+    return answers
 
 
 def evaluate_retrieval(answers_path: Path, cfg: dict) -> pd.DataFrame:
-    """Retrieval: 검색한 청크가 정답에 필요한 내용을 담았나"""
-    rows = read_jsonl(answers_path)
-    ragas = _ragas(rows, [LLMContextPrecisionWithReference(), LLMContextRecall()], cfg)
-    scores = [{"context_precision": s["llm_context_precision_with_reference"], "context_recall": s["context_recall"],
-               "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))}
-              for r, s in zip(rows, ragas)]
+    """Retrieval: API 없이 패킹 전 순위와 LLM에 보낸 청크를 평가한다."""
+    rows = _read_answers(answers_path)
+    scores = [{**ir_scores(r), "key_facts_in_context": _key_fact_ratio(r["key_facts"], " ".join(r["contexts"]))
+               if r["answerable"] and r["key_facts"] else math.nan,
+               "primary_topic": r["primary_topic"], "coverage_group": coverage_group(r),
+               "doc_label_state": label_state(r, "doc"), "chunk_label_state": label_state(r, "chunk"),
+               "retrieval_settings": json.dumps(r["retrieval_settings"], ensure_ascii=False)} for r in rows]
     _send_scores(rows, scores)
-    return _table(rows, scores)
+    exclusion_report(rows).to_csv(answers_path.with_name("retrieval_exclusions.csv"), index=False, encoding="utf-8")
+    return _table(rows, scores, answers_path.with_name("retrieval.csv"))
+
+
+def rerun_retrieval(answers_path: Path, output_path: Path, index) -> list[dict]:
+    """저장된 재작성 질문으로 검색만 다시 한다. 재작성·생성·심판 API 호출은 없다."""
+    rows = _read_answers(answers_path)
+    rescored = []
+    for row in rows:
+        hits, fields = retrieval_fields(index, row["question"], row["rewrite"]["question"], reused=True)
+        rescored.append({**row, **fields, "contexts": [h["body"] for h in hits],
+                         "sources": [f"{h['source']} p.{h['page']}" if h["page"] else h["source"] for h in hits],
+                         "trace_id": None})
+    write_jsonl(rescored, output_path)
+    return rescored
 
 
 def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
-    """Generation: 답이 질문에 맞게 핵심 사실을 담았나 (answer_relevancy 는 KURE 임베딩으로 계산)"""
-    rows = read_jsonl(answers_path)
-    ragas = _ragas(rows, [ResponseRelevancy()], cfg, embeddings=Embedder(cfg["embedding"]))
-    scores = [{"answer_relevancy": s["answer_relevancy"], "key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])}
-              for r, s in zip(rows, ragas)]
+    """Generation: 정답의 핵심 사실 문자열이 답변에 포함되는 비율."""
+    rows = _read_answers(answers_path)
+    scores = [{"key_facts_in_answer": _key_fact_ratio(r["key_facts"], r["answer"])
+               if r["key_facts"] else math.nan} for r in rows]
     _send_scores(rows, scores)
-    return _table(rows, scores)
+    return _table(rows, scores, answers_path.with_name("generation.csv"))
 
 
 def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Grounding: 답의 주장들이 검색한 청크로 뒷받침되나 (낮으면 환각)"""
-    rows = read_jsonl(answers_path)
-    ragas = _ragas(rows, [Faithfulness()], cfg)
-    scores = [{"faithfulness": s["faithfulness"]} for s in ragas]
+    rows = _read_answers(answers_path)
+    scores = _judge_scores(rows, cfg, "grounding", answers_path)
     _send_scores(rows, scores)
-    return _table(rows, scores)
+    return _table(rows, scores, answers_path.with_name("grounding.csv"))
 
 
 def evaluate_end_to_end(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """End-to-End: 최종 답이 정답과 사실이 맞는지 + 질문당 지연 시간·토큰·예상 비용(USD)"""
-    rows = read_jsonl(answers_path)
-    ragas = _ragas(rows, [FactualCorrectness()], cfg)
+    rows = _read_answers(answers_path)
+    judged = _judge_scores(rows, cfg, "end_to_end", answers_path)
     # 지연 시간 · 토큰 · 비용은 추적에 이미 있으므로 점수로는 factual_correctness 만 보낸다
-    _send_scores(rows, [{"factual_correctness": s["factual_correctness(mode=f1)"]} for s in ragas])
-    usd_in, usd_out = cfg["llm"]["usd_per_1m_tokens"]
-    scores = [{"factual_correctness": s["factual_correctness(mode=f1)"], "latency_s": r["latency_s"],
+    _send_scores(rows, judged)
+    scores = [{**j, "latency_s": r["latency_s"],
                "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"],
-               "reasoning_tokens": r["reasoning_tokens"],
-               "cost_usd": (r["input_tokens"] * usd_in + r["output_tokens"] * usd_out) / 1e6}
-              for r, s in zip(rows, ragas)]
-    return _table(rows, scores)
+               "cached_input_tokens": r["cached_input_tokens"], "reasoning_tokens": r["reasoning_tokens"],
+               "rewrite_input_tokens": r["rewrite"]["input_tokens"],
+               "rewrite_output_tokens": r["rewrite"]["output_tokens"],
+               "rewrite_cached_input_tokens": r["rewrite"]["cached_input_tokens"],
+               "rewrite_reasoning_tokens": r["rewrite"]["reasoning_tokens"],
+               "answer_cost_usd": r["cost_usd"], "rewrite_cost_usd": r["rewrite"]["cost_usd"],
+               "cost_usd": r["cost_usd"] + r["rewrite"]["cost_usd"]}
+              for r, j in zip(rows, judged)]
+    return _table(rows, scores, answers_path.with_name("end_to_end.csv"))
