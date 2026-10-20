@@ -475,8 +475,10 @@ from the current evidence or package manifests. Updating `data/data_list.csv` an
 declaration therefore allows rename to use current organization names while keeping source chunks fixed.
 Cited plan roles must still match source roles. Changes to bodies, requirement links or annotations
 stop processing before judgments, calls or output writes, including on role-cache hits and even when
-both mutable manifests are rewritten. Whole-document validation uses the same per-file anchor for
-the chunks, document list and agency CSV it already required to remain fixed.
+both mutable manifests are rewritten. Whole-document validation and absence-batch cost estimation
+check the plan-pinned chunks, document list and agency CSV before reading current document units.
+Estimation performs this check before document batching or history loading, so coherent package
+and adapter replacements require a new plan to change estimated validation calls and costs.
 
 Plans created before per-file hashes were stored cannot independently prove chunk identity after
 a manifest update. They stop with an instruction to create new evidence/plans/runs; this change

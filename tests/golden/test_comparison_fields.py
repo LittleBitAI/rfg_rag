@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from golden_pipeline import evidence, experiment, generation, improvement, plan, storage, validation
+from golden_pipeline import evidence, generation, improvement, plan, storage, validation
 from golden_pipeline.state import transition
 from conftest import DOC_1, _write_jsonl
 
@@ -258,7 +258,7 @@ def test_plans_without_frozen_file_hashes_require_regeneration(field_run):
 
 @pytest.mark.parametrize("change", ["body", "requirement_ids"])
 @pytest.mark.parametrize("field_run", ["detail_entities"], indirect=True)
-@pytest.mark.parametrize("reader", ["plan", "eligible", "document", "estimate"])
+@pytest.mark.parametrize("reader", ["plan", "eligible", "document"])
 def test_readers_reject_stale_adapter_records_after_both_manifests_are_rewritten(field_run, evidence_run, change, reader):
     [chunk] = storage._read_jsonl(evidence_run / evidence.CHUNKS)
     chunk[change] = chunk["body"].replace("3초", "9초") if change == "body" else ["QUR-999"]
@@ -277,8 +277,6 @@ def test_readers_reject_stale_adapter_records_after_both_manifests_are_rewritten
         "plan": lambda: plan.make_plan("stale", "ev-roles", {"comparison": 1}, 2000, package=evidence_run),
         "eligible": lambda: plan.eligible_units(run_dir),
         "document": lambda: plan.document_units(run_dir, {DOC_1}),
-        "estimate": lambda: experiment._unanswerable_batches({"evidence_run": "ev-roles", "bundles": [
-            {"topic": "unanswerable", "doc_sha": DOC_1}]}),
     }
     with pytest.raises(evidence.PackageMismatch, match="units.jsonl"):
         read[reader]()
@@ -293,7 +291,7 @@ def test_readers_reject_stale_adapter_records_after_both_manifests_are_rewritten
 
 @pytest.mark.parametrize("change", ["body", "roles"])
 @pytest.mark.parametrize("field_run", ["detail_entities"], indirect=True)
-@pytest.mark.parametrize("reader", ["direct", "plan", "eligible", "document", "estimate"])
+@pytest.mark.parametrize("reader", ["direct", "plan", "eligible", "document"])
 def test_matching_adapter_replacements_cannot_bypass_package_declarations(field_run, evidence_run, change, reader):
     package_manifest = (evidence_run / "manifest.json").read_bytes()
     [chunk] = storage._read_jsonl(evidence_run / evidence.CHUNKS)
@@ -316,8 +314,6 @@ def test_matching_adapter_replacements_cannot_bypass_package_declarations(field_
         "plan": lambda: plan.make_plan("mixed", "ev-roles", {"comparison": 1}, 2000, package=evidence_run),
         "eligible": lambda: plan.eligible_units(run_dir),
         "document": lambda: plan.document_units(run_dir, {DOC_1}),
-        "estimate": lambda: experiment._unanswerable_batches({"evidence_run": "ev-roles", "bundles": [
-            {"topic": "unanswerable", "doc_sha": DOC_1}]}),
     }
     with pytest.raises(evidence.PackageMismatch, match=r"corpus/chunks.jsonl SHA-256.*manifest.json"):
         read[reader]()

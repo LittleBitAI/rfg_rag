@@ -16,7 +16,7 @@ from string import Template
 
 import openai
 
-from golden_pipeline import adoption, generation, plan, storage, validation
+from golden_pipeline import adoption, evidence, generation, plan, storage, validation
 from golden_pipeline.schema import TOPICS
 
 # 주제마다 묶음 66개: train 6 · validation 30 · held-out 30. 몫은 자기 개선과 같은 해시 나눔(adoption.split)으로 정한다.
@@ -298,6 +298,7 @@ def _unanswerable_batches(planned):
     """unanswerable 묶음마다 검증기가 읽을 대상 문서 묶음 수 (validation.document_batches)."""
     bundles = [bundle for bundle in planned["bundles"] if bundle["topic"] == "unanswerable"]
     run_dir = storage.OUTPUTS / "evidence" / planned["evidence_run"]
+    validation._planned_package(planned, evidence.PINNED[1:])
     found = plan.document_units(run_dir, {bundle["doc_sha"] for bundle in bundles})
     return [len(validation.document_batches(found[bundle["doc_sha"]])) for bundle in bundles]
 

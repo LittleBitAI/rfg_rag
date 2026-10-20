@@ -9,8 +9,9 @@ import httpx
 import openai
 import pytest
 
-from golden_pipeline import adoption, cli, comparison, experiment, generation, plan, storage
+from golden_pipeline import adoption, cli, comparison, evidence, experiment, generation, plan, storage, validation
 from golden_pipeline.schema import TOPICS
+from conftest import _write_jsonl
 
 REQUEST = httpx.Request("POST", "https://api.test/v1/chat/completions")
 # 단가 1 · 4 USD / 100만 토큰, 호출마다 출력 최대 100 토큰.
@@ -21,6 +22,9 @@ RESERVED = ((3 + 16 + 2 + 16) * 1 + 100 * 4) / 1_000_000
 
 
 SMALL_PARTS = {"train": 6, "validation": 2, "held_out": 2}
+SYNTHETIC_HISTORY = {"outputs": 10, "passed": 5, "val_calls": 1,
+                     "gen_in": 100, "gen_out": 10, "gen_out_p99": 10,
+                     "val_in": 100, "val_out": 10, "val_out_p99": 10}
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +47,113 @@ def write_pool(outputs, parts):
     (outputs / "outputs/evidence/ev").mkdir(parents=True)
     (outputs / "outputs/evidence/ev/manifest.json").write_text('{"pinned_sha256": {"manifest.json": "x"}}', encoding="utf-8")
     return {bundle_id: part for found in parts.values() for bundle_id, part in found.items()}
+
+
+@pytest.fixture
+def absence_plan(evidence_run, monkeypatch):
+    monkeypatch.setattr(validation, "DOCUMENT_BATCH_CHARS", 150)
+    monkeypatch.setattr(validation, "DOCUMENT_OVERLAP_CHARS", 0)
+    monkeypatch.setattr(experiment, "_history", lambda topic: SYNTHETIC_HISTORY)
+    path = plan.make_plan("old", "ev1", {"unanswerable": 1}, 2000, package=evidence_run)
+    planned = storage._read_json(path)
+    [bundle] = planned["bundles"]
+    run_dir = storage.OUTPUTS / "evidence/ev1"
+    document = plan.document_units(run_dir, {bundle["doc_sha"]})[bundle["doc_sha"]]
+    held = {row["unit_id"] for row in storage._read_jsonl(run_dir / "judgments.jsonl") if row["judgment"] == "held"}
+    assert len(document) == 4 and any(unit["unit_id"] in held for unit in document)
+    baseline = experiment.estimate("old", 1, 4)
+    assert baseline["unanswerable_batches"] == [1]
+    return planned, path, baseline
+
+
+def replace_absence_package(package, target):
+    chunks = storage._read_jsonl(package / evidence.CHUNKS)
+    for chunk in chunks:
+        if chunk["doc_id"] == target:
+            chunk["body"] += " synthetic extension" * 20
+            chunk["spans"][0]["end"] = len(chunk["body"])
+    _write_jsonl(package / evidence.CHUNKS, chunks)
+    path = package / "manifest.json"
+    manifest = storage._read_json(path)
+    manifest["files"][evidence.CHUNKS]["sha256"] = storage._sha256(package / evidence.CHUNKS)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    units, judgments, _ = evidence._adapt(package)
+    run_dir = storage.OUTPUTS / "evidence/ev1"
+    _write_jsonl(run_dir / "units.jsonl", units)
+    _write_jsonl(run_dir / "judgments.jsonl", judgments)
+    path = run_dir / "manifest.json"
+    manifest = storage._read_json(path)
+    manifest["pinned_sha256"] = evidence.pin(package)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert evidence.read_verified(run_dir, package) == (units, judgments)
+
+
+@pytest.mark.parametrize("reader", ["batches", "estimate"])
+def test_estimation_rejects_coherent_replacement_of_a_frozen_plans_source(absence_plan, evidence_run, monkeypatch, reader):
+    planned, path, baseline = absence_plan
+    original = path.read_bytes()
+    target = planned["bundles"][0]["doc_sha"]
+    replace_absence_package(evidence_run, target)
+    assert evidence.pin(evidence_run)[evidence.CHUNKS] != planned["pinned_sha256"][evidence.CHUNKS]
+    document = plan.document_units(storage.OUTPUTS / "evidence/ev1", {target})[target]
+    assert len(validation.document_batches(document)) == 4
+    before = storage.snapshot(storage.OUTPUTS)
+    calls, batch = [], validation.document_batches
+
+    def watched_batches(document):
+        calls.append("batch")
+        return batch(document)
+
+    def watched_history(topic):
+        calls.append("history")
+        return SYNTHETIC_HISTORY
+
+    monkeypatch.setattr(validation, "document_batches", watched_batches)
+    monkeypatch.setattr(experiment, "_history", watched_history)
+    with pytest.raises(evidence.PackageMismatch, match="corpus/chunks.jsonl SHA-256"):
+        if reader == "batches":
+            observed = experiment._unanswerable_batches(planned)
+            print(f"Old plan accepted replacement batches: {baseline['unanswerable_batches']} -> {observed}")
+        else:
+            observed = experiment.estimate("old", 1, 4)
+            print(f"Old plan accepted replacement costs: {baseline['topics']['unanswerable']['high']} -> "
+                  f"{observed['topics']['unanswerable']['high']}")
+    assert calls == []
+    assert path.read_bytes() == original
+    assert storage.snapshot(storage.OUTPUTS) == before
+
+
+def test_estimation_accepts_a_fresh_plan_for_the_coherent_replacement(absence_plan, evidence_run):
+    planned, old_path, baseline = absence_plan
+    original = old_path.read_bytes()
+    replace_absence_package(evidence_run, planned["bundles"][0]["doc_sha"])
+    evidence.run("fresh", package=evidence_run)
+    plan.make_plan("fresh", "fresh", {"unanswerable": 1}, 2000, package=evidence_run)
+    fresh = experiment.estimate("fresh", 1, 4)
+    assert baseline["unanswerable_batches"] == [1] and fresh["unanswerable_batches"] == [4]
+    old_high, new_high = baseline["topics"]["unanswerable"]["high"], fresh["topics"]["unanswerable"]["high"]
+    assert (old_high["validation_calls"], new_high["validation_calls"]) == (40, 160)
+    assert (old_high["usd"], new_high["usd"]) == (0.0104, 0.0272)
+    assert old_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("reader", ["batches", "estimate"])
+def test_estimation_requires_plan_pins_before_loading_history(absence_plan, monkeypatch, reader):
+    planned, path, _ = absence_plan
+    del planned["pinned_sha256"]
+    path.write_text(json.dumps(planned), encoding="utf-8")
+    before = storage.snapshot(storage.OUTPUTS)
+
+    def no_history(topic):
+        raise AssertionError("A plan without source pins must stop before loading history")
+
+    monkeypatch.setattr(experiment, "_history", no_history)
+    with pytest.raises(ValueError, match="새 계획과 run"):
+        if reader == "batches":
+            experiment._unanswerable_batches(planned)
+        else:
+            experiment.estimate("old", 1, 4)
+    assert storage.snapshot(storage.OUTPUTS) == before
 
 
 def test_freeze_takes_six_two_two_per_topic_in_plan_order_and_records_hashes(outputs, monkeypatch):
