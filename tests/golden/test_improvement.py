@@ -232,8 +232,11 @@ def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_fai
 @pytest.mark.parametrize("requirement_ids, entities, values, code", [
     # 한 요구사항의 칸 이름끼리 견줬다. 값은 근거와 맞아 검증을 통과했지만 RFP 를 읽는 사람은 이렇게 묻지 않는다.
     (["QUR-003"], ["요구사항 분류", "응낙수준"], {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "invalid_comparison"),
-    # 요구사항에 딸린 세부 표의 두 기능은 대상과 값이 이웃해도 칸 이름이 아니라 같은 종류의 대상이다.
+    # 칸 이름은 문서마다 다르다 ('고유번호' · '분    류'). 이름 목록이 아니라 값의 종류로 가려야 한다.
+    (["QUR-003"], ["고유번호", "분    류"], {"고유번호": "QUR-003", "분    류": "품질 요구사항"}, "invalid_comparison"),
+    # 요구사항에 딸린 세부 표의 두 기능 · 요구사항 둘은 대상과 값이 이웃해도 같은 성질(시간)의 값을 견준다.
     (["QUR-003"], ["실명 인증", "로그인"], {"실명 인증": "3초", "로그인": "1초"}, None),
+    (["QUR-003"], ["요구사항 A", "요구사항 B"], {"요구사항 A": "3초", "요구사항 B": "5초"}, None),
     # 요구사항 표가 아닌 표의 행 이름(메뉴)끼리 견주는 것은 같은 종류의 비교다.
     ([], ["목표경영", "과제관리"], {"목표경영": "42", "과제관리": "103"}, None),
 ])
@@ -241,7 +244,8 @@ def test_a_comparison_between_fields_of_one_requirement_is_ruled_out(requirement
     item = {"primary_topic": "comparison", "question": "어느 쪽이 더 큰가?", "answer": "",
             "evidence": [{"chunk_id": "c1", "requirement_ids": requirement_ids}],
             "structure": {"entities": entities, "values": values, "choice": entities[1]}}
-    text = "요구사항 분류 | 품질 요구사항 | 응낙수준 | 필수\n실명 인증 | 3초\n로그인 | 1초\n목표경영 | 42\n과제관리 | 103"
+    text = ("고유번호 | QUR-003 | 분    류 | 품질 요구사항\n요구사항 분류 | 품질 요구사항 | 응낙수준 | 필수\n"
+            "실명 인증 | 3초\n로그인 | 1초\n요구사항 A | 3초\n요구사항 B | 5초\n목표경영 | 42\n과제관리 | 103")
     reason = rule_reason(item, [{"text": text, "ref": {"location": {"kind": "table", "row": 1}}}])
     assert (reason and improvement.failure_code(reason)) == code
 
