@@ -59,6 +59,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         "side": side and {"split": side[0], "part": side[1],
                           "manifest_sha256": storage._sha256(storage.OUTPUTS / "splits" / side[0] / "manifest.json")},
         "package_manifest_sha256": pinned["manifest.json"],
+        "pinned_sha256": pinned,
         "topic_specs": {topic: sha for topic, (_, sha) in specs.items()},
         "max_context_chars": max_context_chars,
         "counts": {topic: counts[topic] for topic in specs},

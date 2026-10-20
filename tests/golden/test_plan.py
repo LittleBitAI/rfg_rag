@@ -27,6 +27,7 @@ def test_bundles_use_only_eligible_units_once_and_carry_their_context(evidence_r
     assert plan["planned"] == {"numeric": 1, "table": 1, "condition": 1, "comparison": 0}
     assert plan["coverage"] == {"numeric": {DOC_1: 1}, "table": {DOC_1: 1}, "condition": {DOC_2: 1}}
     assert plan["package_manifest_sha256"] == storage._sha256(evidence_run / "manifest.json")
+    assert plan["pinned_sha256"] == {name: storage._sha256(evidence_run / name) for name in evidence.PINNED}
     assert plan["topic_specs"]["numeric"] == storage._sha256(storage.CONFIGS / "topics" / "numeric.json")
 
     table = next(b for b in plan["bundles"] if b["topic"] == "table")

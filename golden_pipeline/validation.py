@@ -19,7 +19,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-12"
+VALIDATOR_VERSION = "validation-13"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -690,10 +690,10 @@ def _pinned_roles(item):
 
 
 def _planned_package(planned, files):
-    """Read file hashes only from the package manifest anchored in the fixed plan."""
-    plan._check_package(evidence.PACKAGE, {"manifest.json": planned["package_manifest_sha256"]})
-    declared = storage._read_json(evidence.PACKAGE / "manifest.json")["files"]
-    pinned = {name: declared[name]["sha256"] for name in files}
+    """Check each required file against hashes frozen inside the generation plan."""
+    if "pinned_sha256" not in planned:
+        raise ValueError("계획에 고정한 원문 파일 해시가 없습니다. 새 계획과 run 을 만드세요")
+    pinned = {name: planned["pinned_sha256"][name] for name in files}
     plan._check_package(evidence.PACKAGE, pinned)
     return pinned
 

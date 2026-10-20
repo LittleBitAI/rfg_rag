@@ -269,6 +269,7 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | 필드 | 값 |
 |---|---|
 | `evidence_run` · `package_manifest_sha256` | 근거 어댑터 run 과 패키지 `manifest.json` SHA-256 |
+| `pinned_sha256` | Source file hashes copied into the plan at creation; protected by the generation run's plan SHA |
 | `topic_specs` | 주제 명세 파일별 SHA-256. 생성 때 명세가 바뀌었으면 멈춥니다 |
 | `skipped_plans` | 단위를 뺀 앞 계획 id → 그 계획 파일 SHA-256 (없으면 `{}`) |
 | `side` | `--side` 의 `{"split", "part", "manifest_sha256"}`, 주지 않았으면 `null` |
@@ -456,15 +457,20 @@ Both reasons map to `invalid_comparison` in A's failure memory. Only names expli
 entities proceed to the existing independent answer checks. Uncited headers cannot authorize names.
 Comparisons citing no requirement IDs retain their existing behavior.
 
-Before reading roles, each consumer verifies the generation run's plan SHA, then checks the source
-package's `manifest.json` against the plan's `package_manifest_sha256`. It reads the chunk hash
-from that verified manifest's file declarations and checks `corpus/chunks.jsonl` before using roles.
-Rewriting the evidence-run manifest cannot authorize a changed source; rewriting the source manifest
-also fails the plan's fixed hash. Cited plan roles must still match source roles. Changes to bodies,
-requirement links or annotations stop processing before judgments, calls or output writes, including
-on role-cache hits. Whole-document validation uses the same anchor for all source files. Rename
-checks the fixed manifest and chunks while still reading current `data/data_list.csv` contents for
-updated organization names.
+The planner copies the evidence run's verified per-file hashes into `plan.pinned_sha256`.
+Before reading roles, each consumer verifies the generation run's plan SHA, then checks
+`corpus/chunks.jsonl` against its hash inside that fixed plan. It does not obtain expected hashes
+from the current evidence or package manifests. Updating `data/data_list.csv` and its package-manifest
+declaration therefore allows rename to use current organization names while keeping source chunks fixed.
+Cited plan roles must still match source roles. Changes to bodies, requirement links or annotations
+stop processing before judgments, calls or output writes, including on role-cache hits and even when
+both mutable manifests are rewritten. Whole-document validation uses the same per-file anchor for
+the chunks, document list and agency CSV it already required to remain fixed.
+
+Plans created before per-file hashes were stored cannot independently prove chunk identity after
+a manifest update. They stop with an instruction to create new evidence/plans/runs; this change
+does not backfill or rewrite old outputs using mutable metadata. The whole-package manifest hash
+remains in the plan as provenance, but role checks do not require the current manifest to match it.
 
 To use requirement comparisons from an old package, its owner must prepare a new package with
 trusted annotations and updated manifest hashes, then create a new evidence run, plan and generation
@@ -472,7 +478,7 @@ run. Existing outputs are not rewritten. Legacy unannotated requirement comparis
 when validated or rechecked by release/rename. This change includes no dataset migration or paid
 annotation calls; the producer-to-consumer contract is tested with synthetic source packages.
 
-The validator version is `validation-12`. B/C validation and A loops started with versions 7–11
+The validator version is `validation-13`. B/C validation and A loops started with versions 7–12
 must use new runs, preventing old and new criteria from being mixed within a run.
 
 거절은 끝 상태라 사람이 되돌릴 수 없습니다.

@@ -320,6 +320,7 @@ def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits,
     ("validator_version_9", ["thresholds"]),
     ("validator_version_10", ["thresholds"]),
     ("validator_version_11", ["thresholds"]),
+    ("validator_version_12", ["thresholds"]),
 ])
 def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, monkeypatch, change, changed):
     # 이어 돌면서 한도 · 계획 · 검증 기준이 바뀌면 한 loop 의 round 들이 서로 다른 조건으로 돌고 report 가 그것을 숨긴다.
@@ -555,6 +556,7 @@ def planned_item(item, text, roles=None):
     plan_path.parent.mkdir(exist_ok=True)
     pinned = storage._read_json(storage.OUTPUTS / "evidence/ev1/manifest.json")["pinned_sha256"]
     plan_path.write_text(json.dumps({"evidence_run": "ev1", "package_manifest_sha256": pinned["manifest.json"],
+                                   "pinned_sha256": pinned,
                                    "bundles": [{"bundle_id": item["bundle_id"],
                                        "units": [{"ref": item["evidence"][0], "text": text, "roles": roles}]}]}), encoding="utf-8")
     return {"plan_id": f"p-{item['run_id']}", "plan_sha256": storage._sha256(plan_path)}

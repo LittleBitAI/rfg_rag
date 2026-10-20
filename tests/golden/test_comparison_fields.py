@@ -60,6 +60,7 @@ def field_run(evidence_run, make_item, tmp_path, request):
         # New plans exclude unannotated requirements; only this case models a legacy plan.
         path.parent.mkdir()
         write_json(path, {"evidence_run": "ev-roles", "package_manifest_sha256": storage._sha256(evidence_run / "manifest.json"),
+                          "pinned_sha256": storage._read_json(ev_dir / "manifest.json")["pinned_sha256"],
                           "topic_specs": {"comparison": plan.topic_spec("comparison")[1]}, "bundles": [bundle]})
     else:
         spec_path = storage.CONFIGS / "topics/comparison.json"
@@ -84,9 +85,19 @@ def previously_accepted(item, stage):
 
 @pytest.mark.parametrize("field_run", ["declared_entities", "detail_entities"], indirect=True)
 @pytest.mark.parametrize("stage", ["validate", "release", "rename"])
-def test_explicit_entities_can_pass_validation_release_and_rename(field_run, stage):
-    item, _, config, run_dir = field_run
+@pytest.mark.parametrize("refresh_names", [pytest.param(False, id="original-names"), pytest.param(True, id="names-refreshed")])
+def test_explicit_entities_can_pass_validation_release_and_rename(field_run, evidence_run, stage, refresh_names):
+    item, units, config, run_dir = field_run
     previously_accepted(item, stage)
+    validation.rule_reason(item, units)
+    chunks_sha = storage._sha256(evidence_run / evidence.CHUNKS)
+    if refresh_names:
+        csv = evidence_run / evidence.AGENCIES
+        csv.write_text(csv.read_text(encoding="utf-8").replace(",가기관", ",새기관"), encoding="utf-8")
+        path = evidence_run / "manifest.json"
+        manifest = storage._read_json(path)
+        manifest["files"][evidence.AGENCIES]["sha256"] = storage._sha256(csv)
+        write_json(path, manifest)
     calls = []
 
     def client(**kwargs):
@@ -103,7 +114,14 @@ def test_explicit_entities_can_pass_validation_release_and_rename(field_run, sta
     else:
         released = (validation.release("comparison", "v2", [("C", "c1")], config, client) if stage == "release"
                     else validation.rename("comparison", "v2", ["v1"]))
-        assert [row["candidate_id"] for row in storage._read_jsonl(released / "golden.jsonl")] == [item["candidate_id"]]
+        [row] = storage._read_jsonl(released / "golden.jsonl")
+        assert row["candidate_id"] == item["candidate_id"]
+        assert row["structure"] == item["structure"]
+        assert row["answer"] == item["answer"]
+        assert row["evidence"] == item["evidence"]
+        if refresh_names:
+            assert row["question"].startswith("새기관의")
+    assert storage._sha256(evidence_run / evidence.CHUNKS) == chunks_sha
     assert len(calls) == (0 if stage == "rename" else 1)
 
 
@@ -214,3 +232,16 @@ def test_new_plans_refuse_roles_changed_in_adapter_output(field_run, evidence_ru
     with pytest.raises(evidence.PackageMismatch, match="roles.*고정 원문"):
         plan.make_plan("new", "ev-roles", {"comparison": 1}, 2000, package=evidence_run)
     assert not (storage.OUTPUTS / "plans/new.json").exists()
+
+
+def test_plans_without_frozen_file_hashes_require_regeneration(field_run):
+    item, units, _, run_dir = field_run
+    path = storage.OUTPUTS / "plans/p-fields.json"
+    planned = storage._read_json(path)
+    del planned["pinned_sha256"]
+    write_json(path, planned)
+    manifest = storage._read_json(run_dir / "manifest.json")
+    manifest["generation"]["plan_sha256"] = storage._sha256(path)
+    write_json(run_dir / "manifest.json", manifest)
+    with pytest.raises(ValueError, match="새 계획과 run"):
+        validation.rule_reason(item, units)
