@@ -18,7 +18,9 @@ class _FakeReranker:
 
 @pytest.fixture(autouse=True)
 def fake_reranker(monkeypatch):
-    monkeypatch.setattr(evaluation, "_local_model", lambda cfg: _FakeReranker())
+    """모델만 가짜로 — _local_model 이 실제 config 에서 리랭커 설정을 찾는 길은 그대로 탄다"""
+    monkeypatch.setattr(evaluation, "_rerankers", {})
+    monkeypatch.setattr(evaluation, "Reranker", lambda rerank_cfg: _FakeReranker())
 
 
 def _row(**fields) -> dict:
@@ -37,6 +39,10 @@ def _row(**fields) -> dict:
     # 짧은 정답이 답 문장 안에 있으면 리랭커 점수(0)와 상관없이 지지 — 근거에 없는 둘째 문장만 정밀도에서 빠진다
     ("end_to_end", _row(reference="180일", answer="사업기간은 착수일로부터 180 일입니다. 추가로 교육을 2회 실시합니다."),
      {"factual_correctness": pytest.approx(2 / 3)}),
+    # 답 없음 질문에 바르게 거절하면 만점, 정답이 있는데 거절하면 0점
+    ("end_to_end", _row(reference="제공된 문서에서 확인할 수 없습니다.", answer="제공된 문서에서 확인할 수 없습니다."),
+     {"factual_correctness": 1.0}),
+    ("end_to_end", _row(reference="180일", answer="제공된 문서에서 확인할 수 없습니다."), {"factual_correctness": 0.0}),
 ])
 def test_local_judge_scores(name, row, expected):
     local = evaluation._local_grounding if name == "grounding" else evaluation._local_end_to_end

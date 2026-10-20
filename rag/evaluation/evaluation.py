@@ -234,10 +234,10 @@ _rerankers: dict[str, Reranker] = {}
 
 def _local_model(cfg: dict) -> Reranker:
     """리랭커를 한 번만 읽어 두 평가가 같이 쓴다"""
-    model = cfg["rerank"]["model"]
-    if model not in _rerankers:
-        _rerankers[model] = Reranker(cfg["rerank"])
-    return _rerankers[model]
+    rerank = cfg["retrieval"]["rerank"]
+    if rerank["model"] not in _rerankers:
+        _rerankers[rerank["model"]] = Reranker(rerank)
+    return _rerankers[rerank["model"]]
 
 
 def _sentences(text: str) -> list[str]:
@@ -306,6 +306,8 @@ def _windows(sentences: list[str], size: int = 3) -> list[str]:
 
 def _local_end_to_end(row: dict, cfg: dict) -> dict:
     answer, references = _claims(row["answer"]), _claims(row["reference"])
+    if not answer and not references and _NO_ANSWER in row["answer"] and _NO_ANSWER in row["reference"]:
+        return {"factual_correctness": 1.0}  # 답 없음 질문에 바르게 거절했다
     if not answer or not references:
         return {"factual_correctness": 0.0}
     reference = [" ".join(references)]

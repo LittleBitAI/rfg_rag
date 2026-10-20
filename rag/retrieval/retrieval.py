@@ -182,12 +182,18 @@ class HybridIndex:
         self.settings = {name: cfg[name] for name in ("embedding", "bm25", "retrieval")}
 
     @cached_property
+    def _corpus_hash(self) -> str:
+        """청크 · 기관 라우팅의 해시. 색인을 읽은 뒤 바뀌지 않으므로 한 번만 계산한다"""
+        routes = {org: sorted(doc_ids) for org, doc_ids in self.router.org_docs.items()}
+        key = json.dumps({"chunks": self.chunks, "routes": routes}, ensure_ascii=False, sort_keys=True)
+        return sha256(key.encode("utf-8")).hexdigest()
+
+    @property
     def fingerprint(self) -> str:
         """검색 결과를 바꾸는 입력(청크 · 기관 라우팅 · 검색 설정)의 해시.
-        04 답변 체크포인트가 이 값으로 갈려, 01 · 02 를 다시 돌리거나 검색 설정을 바꾸면 예전 답을 쓰지 않는다."""
-        routes = {org: sorted(doc_ids) for org, doc_ids in self.router.org_docs.items()}
-        key = json.dumps({"chunks": self.chunks, "routes": routes, "settings": self.settings},
-                         ensure_ascii=False, sort_keys=True)
+        04 답변 체크포인트가 이 값으로 갈려, 01 · 02 를 다시 돌리거나 검색 설정을 바꾸면 예전 답을 쓰지 않는다.
+        검색 설정(token_budget · fusion 등)은 색인을 읽은 뒤에도 바꿀 수 있어 부를 때마다 다시 넣는다."""
+        key = json.dumps({"corpus": self._corpus_hash, "settings": self.settings}, ensure_ascii=False, sort_keys=True)
         return sha256(key.encode("utf-8")).hexdigest()
 
     @observe(name="retrieve-context", as_type="retriever")

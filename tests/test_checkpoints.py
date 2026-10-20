@@ -12,6 +12,7 @@ from rag.evaluation import evaluation
 from rag.generation import generation
 from rag.preprocessing import parsing
 from rag.retrieval import indexing
+from rag.retrieval.retrieval import HybridIndex
 from test_usage import _answer_row
 
 _OCR_CFG = {"model": "m", "max_tokens": 1, "reasoning_effort": "low", "usd_per_1m_tokens": [1, 1, 1]}
@@ -169,6 +170,25 @@ def test_answer_checkpoint_is_not_reused_after_question_or_setting_change(monkey
     answer.reset_mock()
     generation.answer_questions(items, index, {"model": "다른 모델"}, {}, checkpoint_dir=tmp_path)
     assert answer.call_count == 3
+
+
+def test_answer_checkpoint_is_not_reused_after_retrieval_setting_change_on_the_same_index(monkeypatch, tmp_path):
+    cfg = load_config()
+    index = HybridIndex.__new__(HybridIndex)
+    index.chunks = [{"chunk_id": "c1", "text": "청크"}]
+    index.router = MagicMock(org_docs={"기관": {"doc-a"}})
+    index.settings = {name: cfg[name] for name in ("embedding", "bm25", "retrieval")}
+    index.rcfg = cfg["retrieval"]
+    items = [_item(i) for i in range(2)]
+    answer = MagicMock(side_effect=_fake_answer)
+    monkeypatch.setattr(generation, "answer_question", answer)
+    generation.answer_questions(items, index, {}, {}, checkpoint_dir=tmp_path)
+    answer.reset_mock()
+
+    index.rcfg["token_budget"] += 1  # 노트북에서 같은 색인의 설정만 바꿔 다시 돌리는 경우
+
+    generation.answer_questions(items, index, {}, {}, checkpoint_dir=tmp_path)
+    assert answer.call_count == 2
 
 
 def test_interrupted_judge_scores_resume_and_nan_is_judged_again(monkeypatch, tmp_path):
