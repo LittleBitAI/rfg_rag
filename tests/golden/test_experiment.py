@@ -1,4 +1,5 @@
 """비교 실험: 계획 고정, 실험 상태 분리, 실험 장부. 네트워크 호출은 없다."""
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -41,11 +42,11 @@ def write_pool(outputs, parts):
     for topic in TOPICS:
         (outputs / f"configs/topics/{topic}.json").write_text('{"requires": "r", "structure": {}}', encoding="utf-8")
     specs = {topic: storage._sha256(outputs / f"configs/topics/{topic}.json") for topic in TOPICS}
-    pool = {"plan_id": "pool", "evidence_run": "ev", "package_manifest_sha256": "v", "topic_specs": specs, "bundles": bundles}
+    pinned = {name: hashlib.sha256(name.encode("utf-8")).hexdigest() for name in evidence.PINNED}
+    pool = {"plan_id": "pool", "evidence_run": "ev", "package_manifest_sha256": pinned["manifest.json"],
+            "pinned_sha256": pinned, "topic_specs": specs, "bundles": bundles}
     (outputs / "outputs/plans").mkdir(parents=True)
     (outputs / "outputs/plans/pool.json").write_text(json.dumps(pool), encoding="utf-8")
-    (outputs / "outputs/evidence/ev").mkdir(parents=True)
-    (outputs / "outputs/evidence/ev/manifest.json").write_text('{"pinned_sha256": {"manifest.json": "x"}}', encoding="utf-8")
     return {bundle_id: part for found in parts.values() for bundle_id, part in found.items()}
 
 
@@ -156,6 +157,52 @@ def test_estimation_requires_plan_pins_before_loading_history(absence_plan, monk
     assert storage.snapshot(storage.OUTPUTS) == before
 
 
+def test_freeze_keeps_pool_provenance_after_coherent_evidence_replacement(absence_plan, evidence_run, monkeypatch):
+    source, path, _ = absence_plan
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    split = {f"{topic}-{n}": part for topic in TOPICS for n, part in enumerate(order)}
+    [bundle] = source["bundles"]
+    pool = {**source, "plan_id": "pool", "topic_specs": {topic: plan.topic_spec(topic)[1] for topic in TOPICS}, "bundles": [
+        {**bundle, "bundle_id": f"{topic}-{n}", "topic": topic} for topic in TOPICS for n in range(len(order))]}
+    pool_path = path.with_name("pool.json")
+    pool_path.write_text(json.dumps(pool), encoding="utf-8")
+    original = pool_path.read_bytes()
+    monkeypatch.setattr(adoption, "split", split.get)
+    replace_absence_package(evidence_run, bundle["doc_sha"])
+    replacement = evidence.pin(evidence_run)
+    assert replacement != pool["pinned_sha256"]
+
+    record = storage._read_json(experiment.freeze("x1", "pool"))
+    frozen, sha = plan.load_plan("x1")
+
+    assert frozen["pinned_sha256"] == pool["pinned_sha256"]
+    assert frozen["bundles"] == pool["bundles"]
+    assert record["source"]["pinned_sha256"] == frozen["pinned_sha256"]
+    assert record["source"]["package_manifest_sha256"] == frozen["package_manifest_sha256"]
+    assert record["pool_plan"]["sha256"] == storage._sha256(pool_path)
+    assert record["plan"]["sha256"] == sha
+    assert pool_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("missing", ["all", "manifest.json", evidence.CHUNKS])
+def test_freeze_refuses_missing_pool_pins_without_backfilling(outputs, monkeypatch, missing):
+    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
+    split = write_pool(outputs, {t: {f"{t}-{n}": part for n, part in enumerate(order)} for t in TOPICS})
+    monkeypatch.setattr(adoption, "split", split.get)
+    path = outputs / "outputs/plans/pool.json"
+    pool = storage._read_json(path)
+    pool["pinned_sha256"] = {name: "snapshot-a" for name in evidence.PINNED}
+    if missing == "all":
+        del pool["pinned_sha256"]
+    else:
+        del pool["pinned_sha256"][missing]
+    path.write_text(json.dumps(pool), encoding="utf-8")
+    before = storage.snapshot(storage.OUTPUTS)
+    with pytest.raises(ValueError, match="새 계획"):
+        experiment.freeze("x1", "pool")
+    assert storage.snapshot(storage.OUTPUTS) == before
+
+
 def test_freeze_takes_six_two_two_per_topic_in_plan_order_and_records_hashes(outputs, monkeypatch):
     # 몫마다 앞에서부터 고르므로 9 번째 train 묶음 같은 남는 묶음은 빠진다.
     order = ["train"] * 8 + ["validation"] * 3 + ["held_out"] * 3
@@ -170,7 +217,10 @@ def test_freeze_takes_six_two_two_per_topic_in_plan_order_and_records_hashes(out
     assert numeric == [f"numeric-{n}" for n in (0, 1, 2, 3, 4, 5, 8, 9, 11, 12)]
     assert record["part_counts"]["false_premise"] == experiment.PARTS
     assert record["plan"]["sha256"] == storage._sha256(outputs / "outputs/plans/x1.json")
-    assert record["pool_plan"]["plan_id"] == "pool" and record["source"]["pinned_sha256"] == {"manifest.json": "x"}
+    pool = plan.load_plan("pool")[0]
+    assert record["pool_plan"]["plan_id"] == "pool"
+    assert record["source"]["pinned_sha256"] == frozen["pinned_sha256"] == pool["pinned_sha256"]
+    assert record["source"]["package_manifest_sha256"] == pool["package_manifest_sha256"]
 
 
 def test_freeze_refuses_a_topic_with_an_empty_part_and_writes_no_plan(outputs, monkeypatch):
@@ -180,24 +230,6 @@ def test_freeze_refuses_a_topic_with_an_empty_part_and_writes_no_plan(outputs, m
     with pytest.raises(ValueError, match="numeric 묶음이 모자랍니다"):
         experiment.freeze("x1", "pool")
     assert not (outputs / "outputs/plans/x1.json").exists()
-
-
-def test_a_freeze_that_fails_after_planning_leaves_nothing_and_can_be_retried(outputs, monkeypatch):
-    # 계획만 남고 고정 기록이 없으면, 그 계획은 고정 출처 없이 쓰이고 다시 고정할 수도 없다.
-    order = ["train"] * 6 + ["validation"] * 2 + ["held_out"] * 2
-    monkeypatch.setattr(adoption, "split", write_pool(outputs, {t: {f"{t}-{n}": p for n, p in enumerate(order)} for t in TOPICS}).get)
-    manifest = outputs / "outputs/evidence/ev/manifest.json"
-    kept = manifest.read_bytes()
-    manifest.unlink()
-    plan_path, freeze_path = outputs / "outputs/plans/x1.json", outputs / "outputs/experiments/x1/freeze.json"
-
-    with pytest.raises(FileNotFoundError):
-        experiment.freeze("x1", "pool")
-    assert not plan_path.exists() and not freeze_path.exists()
-
-    manifest.write_bytes(kept)
-    record = json.loads(experiment.freeze("x1", "pool").read_text(encoding="utf-8"))
-    assert record["plan"]["sha256"] == storage._sha256(plan_path)
 
 
 # 계획의 임시 파일을 반쯤 쓰고 프로세스를 바로 끝낸다 (예외가 아니라 강제 종료라 되돌리기가 돌지 않는다).

@@ -280,6 +280,12 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | `counts` · `planned` · `coverage` | 요청 개수, 실제 묶음 수, 주제별 문서 SHA → 묶음 수 |
 | `bundles[]` | `bundle_id`, `topic`, `doc_sha` (질문이 묻는 문서), `doc` (`agency`, `title`), `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
 
+Experiment freeze selects saved pool bundles and copies the pool's complete `pinned_sha256`
+into both the derived plan and `freeze.json.source`. It never substitutes hashes from the current
+evidence manifest. Missing or incomplete pool pins require a new plan before any freeze outputs
+are written. A later coherent package replacement therefore leaves the frozen provenance tied
+to the original pool snapshot; live evidence consumers check that snapshot before reading files.
+
 `context` 는 `[E1]\n본문\n\n[E2]\n본문` 형식이며 생성기에 이 문자열을 그대로 보냅니다. 문서 이름은 컨텍스트에 넣지 않습니다.
 
 ## 주제 명세
