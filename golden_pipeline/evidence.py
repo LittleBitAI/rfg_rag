@@ -5,7 +5,9 @@
 청크마다 자동 승인 가능(eligible) 또는 보류(held)를 이유와 함께 별도 판정 기록으로 남긴다. 패키지는 고치지 않는다.
 """
 import json
+import re
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 
 from golden_pipeline import storage
@@ -34,15 +36,7 @@ def run(run_id, package=PACKAGE):
     out = storage._child(storage.OUTPUTS / "evidence", run_id)
     package = Path(package)
     hashes = pin(package)
-    chunks = list(_iter_jsonl(package / CHUNKS))
-    docs = {doc["doc_id"] for doc in _iter_jsonl(package / DOCS)}
-    counts = {"v12_search_chunks": len(chunks), "v12_documents": len(docs)}
-    declared = {name: storage._read_json(package / "manifest.json")["counts"][name] for name in counts}
-    if counts != declared:
-        raise PackageMismatch(f"파일에서 센 수 {counts} 가 manifest.json {declared} 과 다릅니다")
-    pairs = [chunk_unit(chunk, docs) for chunk in chunks]
-    units = [unit for unit, _ in pairs]
-    judgments = [judge(unit, reasons) for unit, reasons in pairs]
+    units, judgments, counts = _adapt(package)
 
     out.mkdir(parents=True, exist_ok=False)
     storage._write_jsonl(out / "units.jsonl", units)
@@ -57,6 +51,28 @@ def run(run_id, package=PACKAGE):
         "units": _unit_counts(units, judgments),
     })
     return out
+
+
+def _adapt(package):
+    """Derive complete adapter records from source files without writing or calling an API."""
+    chunks = list(_iter_jsonl(package / CHUNKS))
+    docs = {doc["doc_id"] for doc in _iter_jsonl(package / DOCS)}
+    counts = {"v12_search_chunks": len(chunks), "v12_documents": len(docs)}
+    declared = {name: storage._read_json(package / "manifest.json")["counts"][name] for name in counts}
+    if counts != declared:
+        raise PackageMismatch(f"파일에서 센 수 {counts} 가 manifest.json {declared} 과 다릅니다")
+    pairs = [chunk_unit(chunk, docs) for chunk in chunks]
+    return [unit for unit, _ in pairs], [judge(unit, reasons) for unit, reasons in pairs], counts
+
+
+def read_verified(run_dir, package):
+    """Verify package declarations before matching both saved files to a fresh source replay."""
+    pin(package)
+    units, judgments, _ = _adapt(package)
+    for name, expected in (("units.jsonl", units), ("judgments.jsonl", judgments)):
+        if list(_iter_jsonl(run_dir / name)) != expected:
+            raise PackageMismatch(f"{name} 이 현재 원문에서 만든 근거 · 판정과 다릅니다. 새 근거 run 을 만드세요")
+    return units, judgments
 
 
 def pin(package):
@@ -95,11 +111,53 @@ def chunk_unit(chunk, docs):
         "ocr_scope": OCR_SCOPES.get(image.get("scope"), "hold") if image else None,
         "text": chunk["body"],
         "titled": bool(tables) and first is not chunk["spans"][0],
+        "roles": comparison_roles(chunk),
     }
     errors = _link_errors(chunk, sources, docs)
     gaps = _meaning_gaps(unit, [location["supplier_metadata"] for location in sources.values()])
     unit.update(ids_linked=not errors, meaning_verified=not gaps)
     return unit, [*errors, *gaps]
+
+
+def comparison_roles(chunk):
+    """Read source-authored field/entity roles; leave absent annotations unknown."""
+    roles = chunk.get("roles")
+    if roles is None:
+        return None
+    if not isinstance(roles, dict) or set(roles) != {"fields", "entities"}:
+        raise PackageMismatch("roles 는 fields · entities 문자열 리스트를 가진 객체여야 합니다")
+    parsed = {key: _role_names(names, chunk["body"]) for key, names in roles.items()}
+    if set(parsed["fields"]) & set(parsed["entities"]):
+        raise PackageMismatch("roles 에서 같은 이름을 칸과 대상으로 함께 지정했습니다")
+    return parsed
+
+
+def _role_names(names, body):
+    """Require distinct, nonempty names present in the body after removing whitespace."""
+    if not isinstance(names, list) or any(not isinstance(name, str) or not name.strip() for name in names):
+        raise PackageMismatch("roles 의 이름은 비어 있지 않은 문자열 리스트여야 합니다")
+    normalized = [re.sub(r"\s", "", name) for name in names]
+    if len(set(normalized)) != len(normalized):
+        raise PackageMismatch("roles 의 같은 역할에 겹치는 이름이 있습니다")
+    text = re.sub(r"\s", "", body)
+    if any(name not in text for name in normalized):
+        raise PackageMismatch("roles 의 이름이 청크 본문에 없습니다")
+    return normalized
+
+
+@lru_cache(maxsize=1)
+def role_annotations(package, chunks_sha):
+    """Index pinned source roles by document/chunk. Callers verify SHA before cache access."""
+    return {(chunk["doc_id"], chunk["chunk_id"]): roles
+            for chunk in _iter_jsonl(package / CHUNKS) if (roles := comparison_roles(chunk)) is not None}
+
+
+def check_unit_roles(units, source_roles):
+    """Prevent adapter or plan edits from overriding pinned source annotations."""
+    for unit in units:
+        ref = unit["ref"]
+        if unit.get("roles") != source_roles.get((ref["doc_sha"], ref["chunk_id"])):
+            raise PackageMismatch(f"{ref['chunk_id']} 의 roles 가 고정 원문과 다릅니다")
 
 
 def judge(unit, reasons):

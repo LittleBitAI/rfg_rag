@@ -124,17 +124,16 @@ UNITS = [
 ]
 
 
-def _unit(unit_id, doc, body, row):
-    if isinstance(body, list):
-        element_id, location = "e-table", {"kind": "table", "grid": "logical_restored", "row": row, "cell": None}
-    else:
-        element_id, location = f"e-{unit_id}", {"kind": "char", "start": 0, "end": len(body)}
-    return {
-        "unit_id": unit_id, "doc_sha": doc, "chunk_id": f"c-{unit_id}", "element_id": element_id,
-        "record_id": f"r-{unit_id}", "location": location, "page": None, "requirement_ids": [],
-        "image_sha": None, "ocr_scope": None, "text": " | ".join(body) if isinstance(body, list) else body,
-        "titled": False, "ids_linked": True, "meaning_verified": True,
-    }
+def _chunk(unit_id, doc, body, row, judgment):
+    """Build synthetic source records; let the real adapter determine units and judgments."""
+    text = " | ".join(body) if isinstance(body, list) else body
+    element_id = "e-table" if row is not None else f"e-{unit_id}"
+    span = {"rows": [row, row]} if row is not None else {"start": 0, "end": len(text)}
+    metadata = {"sha256": doc, "review_status": evidence.EXCEPTION if judgment == "held" else "자동 검사 완료",
+                "exception_kinds": ["synthetic exception"] if judgment == "held" else []}
+    return {"chunk_id": f"c-{unit_id}", "doc_id": doc, "source_sha256": doc, "body": text,
+            "spans": [{"element_id": element_id, **span}], "requirement_ids": [], "image_source": None, "page": None,
+            "source_locations": [{"element_id": element_id, "location": {"record_id": f"r-{unit_id}", "supplier_metadata": metadata}}]}
 
 
 def _write_jsonl(path, rows):
@@ -143,19 +142,18 @@ def _write_jsonl(path, rows):
 
 @pytest.fixture
 def evidence_run(outputs, tmp_path, monkeypatch):
-    """근거 어댑터 run 'ev1' 과 그 run 이 고정한 가짜 v12 패키지를 만들고 패키지 경로를 돌려준다.
-
-    출시는 evidence.PACKAGE 의 문서 목록과 data_list.csv 로 문서 이름을 다시 붙이므로 PACKAGE 도 이 패키지로 바꾼다.
-
-    주제 명세와 프롬프트는 실제 파일을 복사해 실제 명세로 묶음을 고르고 검사한다.
-    """
+    """Run the real adapter on a synthetic v12 package and isolate configs, prompts and outputs."""
     shutil.copytree(storage.PACKAGE / "configs", outputs / "configs", dirs_exist_ok=True)
     shutil.copytree(storage.PACKAGE / "prompts", outputs / "prompts", dirs_exist_ok=True)
     package = tmp_path / "v12"
     (package / "corpus").mkdir(parents=True)
     (package / "data").mkdir()
     monkeypatch.setattr(evidence, "PACKAGE", package)
-    _write_jsonl(package / evidence.CHUNKS, [{"chunk_id": f"c-{unit_id}"} for unit_id, _, _, _ in UNITS])
+    table_rows = iter(range(3))
+    _write_jsonl(package / evidence.CHUNKS, [
+        _chunk(unit_id, doc, body, next(table_rows) if isinstance(body, list) else None, judgment)
+        for unit_id, doc, body, judgment in UNITS
+    ])
     _write_jsonl(package / evidence.DOCS, [
         {"doc_id": DOC_1, "source": "사단법인가기관_가사업 구축.hwp"},
         # 실제 원본처럼 한 파일 이름은 NFD 로 둔다.
@@ -163,17 +161,9 @@ def evidence_run(outputs, tmp_path, monkeypatch):
     ])
     (package / evidence.AGENCIES).write_text(
         "파일명,발주기관\n사단법인가기관_가사업 구축.hwp,가기관\n나기관_[재공고]나사업 운영.hwp,나기관\n", encoding="utf-8")
-    (package / "manifest.json").write_text('{"package": "fake v12"}', encoding="utf-8")
-
-    run_dir = outputs / "outputs" / "evidence" / "ev1"
-    run_dir.mkdir(parents=True)
-    table_rows = iter(range(3))
-    _write_jsonl(run_dir / "units.jsonl", [
-        _unit(unit_id, doc, body, next(table_rows) if isinstance(body, list) else None) for unit_id, doc, body, _ in UNITS
-    ])
-    _write_jsonl(run_dir / "judgments.jsonl", [
-        {"unit_id": unit_id, "judgment": judgment, "reasons": []} for unit_id, _, _, judgment in UNITS
-    ])
-    pinned = {name: storage._sha256(package / name) for name in evidence.PINNED}
-    (run_dir / "manifest.json").write_text(json.dumps({"pinned_sha256": pinned}), encoding="utf-8")
+    (package / "manifest.json").write_text(json.dumps({"package": "fake v12",
+        "counts": {"v12_search_chunks": len(UNITS), "v12_documents": 2}, "files": {
+        name: {"sha256": storage._sha256(package / name)} for name in evidence.PINNED[1:]
+    }}), encoding="utf-8")
+    evidence.run("ev1", package=package)
     return package
