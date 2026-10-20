@@ -499,7 +499,7 @@ def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_agains
 
 
 @pytest.mark.parametrize("method", ["B", "C"])
-@pytest.mark.parametrize("previous_version", ["validation-7", "validation-8"])
+@pytest.mark.parametrize("previous_version", ["validation-7", "validation-8", "validation-9"])
 def test_resume_refuses_pending_candidates_validated_under_previous_versions(config, monkeypatch, tmp_path, method, previous_version):
     current = validation.VALIDATOR_VERSION
     generator = Generator(NUMERIC)

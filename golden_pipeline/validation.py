@@ -19,7 +19,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-9"
+VALIDATOR_VERSION = "validation-10"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -50,6 +50,7 @@ LABEL_SHARE = 0.5
 STANDARD_REQUIREMENT_FIELDS = {
     "고유번호", "명칭", "분류", "정의", "세부내용", "응낙수준", "산출정보",
     "요구사항고유번호", "요구사항명칭", "요구사항분류", "요구사항정의", "요구사항세부내용",
+    "요구사항명", "상세설명", "제약사항", "수용여부", "비고",
 }
 # unanswerable 검증기에 한 번에 주는 대상 문서의 글자 수. 문서(중앙 6만 6천 자, 가장 긴 것 20만 자)를 몇 번에 나눠 모두 읽힌다.
 DOCUMENT_BATCH_CHARS = 60_000

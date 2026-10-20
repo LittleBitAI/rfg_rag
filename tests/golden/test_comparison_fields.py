@@ -8,15 +8,26 @@ from golden_pipeline.state import transition
 from conftest import DOC_1, _write_jsonl
 
 
+FIELD_CASES = ["same_row", "split_rows", "research_name", "research_description", "research_note"]
+
+
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
 
 
 @pytest.fixture
 def field_run(evidence_run, make_item, tmp_path, request):
-    split_rows = getattr(request, "param", "same_row") == "split_rows"
-    text = ("고유번호 | QUR-001\n분류 | 기능 요구사항\n응낙수준 | 필수" if split_rows
-            else "고유번호 | QUR-001 | 분류 | 기능 요구사항") + "\n실명 인증 | 3초\n로그인 | 1초"
+    case = getattr(request, "param", "same_row")
+    entities = {
+        "same_row": ["고유번호", "분류"], "split_rows": ["분류", "응낙수준"],
+        "research_name": ["요구사항명", "수용여부"], "research_description": ["상세설명", "제약사항"],
+        "research_note": ["비고", "수용여부"],
+    }[case]
+    values = {"고유번호": "QUR-001", "분류": "기능 요구사항", "응낙수준": "필수", "요구사항명": "본인 인증",
+              "수용여부": "필수", "상세설명": "두 단계 인증", "제약사항": "외부망 차단", "비고": "별도 협의"}
+    names = entities if case == "same_row" else ["고유번호", *entities]
+    separator = " | " if case == "same_row" else "\n"
+    text = separator.join(f"{name} | {values[name]}" for name in names) + "\n실명 인증 | 3초\n로그인 | 1초"
     _write_jsonl(evidence_run / evidence.CHUNKS, [
         {"doc_id": DOC_1, "requirement_ids": ["QUR-001"], "body": text},
     ])
@@ -24,8 +35,6 @@ def field_run(evidence_run, make_item, tmp_path, request):
     write_json(ev_dir / "manifest.json", {
         "pinned_sha256": {name: storage._sha256(evidence_run / name) for name in evidence.PINNED},
     })
-    entities = ["분류", "응낙수준"] if split_rows else ["고유번호", "분류"]
-    values = {"고유번호": "QUR-001", "분류": "기능 요구사항", "응낙수준": "필수"}
     structure = {"entities": entities, "values": {name: values[name] for name in entities}, "choice": entities[-1]}
     item = make_item(candidate_id="comparison-C-c1-0001", primary_topic="comparison", secondary_tags=[],
                      method="C", run_id="c1", structure=structure, answer=generation.comparison_answer(structure))
@@ -45,14 +54,21 @@ def field_run(evidence_run, make_item, tmp_path, request):
     return item, validation.evidence_units(item, bundle), config, run_dir
 
 
-@pytest.mark.parametrize("field_run", ["same_row", "split_rows"], indirect=True)
+@pytest.mark.parametrize("field_run", FIELD_CASES, indirect=True)
 def test_single_requirement_detail_entities_are_not_fields(field_run):
     item, units, _, _ = field_run
     item["structure"] = {"entities": ["실명 인증", "로그인"], "values": {"실명 인증": "3초", "로그인": "1초"}, "choice": "로그인"}
     assert validation.rule_reason(item, units) is None
 
 
-@pytest.mark.parametrize("field_run", ["same_row", "split_rows"], indirect=True)
+@pytest.mark.parametrize("field_run", ["research_name", "research_description", "research_note"], indirect=True)
+def test_every_documented_field_is_recognized_not_just_one_entity(field_run):
+    item, _, _, _ = field_run
+    labels = validation._pinned_form_labels(item)[DOC_1]
+    assert set(item["structure"]["entities"]) <= labels
+
+
+@pytest.mark.parametrize("field_run", FIELD_CASES, indirect=True)
 @pytest.mark.parametrize("stage", ["validate", "release", "rename"])
 def test_single_requirement_fields_are_rejected_without_calls_in_every_consumer(field_run, stage):
     item, _, config, run_dir = field_run
