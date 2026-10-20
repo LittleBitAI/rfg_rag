@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from golden_pipeline import adoption, evidence, improvement, storage
+from golden_pipeline import adoption, evidence, improvement, storage, validation
 from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
@@ -234,6 +234,9 @@ def write_requirements(package, doc, records):
     (package / evidence.CHUNKS).write_text("".join(
         json.dumps({"doc_id": doc, "requirement_ids": [rid], "body": body}, ensure_ascii=False) + "\n"
         for rid, body in records.items()), encoding="utf-8")
+    path = storage.OUTPUTS / "evidence/ev1/manifest.json"
+    path.write_text(json.dumps({"pinned_sha256": {name: storage._sha256(package / name) for name in evidence.PINNED}}),
+                    encoding="utf-8")
 
 
 DETAILS = ("실명 인증 | 3초\n로그인 | 1초\n실명 인증 | 휴대폰\n로그인 | 아이디\n"
@@ -251,18 +254,17 @@ DETAILS = ("실명 인증 | 3초\n로그인 | 1초\n실명 인증 | 휴대폰\n�
     (["요구사항 A", "요구사항 B"], {"요구사항 A": "3초", "요구사항 B": "5초"}, None),
     (["목표경영", "과제관리"], {"목표경영": "42", "과제관리": "103"}, None),
 ])
-def test_a_comparison_between_fields_of_one_requirement_is_ruled_out(tmp_path, monkeypatch, entities, values, code):
+def test_a_comparison_between_fields_of_one_requirement_is_ruled_out(evidence_run, make_item, entities, values, code):
     record = "고유번호 | {} | 분    류 | {}\n요구사항 분류 | {} | 응낙수준 | {}"
-    (tmp_path / "corpus").mkdir()
-    monkeypatch.setattr(evidence, "PACKAGE", tmp_path)
-    write_requirements(tmp_path, "d1", {
+    write_requirements(evidence_run, "1" * 64, {
         "QUR-003": record.format("QUR-003", "품질 요구사항", "품질 요구사항", "필수") + "\n" + DETAILS,
         "SER-001": record.format("SER-001", "보안 요구사항", "보안 요구사항", "선택"),
     })
-    item = {"primary_topic": "comparison", "question": "어느 쪽이 더 큰가?", "answer": "",
-            "evidence": [{"chunk_id": "c1", "doc_sha": "d1", "requirement_ids": ["QUR-003"]}],
-            "structure": {"entities": entities, "values": values, "choice": entities[1]}}
+    item = make_item(primary_topic="comparison", candidate_id="comparison-A-r1-0001", secondary_tags=[],
+                     question="어느 쪽이 더 큰가?", structure={"entities": entities, "values": values, "choice": entities[1]})
+    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "requirement_ids": ["QUR-003"]}]
     text = record.format("QUR-003", "품질 요구사항", "품질 요구사항", "필수") + "\n" + DETAILS
+    storage.write_run("comparison", "A", "r1", [item], info=planned_item(item, text))
     reason = rule_reason(item, [{"text": text, "ref": {"location": {"kind": "table", "row": 1}}}])
     assert (reason and improvement.failure_code(reason)) == code
 
@@ -306,9 +308,13 @@ def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits,
     ("config", ["config"]),
     ("plan", ["plan_id", "plan_sha256"]),
     ("validator_prompt", ["thresholds"]),
+    ("validator_version", ["thresholds"]),
 ])
-def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, change, changed):
+def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, monkeypatch, change, changed):
     # 이어 돌면서 한도 · 계획 · 검증 기준이 바뀌면 한 loop 의 round 들이 서로 다른 조건으로 돌고 report 가 그것을 숨긴다.
+    current = validation.VALIDATOR_VERSION
+    if change == "validator_version":
+        monkeypatch.setattr(validation, "VALIDATOR_VERSION", "validation-7")
     with pytest.raises(ConnectionError):
         improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=3))
     config, plan_id = loop_config(), "p3"
@@ -317,6 +323,8 @@ def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config
     elif change == "plan":
         make_plan("p1", "ev1", {"numeric": 1}, 2000, package=evidence_run)
         plan_id = "p1"
+    elif change == "validator_version":
+        monkeypatch.setattr(validation, "VALIDATOR_VERSION", current)
     else:
         prompt = storage.PROMPTS / "validator.txt"
         prompt.write_text(prompt.read_text(encoding="utf-8") + "\n바뀐 기준", encoding="utf-8")
@@ -530,6 +538,15 @@ def test_a_rename_reissues_releases_under_current_names_without_screening(looped
     assert manifest["runs"] == ["A/l1-r1"]
 
 
+def planned_item(item, text):
+    """규칙 검사가 읽을 고정 계획을 쓰고 run 의 생성 정보를 돌려준다."""
+    plan_path = storage.OUTPUTS / "plans" / f"p-{item['run_id']}.json"
+    plan_path.parent.mkdir(exist_ok=True)
+    plan_path.write_text(json.dumps({"evidence_run": "ev1", "bundles": [{"bundle_id": item["bundle_id"],
+                                       "units": [{"ref": item["evidence"][0], "text": text}]}]}), encoding="utf-8")
+    return {"plan_id": f"p-{item['run_id']}", "plan_sha256": storage._sha256(plan_path)}
+
+
 def released_under(version, agency, run_id, make_item, text="사업 예산은 1억 3천만원이다", **overrides):
     """가기관 문서의 같은 예산 질문을 run 마다 다른 근거 묶음 · 계획으로 등록하고, agency 이름을 붙여 출시한다.
 
@@ -539,14 +556,9 @@ def released_under(version, agency, run_id, make_item, text="사업 예산은 1�
                         "question": with_document("사업 예산은 얼마인가?", {"agency": agency, "title": "가사업 구축"}),
                         **overrides})
     item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": f"c-{run_id}"}]
-    plan_path = storage.OUTPUTS / "plans" / f"p-{run_id}.json"
-    plan_path.parent.mkdir(exist_ok=True)
-    plan_path.write_text(json.dumps({"bundles": [{"bundle_id": item["bundle_id"],
-                                                  "units": [{"ref": item["evidence"][0], "text": text}]}]}), encoding="utf-8")
     topic = item["primary_topic"]
     accepted = transition(item, "auto_validated", "통과", validator_version="val-0.1", difficulty="easy")
-    storage.write_run(topic, "A", run_id, [accepted],
-                      info={"plan_id": f"p-{run_id}", "plan_sha256": storage._sha256(plan_path)})
+    storage.write_run(topic, "A", run_id, [accepted], info=planned_item(item, text))
     return storage.write_release(topic, version, [transition(accepted, "released", "출시")], [("A", run_id)])
 
 

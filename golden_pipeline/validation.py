@@ -19,7 +19,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-7"
+VALIDATOR_VERSION = "validation-8"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -683,27 +683,55 @@ def _field_comparison(item, units):
     if not all((name, re.sub(r"\s", "", str(values.get(entity, "")))) in pairs
                for name, entity in zip(names, item["structure"]["entities"])):
         return False
-    labels = _form_labels(evidence.PACKAGE).get(item["evidence"][0]["doc_sha"], set())
+    labels = _pinned_form_labels(item).get(item["evidence"][0]["doc_sha"], set())
     return any(name in labels for name in names)
 
 
+def _pinned_form_labels(item):
+    """생성 run 의 계획과 근거 어댑터가 고정한 청크에서만 칸 이름을 센다. 캐시를 써도 해시는 먼저 확인한다."""
+    run_dir = storage.run_path(item["primary_topic"], item["method"], item["run_id"])
+    generated = storage._read_json(run_dir / "manifest.json")["generation"]
+    planned, sha = plan.load_plan(generated["plan_id"])
+    if sha != generated["plan_sha256"]:
+        raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {item['run_id']} 을 만든 뒤 바뀌었습니다")
+    evidence_dir = storage._child(storage.OUTPUTS / "evidence", planned["evidence_run"])
+    pinned = storage._read_json(evidence_dir / "manifest.json")["pinned_sha256"]
+    # rename 은 현재 기관 이름을 써야 하므로 이름 파일이 아니라 판정에 쓰는 청크의 해시만 확인한다.
+    plan._check_package(evidence.PACKAGE, {evidence.CHUNKS: pinned[evidence.CHUNKS]})
+    return _form_labels(evidence.PACKAGE, pinned[evidence.CHUNKS])
+
+
 @lru_cache(maxsize=1)
-def _form_labels(package):
+def _form_labels(package, chunks_sha):
     """문서 SHA → 그 문서 요구사항 양식의 칸 이름 (공백을 지운 글). 패키지 청크에서 센다.
 
     칸 이름은 양식의 글이라 한 문서의 요구사항 기록 대부분에서 '칸 | 값' 의 왼쪽 칸으로 되풀이된다 (고유번호 · 명칭 · 분류 …).
-    세부 표의 대상과 요구사항 이름은 기록 하나에만 나온다. 칸 이름은 문서마다 달라 목록으로 닫을 수 없어 문서에서 센다.
+    세부 표의 대상과 요구사항 이름은 기록 하나에만 나온다. 단일 기록에서도 요구사항 ID 를 값으로 둔 행의 칸 이름은 확인할 수 있다.
+    chunks_sha 는 캐시 키다. 같은 경로에 다른 고정 패키지를 두어도 앞 패키지의 칸 이름을 재사용하지 않는다.
     """
     records, cells = defaultdict(set), defaultdict(lambda: defaultdict(set))
+    headers = defaultdict(set)
     for chunk in evidence._iter_jsonl(package / evidence.CHUNKS):
         if not chunk["requirement_ids"]:
             continue
         records[chunk["doc_id"]].update(chunk["requirement_ids"])
+        headers[chunk["doc_id"]].update(_requirement_header_labels(chunk))
         for row in chunk["body"].splitlines():
             for cell in [re.sub(r"\s", "", cell) for cell in row.split("|")][:-1]:
                 cells[chunk["doc_id"]][cell].update(chunk["requirement_ids"])
-    return {doc: {cell for cell, ids in found.items() if len(ids) >= max(2, LABEL_SHARE * len(records[doc]))}
+    return {doc: headers[doc] | {cell for cell, ids in found.items() if len(ids) >= max(2, LABEL_SHARE * len(records[doc]))}
             for doc, found in cells.items()}
+
+
+def _requirement_header_labels(chunk):
+    """요구사항 ID 가 값인 행은 그 요구사항의 양식이다. 같은 행의 이름 · 값 쌍에서 이름만 읽는다."""
+    labels = set()
+    for row in chunk["body"].splitlines():
+        cells = [re.sub(r"\s", "", cell) for cell in row.split("|")]
+        for index, cell in enumerate(cells[1:], 1):
+            if cell in chunk["requirement_ids"]:
+                labels.update(cells[(index - 1) % 2:-1:2])
+    return labels
 
 
 def _single_unit_verdict(item, units, full, ask, judge):

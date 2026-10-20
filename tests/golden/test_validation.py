@@ -498,6 +498,29 @@ def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_agains
     assert item["state"] == "auto_validated"
 
 
+@pytest.mark.parametrize("method", ["B", "C"])
+def test_resume_refuses_pending_candidates_validated_under_validation_7(config, monkeypatch, tmp_path, method):
+    current = validation.VALIDATOR_VERSION
+    generator = Generator(NUMERIC)
+    if method == "B":
+        generate(method, "numeric", "p1", "old", config, generator)
+    else:
+        import_rows(tmp_path, "numeric", [NUMERIC], run_id="old")
+    monkeypatch.setattr(validation, "VALIDATOR_VERSION", "validation-7")
+
+    def exhausted(**kwargs):
+        raise generation.BudgetExceeded("실험 상한")
+
+    run_dir = validate("numeric", method, "old", config, exhausted)
+    assert storage._read_json(run_dir / "validation.json")["pending"]
+    before = storage.snapshot(run_dir)
+    monkeypatch.setattr(validation, "VALIDATOR_VERSION", current)
+    client = Validator({"*": verdict("130,000,000원", ["부가세 포함"])})
+    with pytest.raises(ValueError, match="validator_version"):
+        validation.resume_validation("numeric", method, "old", config, client)
+    assert client.requests == [] and storage.snapshot(run_dir) == before
+
+
 def test_a_settled_judge_call_does_not_count_as_a_paid_validator_call(config):
     # 판정기 요청은 같은 질문 · 근거에 두 답이 더 있어 검증기 요청과 SHA-256 이 다르다. 그 출력이 남아 있어도 검증기 호출 셋은 그대로 사야 한다.
     planned = bundle("p2", "multi_hop")
