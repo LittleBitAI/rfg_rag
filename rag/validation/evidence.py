@@ -17,6 +17,7 @@ from ..preprocessing.parsing import SUPPORTED, _safe_name, _zip_name
 
 
 # 짧은 수·코드·항목 이름만으로 청크를 확정하지 않는다. test 결과와 무관하게 고정한다.
+# 짧은 근거는 같은 문맥의 이 길이 이상 블록이 함께 든 청크가 하나일 때만 연결한다.
 MIN_EVIDENCE_LENGTH = 20
 OUTCOMES = ("labelled", "doc_unmapped", "not_found", "ambiguous", "too_short")
 BLOCK = re.compile(r"^\[(E\d+)[^\]\n]*\]\s*\n", re.M)
@@ -94,15 +95,31 @@ def _context_labels(text: str, context: str) -> list[str]:
     return labels
 
 
-def _chunk_label(text: str, doc_id: str | None, by_doc: dict) -> dict:
+def _anchored(normalized: str, doc_chunks: list, context: str) -> set[str]:
+    """근거와 같은 문맥의 다른 [E] 블록이 함께 든 청크가 하나뿐인 경우를 모은다."""
+    parts = BLOCK.split(context)
+    found = set()
+    for block in (normalize_evidence(parts[i]) for i in range(2, len(parts), 2)):
+        if len(block) < MIN_EVIDENCE_LENGTH or block == normalized:
+            continue
+        both = {chunk_id for chunk_id, body in doc_chunks if normalized in body and block in body}
+        if len(both) == 1:
+            found |= both
+    return found
+
+
+def _chunk_label(text: str, doc_id: str | None, by_doc: dict, context: str) -> dict:
     if doc_id is None:
         return {"chunk_id": None, "reason": "doc_unmapped"}
     normalized = normalize_evidence(text)
+    matches = {chunk_id for chunk_id, body in by_doc[doc_id] if normalized in body}
+    if len(normalized) >= MIN_EVIDENCE_LENGTH and len(matches) == 1:
+        return {"chunk_id": next(iter(matches)), "reason": None}
+    anchored = _anchored(normalized, by_doc[doc_id], context) if matches else set()
+    if len(anchored) == 1:
+        return {"chunk_id": next(iter(anchored)), "reason": None}
     if len(normalized) < MIN_EVIDENCE_LENGTH:
         return {"chunk_id": None, "reason": "too_short"}
-    matches = {chunk_id for chunk_id, body in by_doc[doc_id] if normalized in body}
-    if len(matches) == 1:
-        return {"chunk_id": next(iter(matches)), "reason": None}
     return {"chunk_id": None, "reason": "ambiguous" if matches else "not_found"}
 
 
@@ -125,7 +142,7 @@ def label_evidence(items: list[dict], chunks: list[dict], raw_dir: Path, package
                              "context_labels": _context_labels(text, item["golden_context"]),
                              "golden_source": unicodedata.normalize("NFC", metadata["source_paths"][0]),
                              "doc_id": document.get("doc_id"), "source": document.get("source"),
-                             **_chunk_label(text, document.get("doc_id"), by_doc)})
+                             **_chunk_label(text, document.get("doc_id"), by_doc, item["golden_context"])})
         labelled.append({**{k: v for k, v in item.items() if k not in ("golden_context", "golden_evidence")},
                          "doc_ids": sorted({e["doc_id"] for e in evidence if e["doc_id"]}),
                          "evidence": evidence})

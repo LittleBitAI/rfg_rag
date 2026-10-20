@@ -7,7 +7,7 @@ import pytest
 
 from rag.retrieval.benchmark.common import MODEL_IGNORE_PATTERNS, no_network
 from rag.retrieval.benchmark.embedding import LocalEmbedder, cosine_vectors
-from rag.retrieval.benchmark.prepare import evidence_groups, grouped_split
+from rag.retrieval.benchmark.prepare import evidence_groups, grouped_split, remap
 from rag.retrieval.benchmark.search import BenchmarkIndex
 from test_retrieval import make_index
 
@@ -27,6 +27,18 @@ def test_duplicate_and_shared_evidence_groups_never_cross_partitions():
     assert set(ids["tuning"]).isdisjoint(ids["validation"])
     assert set(ids["tuning"] + ids["validation"]) == {str(i) for i in range(5)}
     assert any({"0", "1", "2"} <= set(partition) for partition in ids.values())
+
+
+def test_remap_anchors_short_evidence_with_the_golden_context():
+    anchor = "계약 담당 부서는 정보화사업팀이며 문의처를 함께 적습니다."
+    chunks = [{"chunk_id": cid, "doc_id": "doc", "source_sha256": "doc", "body": body}
+              for cid, body in (("a", anchor + " 180일"), ("b", "다른 사업 180일"))]
+    rows = [{"id": "q", "evidence": [{"doc_sha": "doc", "text": "180일"}]}]
+    dev = {"q": {"context": f"[E1]\n180일\n\n[E2]\n{anchor}", "bundle_id": None}}
+
+    [row] = remap(rows, chunks, dev)
+
+    assert (row["evidence"][0]["chunk_id"], row["evidence"][0]["reason"]) == ("a", None)
 
 
 def test_int8_output_is_cast_before_cosine_normalization():

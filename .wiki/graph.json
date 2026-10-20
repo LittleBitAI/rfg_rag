@@ -64,6 +64,16 @@
    "kind": "link"
   },
   {
+   "a": "docs/benchmarks/seven_model/anchor/report.md",
+   "b": "docs/benchmarks/seven_model/full_dev/report.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/benchmarks/seven_model/anchor/report.md",
+   "b": "docs/benchmarks/seven_model/protocol.md",
+   "kind": "link"
+  },
+  {
    "a": "docs/benchmarks/seven_model/full_dev/report.md",
    "b": "docs/benchmarks/seven_model/historical/report.md",
    "kind": "link"
@@ -86,6 +96,11 @@
   {
    "a": "docs/benchmarks/seven_model/protocol.md",
    "b": "README.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/benchmarks/seven_model/protocol.md",
+   "b": "docs/benchmarks/seven_model/anchor/report.md",
    "kind": "link"
   },
   {
@@ -259,8 +274,8 @@
   "docs/research/review-retrieval-port-requirement-links-f7-2.md"
  ],
  "counts": {
-  "docs": 47,
-  "linked": 25,
+  "docs": 48,
+  "linked": 26,
   "read": 0,
   "orphans": 22,
   "pages": 1,

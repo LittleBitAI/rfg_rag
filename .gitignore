@@ -28,6 +28,17 @@ artifacts/
 !/docs/benchmarks/seven_model/full_dev/resources.json
 !/docs/benchmarks/seven_model/full_dev/sparse_build.json
 !/docs/benchmarks/seven_model/full_dev/runtime-freeze.txt
+!/docs/benchmarks/seven_model/anchor/
+/docs/benchmarks/seven_model/anchor/*
+!/docs/benchmarks/seven_model/anchor/report.md
+!/docs/benchmarks/seven_model/anchor/quality.csv
+!/docs/benchmarks/seven_model/anchor/latency.csv
+!/docs/benchmarks/seven_model/anchor/paired_differences.csv
+!/docs/benchmarks/seven_model/anchor/exclusions.csv
+!/docs/benchmarks/seven_model/anchor/chosen_weights.json
+!/docs/benchmarks/seven_model/anchor/resources.json
+!/docs/benchmarks/seven_model/anchor/sparse_build.json
+!/docs/benchmarks/seven_model/anchor/all_dev_fixed.json
 /eval/golden/
 /eval/eval_questions.yaml
 /tests/fixtures/craft_selection50.json
