@@ -8,7 +8,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 from rag.config import read_jsonl
-from rag.retrieval.indexing import KiwiTokenizer
+from rag.retrieval.indexing import KiwiTokenizer, search_texts
 from rag.retrieval.retrieval import DocRouter, read_csv_orgs
 from rag.validation.evidence import normalize_evidence
 
@@ -155,7 +155,7 @@ def audit():
         router = DocRouter(read_jsonl(OUT / "input/docs.jsonl"), read_csv_orgs(OUT / "input/orgs.csv"))
         probes, checked = [], 0
         for sparse in ("whitespace", "kiwi"):
-            corpus = [chunk["text"].split() for chunk in chunks] if sparse == "whitespace" else tokens
+            corpus = [text.split() for text in search_texts(chunks)] if sparse == "whitespace" else tokens
             index = BM25Okapi(corpus, k1=1.5, b=0.75)
             records = saved_method(sparse)
             checked += check_saved_metrics({qid: row for qid, row in records.items() if qid in questions}, questions)

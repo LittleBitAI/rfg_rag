@@ -104,7 +104,7 @@ NVIDIA L4 VM에서 이 경로를 실제 실행해 문서 98개·청크 18,984개
 | `final_elements.jsonl`, `final_records.jsonl` | 문서 소속·NFC 파일명·제목·있는 쪽 번호·첫 레코드와 앞 세 레코드의 텍스트를 연결합니다. |
 | 호환 패키지의 `adapt_v11.py` | `payload/body` 분리와 문서 메타데이터 연결 아이디어를 저장소의 작은 표준 라이브러리 로더로 구현했습니다. 어댑터 코드·전체 출력 파일은 복사하지 않았습니다. |
 | 저장된 검증 OCR | 최종 청크에 들어 있는 검색 본문을 사용합니다. OCR 엔진과 미검증 OCR sidecar는 실행하거나 추가하지 않습니다. 패키지의 전체 정확성을 인증한 것은 아닙니다. |
-| 구조·상세 출처 메타데이터 | `table_refs`, 표 셀 구조, `spans`, `linked`, `requirement_key`, `image_source`, 이미지 SHA·검증 영역 등은 현재 출력과 생성 문맥에 전달하지 않습니다. 원래 패키지에 남아 있습니다. |
+| 구조·상세 출처 메타데이터 | 요구사항 소속(`requirement_key` · `requirement_ids`)과 표 연결(`table_refs`)은 청크 파일로 옮겨 02 검색이 씁니다 — 검색 글의 요구사항 머리말 · 요구사항 코드 정확 일치 · 연결 청크 함께 담기. 표 셀 구조, `spans`, `linked`, `image_source`, 이미지 SHA·검증 영역 등은 현재 출력과 생성 문맥에 전달하지 않습니다. 원래 패키지에 남아 있습니다. |
 | Elements 인덱싱 대안 | 도입하지 않았습니다. Chunks만 색인하며 두 입력을 섞지 않습니다. |
 | 호환 패키지의 검색 코드·E5 샘플 색인·연동 테스트 노트북 | 참고 자료입니다. 기관 CSV 라우팅 등 별도 검색 로직은 가져오지 않았고, 이 저장소의 KURE 검색 코드로 새 색인을 만들었습니다. |
 | 패키지 사용·OCR 검증 노트북과 검증 영수증 | 출처 자료로 보관합니다. 이 저장소의 노트북에 복제하거나 패키지의 보존·OCR 검증을 다시 실행하지 않았습니다. |
@@ -253,9 +253,9 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 라벨은 위치별로 기록합니다. OCR 벤치마크는 합친 라벨의 1·2 위치를 사용하며, 01은 벤치마크가 저장한 전사 결과를 읽습니다.
 
 실행 — 저장소 최상위에서
-1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다.
+1. 그림 꺼내기: `.venv\Scripts\python -m frontend.ocr_select.extract` (macOS: `.venv/bin/python`). `config.yaml` 의 `paths.input`(기본 `data/rfp.zip`)을 01 과 같은 함수로 읽습니다. 당시 측정은 문서 100개에 1분 남짓 걸렸습니다.
 2. 화면 열기: 질문 화면과 같은 실행기(`frontend\start.cmd` · `frontend/start.command`)를 더블클릭하고, 첫 화면 오른쪽 위 `설정` → `OCR 이미지 라벨링` 을 누릅니다 (`http://localhost:5173/ocr.html`). 실행기가 라벨링 화면의 API 서버(포트 8766)도 함께 띄웁니다.
-3. 묶음 고르기: 상단 바에서 맡은 `묶음 1` ~ `묶음 5` 를 누릅니다. 카드를 문서 이름 · 문서 안 위치 순서로 세워 다섯으로 고르게 자르므로 같은 `data/rfp.zip` 으로 extract 했다면 누구 컴퓨터에서나 같은 묶음입니다. 고른 묶음은 주소(`?batch=2`)에 남아 새로고침해도 그대로입니다.
+3. 묶음 고르기: 상단 바에서 맡은 `묶음 1` ~ `묶음 5` 를 누릅니다. 카드를 문서 이름 · 문서 안 위치 순서로 세워 다섯으로 고르게 자르므로(당시 209 · 209 · 209 · 209 · 208곳) 같은 `data/rfp.zip` 으로 extract 했다면 누구 컴퓨터에서나 같은 묶음입니다. 고른 묶음은 주소(`?batch=2`)에 남아 새로고침해도 그대로입니다.
 4. 결과 내보내기: 다 매기면 상단 바의 `결과 내보내기` 를 눌러 `ocr_labels_batchN.jsonl` 을 내려받고, 합치는 사람에게 보냅니다. 저장 중인 라벨이 있으면 저장이 끝날 때까지 이 버튼이 잠기고, 진행 수는 저장을 마친 라벨만 셉니다.
 5. 합치기 (한 사람): 받은 파일을 모두 넘겨 `.venv\Scripts\python -m frontend.ocr_select.merge ocr_labels_batch1.jsonl ocr_labels_batch2.jsonl ...` 를 실행합니다. 묶음마다 매긴 수와 빠진 위치 수를 출력하고 `artifacts/ocr_labels/merged_labels.jsonl` 에 씁니다. 같은 위치를 두 사람이 매겼으면 `labelled_at` 이 늦은 라벨이 남습니다.
 
@@ -268,7 +268,7 @@ WMF · EMF 처럼 미리보기를 만들 수 없는 그림도 자리표시 카�
 ## OCR 결과 검토 화면
 
 기존 실행기(`frontend\start.cmd` · `frontend/start.command`)를 열고 질문 화면의 `설정` → `OCR 결과 검토`로 들어갑니다 (`http://localhost:5173/review.html`).
-저장된 캡션의 등장 위치를 그림 해시로 묶어 그림마다 한 장씩 검토합니다. 과거 논리 경로 `data/ocr_captions.jsonl`은 공통 로더가 무시된 `artifacts/local_inputs/ocr_captions.jsonl`로 연결합니다. 파일이 없으면 로컬 Git에서 복원하며, 얕은 clone에는 소유자가 제공한 비공개 묶음이 필요합니다. 아래 로컬 입력 복원 명령을 사용합니다.
+저장된 캡션 391개 위치를 그림 해시로 묶어 서로 다른 그림 320장을 한 장씩 검토합니다. 과거 논리 경로 `data/ocr_captions.jsonl`은 공통 로더가 무시된 `artifacts/local_inputs/ocr_captions.jsonl`로 연결합니다. 파일이 없으면 로컬 Git에서 복원하며, 얕은 clone에는 소유자가 제공한 비공개 묶음이 필요합니다. 아래 로컬 입력 복원 명령을 사용합니다.
 왼쪽에는 `artifacts/ocr_labels/images/`의 원본, 오른쪽에는 저장된 전사를 Markdown 표 · 제목 · 목록으로 표시합니다.
 엔진 · 이미지 유형과 모든 등장 위치(문서 이름, PDF 쪽 또는 HWP 그림 이름 · 표시 위치)를 함께 보여 줍니다.
 문서 · 이미지 유형 · 엔진 · 판정 상태(미검토 포함)로 거르고, 이전/다음 버튼 또는 ← → 키로 이동합니다.
@@ -366,8 +366,10 @@ display(coverage_table(scores))
 
 유료 확인은 모든 주제를 포함한 dev 30문항으로 제한합니다. 실행 전에 config 단가로 04 rewrite+answer와 05 두 심판의 견적을 표시하고 승인을 받은 뒤 실행합니다. 실제 비용은 해당 실행의 `api_usage.csv`로 계산합니다. 이전 per-evaluation 행의 질문당 심판 비용은 historical로 표시하며, 새 30문항과 질문·시점이 다르므로 동일 질문의 품질 비교로 해석하지 않습니다.
 
-[개발 검색 평가 절차](docs/eval_ir_sample.md)를 따르며 표본 구성·제외율·견적·실측 결과는 무시된 로컬 보고서에 기록합니다.
-Aggregate measurements and reports may be published with their execution revision and conditions. Keep actual questions, answers, evidence text, and record-level exports private; do not copy them into a report.
+[30문항 표본 보고서](docs/eval_ir_sample.md)에 표본 구성·라벨 제외율·비용 견적·historical 기준과 실제 실행 결과를 기록합니다.
+보고서의 유료 표본은 dev `ab49a65`의 대화 기반 재작성·재작성 query 라우팅 통합 전 기록입니다. 통합 후 검색 보존 검사는 별도 절에 기록했으며, 추가 유료 평가를 실행한 결과가 아닙니다.
+
+집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관합니다.
 
 ### 최종 test 평가 — 설정을 고정한 뒤 한 번
 
@@ -404,7 +406,16 @@ write_jsonl(test_eval_set, ARTIFACTS / "test_eval_set.jsonl")
 
 평가 묶음 구조는 `golden/dev.jsonl`, `golden/test.jsonl`, `golden/manifest.json`, `eval_questions.yaml`이다. OCR 캡션은 묶음 루트의 `ocr_captions.jsonl`로 제공한다. 같은 `--from-directory` 명령으로 평가 전용·OCR 전용·둘 다 포함한 묶음을 복원할 수 있다. 평가 파일이 하나라도 있으면 평가 묶음 전체와 manifest 검증이 필요하다. 파일은 무시된 `artifacts/local_inputs/`에 보관한다. 기존 config의 논리 경로는 공통 로더가 이 로컬 경로로 연결하며, OCR 소비자는 평가 릴리스 없이 캡션만 복원한다. test는 복원 중 바이트 지문만 검사하며 검색·튜닝하지 않는다. 필요한 자료가 없으면 복원 명령을 안내하고 멈춘다.
 
-주제별 핵심 사실은 숫자·단위, 비교 선택, 조건 또는 표 칸 값에서 얻는다. 다중 근거는 독립적으로 확인 가능한 사실을 사용한다. 부분 라벨과 누락은 사유별로 분리한다. Actual questions, answers, evidence, and dataset records remain private. Dataset counts, aggregate scores, latency, memory use, and reports discussing those measurements may be published without the underlying records.
+주제별 핵심 사실은 숫자·단위, 비교 선택, 조건 또는 표 칸 값에서 얻는다. 다중 근거는 독립적으로 확인 가능한 사실을 사용한다. 부분 라벨과 누락은 사유별로 분리한다. 집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관합니다.
+
+### 평가 데이터셋의 집계 (정리 전 측정)
+
+| 입력 | 문서 | 문항 | 이전 분할과 추가 유형 |
+| --- | ---: | ---: | --- |
+| golden dev `final6` | 30 | 408 | `final2` 396 + unanswerable 8 + false_premise 4 |
+| golden test `final6` | 68 | 943 | `final2` 930 + unanswerable 8 + false_premise 5 |
+
+다중 근거 24문항은 핵심 사실 점검에서 제외되어 dev 384문항이 남았고, YAML 1문항과 함께 평가셋을 구성했습니다. `manifest.json`은 두 분할의 개수와 해시를 기록합니다. 원시 릴리스·직접 작성한 질문·멀티턴 대화는 위 로컬 복원 경로로만 제공합니다. test는 03의 라벨 품질 집계에만 사용했으며 검색·생성·설정 선택에 쓰지 않았습니다.
 
 ### 골든 문서·청크 라벨 연결 (03)
 
@@ -425,6 +436,7 @@ v11 출력은 요소 메타데이터의 원본 `sha256`·`doc_id`가 현재 청�
 각 참조의 `element_id`와 `location`으로 v11 요소에서 본문을 복원합니다.
 글은 요소의 `[start:end]`, 표는 해당 행의 칸을 열 순서로 ` | `로 잇습니다.
 복원 본문이 context 블록 전체와 일치하는지 확인하고 해당 라벨을 모두 보관합니다.
+dev 716/716, test 1,639/1,639항목이 확인됐으며, 같은 본문이 여러 블록에 반복된 항목은 각각 14개·26개입니다.
 참조 순서와 블록 순서를 짝짓거나 근거 전체를 한 본문으로 합치지 않습니다.
 이 좌표는 골든 본문 복원에만 사용하며 현재 청크의 좌표로 옮기지 않습니다.
 
@@ -434,7 +446,31 @@ v11 출력은 요소 메타데이터의 원본 `sha256`·`doc_id`가 현재 청�
 나머지는 일치 청크가 없으면 `not_found`, 둘 이상이면 `ambiguous`입니다.
 20자 하한은 짧은 수·코드·항목 이름만으로 청크를 확정하지 않으려는 고정 규칙이며 test 결과에 맞춰 조절하지 않았습니다.
 
-문서·청크 매핑 집계와 제외 사유는 실행 후 로컬 보고서에서 확인한다.
+2026-10-16 로컬 현재 파서 출력(100문서·18,988청크)에서 측정한 결과입니다.
+v11 로더의 ID 보존은 코드상 유지되지만, 이 출력에서는 골든의 원래 청크 ID가 dev 0/716·test 0/1,639항목과 일치합니다.
+
+| 분할 | 원본 SHA → 현재 문서 (서로 다른 SHA) | 문서 연결 근거 항목 | 유일 청크 연결 근거 항목 | 질문: 전체 / 일부 / 없음 |
+| --- | --- | --- | --- | --- |
+| dev | 35/36 (97.22%) | 692/716 (96.65%) | 306/716 (42.74%) | 140 / 125 / 143 |
+| test | 69/70 (98.57%) | 1,620/1,639 (98.84%) | 708/1,639 (43.20%) | 328 / 255 / 360 |
+
+| 분할 | 주제 | 근거 항목 | 청크 연결 | doc_unmapped | not_found | ambiguous | too_short | 질문: 전체 / 일부 / 없음 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| dev | comparison | 137 | 61 (44.53%) | 7 | 3 | 5 | 61 | 9 / 31 / 16 |
+| dev | multi_hop | 190 | 48 (25.26%) | 8 | 14 | 16 | 104 | 5 / 30 / 36 |
+| test | comparison | 291 | 142 (48.80%) | 6 | 21 | 13 | 109 | 31 / 54 / 43 |
+| test | multi_hop | 463 | 141 (30.45%) | 4 | 34 | 16 | 268 | 21 / 71 / 84 |
+
+전체 dev 실패는 `doc_unmapped` 24 · `not_found` 64 · `ambiguous` 32 · `too_short` 290항목,
+test 실패는 각각 19 · 188 · 50 · 674항목입니다.
+
+미연결 문서 2개의 파일명·SHA 목록은 로컬 `golden_documents.csv`에 보관합니다.
+
+질문 대상 문서는 dev 30개·test 68개지만 `unanswerable`이 다른 사업의 근거도 인용하므로 인용 근거 SHA는 36개·70개입니다.
+그 인용 근거의 라벨이 질문 대상 문서의 정답 근거라는 뜻은 아닙니다.
+라벨 품질 집계는 핵심 사실 점검에서 빠지는 질문까지 포함한 전체 골든 분할을 기준으로 합니다.
+전체 주제별 결과는 03과 `artifacts/golden_mapping.csv`, 문서별 결과는 `golden_documents.csv`,
+블록 대응·ID 감사는 `golden_correspondence.csv`에서 확인합니다.
 03에는 seed 42로 고른 dev 근거 최대 30쌍의 골든 본문과 연결한 청크 전체 본문이 나란히 표시됩니다.
 라벨된 근거가 30쌍 미만이면 전부 표시하며 0쌍이면 열 이름이 있는 빈 표를 표시합니다. 미연결 사유와 집계는 그대로 저장합니다.
 이 표들은 03을 실행할 때 확인합니다. 저장소의 노트북은 실행 횟수와 출력을 비워 커밋하며,
@@ -443,7 +479,7 @@ v11 출력은 요소 메타데이터의 원본 `sha256`·`doc_id`가 현재 청�
 입력 경로 회귀 검사는 이전 산출물이 없는 임시 폴더에서 실제 v11 로더 또는 PDF 파서·청킹·저장을 거쳐
 03의 보고·평가셋 저장·표본 셀을 실행합니다. v11, 원본 폴더, 단일 파일, ZIP, 중첩 ZIP, ZIP을 포함한 폴더의 여섯 경로를 확인합니다.
 
-`eval_set.jsonl`에는 점검을 통과한 개발 항목을 저장한다.
+`eval_set.jsonl`에는 당시 점검을 통과한 dev 384문항과 YAML 1문항이 저장됐습니다.
 골든 항목은 현재 `doc_ids`와 각 `evidence`의 `text`, `doc_id`, 유일한 `chunk_id` 또는 `reason`을 가지며,
 원래 ID는 `golden_chunk_id`에 남깁니다. YAML 항목은 `evidence_source = "none"`, `doc_ids = []`, `evidence = []`입니다.
 이 라벨은 03이 고정해 저장하며, 05는 연결 규칙을 바꾸지 않고 해당 라벨 수준의 IR 지표를 계산합니다.
@@ -455,7 +491,8 @@ v11 출력은 요소 메타데이터의 원본 `sha256`·`doc_id`가 현재 청�
 로컬 Windows PC의 별도 환경에서 실행하는 PaddleOCR-VL-1.5입니다.
 유료 OCR 호출은 모두 `rag/usage.py`의 `record_usage`로 비용을 기록하고, PaddleOCR는 이미지당 실행 시간을 기록합니다.
 벤치마크 첫 유료 호출과 전체 실행 전에는 모델별 토큰·단가 예상액을 보여 주고 승인을 기다립니다.
-실측 보고서와 엔진 선택 기록은 무시된 artifacts에만 보관한다. [OCR 비교 절차](docs/ocr_benchmark.md)를 따른다.
+이번 비교의 승자는 표·글의 Gemini와 도식의 GPT이며, 320개 이미지의 결과를 391개 위치로 저장했습니다. 측정값과 비용은 [OCR 비교 보고서](docs/ocr_benchmark.md)에 있습니다.
+집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관합니다.
 
 `OCR = False`이면 01은 `config.yaml`의 `paths.ocr_captions`(기본 논리 경로 `data/ocr_captions.jsonl`)를 공통 로더로 복원·해석한 뒤 그림 위치에 `[그림/도표 설명] …` 레코드를 넣습니다. 이 결과를 읽는 데 API 키나 호출은 필요 없습니다.
 HWP 본문 표시가 없는 그림은 문서 끝에, PDF 그림은 해당 쪽의 이미지 위 본문 다음에 들어갑니다.

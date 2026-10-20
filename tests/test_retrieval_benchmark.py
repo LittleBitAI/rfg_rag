@@ -79,6 +79,29 @@ def test_model_prompts_adapter_and_batch_one_are_forwarded():
     assert embedder.model.encode.call_args.kwargs["batch_size"] == 4
 
 
+def test_sparse_preparation_reuses_production_tokens_of_requirement_labelled_chunks(monkeypatch, tmp_path):
+    """상세 내용 청크에 요구사항 머리말이 붙어도 운영 색인과 같은 검색 글로 토큰을 만든다"""
+    import json
+
+    from rag.config import write_jsonl
+    from rag.retrieval.benchmark import run
+    from rag.retrieval.indexing import KiwiTokenizer, search_texts
+
+    chunks = [{"chunk_id": f"c{i}", "doc_id": "d", "text": text, "body": text, "requirement_key": "TST-901"}
+              for i, text in enumerate(["요구사항 고유번호 | TST-901\n요구사항 명칭 | 시험 데이터 보관", "예시 점검 절차"])]
+    write_jsonl(chunks, tmp_path / "out/input/chunks.jsonl")
+    tokenizer = KiwiTokenizer()
+    production = {"tokenizer": tokenizer.fingerprint, "tokens": tokenizer.batch(search_texts(chunks))}
+    (tmp_path / "artifacts/index").mkdir(parents=True)
+    (tmp_path / "artifacts/index/bm25_tokens.json").write_text(json.dumps(production, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(run, "OUT", tmp_path / "out")
+    monkeypatch.setattr(run, "ROOT", tmp_path)
+
+    run.prepare_sparse()
+
+    assert json.loads((tmp_path / "out/kiwi_tokens.json").read_text(encoding="utf-8")) == production
+
+
 def controlled_index():
     original = make_index(["SFR-001 exact", "first agency", "second agency", "another hit"], [2] * 4,
                           doc_ids=["a", "a", "b", "b"])
