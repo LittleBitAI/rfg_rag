@@ -85,7 +85,8 @@ llm:
 
 # ── ⑤ 평가 (05_evaluation) ──
 evaluation:
-  judge_model: gpt-5-mini       # RAGAS 심판 LLM
+  judge: ragas                  # faithfulness · factual_correctness 심판 — ragas = RAGAS + gpt (유료) | local = 로컬 리랭커 (API 0원)
+  judge_model: gpt-5-mini       # RAGAS 심판 LLM (judge: ragas 일 때만)
   judge_reasoning_effort: low
   judge_max_tokens: 4096
   judge_usd_per_1m_tokens: [0.25, 0.025, 2.00]

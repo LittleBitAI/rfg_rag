@@ -89,7 +89,7 @@ def test_valid_saved_values_preserve_nullability_metadata_and_end_to_end_cost(mo
     monkeypatch.setattr(evaluation, "_send_scores", MagicMock())
 
     assert evaluation._read_answers(answers) == read_jsonl(answers) == rows
-    table = evaluation.evaluate_end_to_end(answers, {})
+    table = evaluation.evaluate_end_to_end(answers, {"evaluation": {"judge": "ragas"}})
 
     assert table.columns.tolist() == [
         "id", "question", "factual_correctness", "latency_s", "input_tokens", "output_tokens", "cached_input_tokens",

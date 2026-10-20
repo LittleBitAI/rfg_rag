@@ -191,7 +191,7 @@ PREPROCESSED = "data/RFP_Preprocessing_Final_v11_Team"
 | 01 전처리 | `OCR`, `OCR_MODEL`, `OCR_REASONING_EFFORT`, `OCR_MAX_TOKENS`, `OCR_PRICES`, `CHUNK_SIZE` |
 | 02 검색 | `REWRITE_MODEL`, `REWRITE_REASONING_EFFORT`, `REWRITE_MAX_TOKENS`, `REWRITE_PRICES`, `DENSE_WEIGHT` (BM25는 `1 - DENSE_WEIGHT`) |
 | 04 생성 | `LLM_MODEL`, `LLM_REASONING_EFFORT`, `LLM_MAX_TOKENS`, `LLM_PRICES` |
-| 05 평가 | `JUDGE_MODEL`, `JUDGE_REASONING_EFFORT`, `JUDGE_MAX_TOKENS`, `JUDGE_PRICES` |
+| 05 평가 | `JUDGE` (`"ragas"` gpt 심판 / `"local"` 로컬 리랭커, API 0원), `JUDGE_MODEL`, `JUDGE_REASONING_EFFORT`, `JUDGE_MAX_TOKENS`, `JUDGE_PRICES` (`ragas` 일 때만) |
 
 예를 들어 02 설정 셀의 `DENSE_WEIGHT = cfg["retrieval"]["dense_weight"]`를 `DENSE_WEIGHT = 0.8`로 바꾸면 Dense 80%·BM25 20%로 검색합니다.
 설정 셀은 메모리의 설정을 바꾸며 `config.yaml`을 덮어쓰지 않습니다. 02는 적용한 rewrite·검색 설정을 `artifacts/retrieval_settings.jsonl`에 저장하고 04가 읽습니다.
@@ -315,6 +315,7 @@ CSV는 UTF-8 without BOM입니다.
 - Retrieval과 Generation은 API 호출 없이 계산합니다. 두 `key_facts_*`는 공백·수치 표기를 정규화한 문자열 일치이며 의미적 정확성 판정이 아닙니다. 답할 수 없음 질문의 `key_facts_in_context`는 평균에서 빼고, 답변 문자열 일치는 거절 문장도 채점합니다.
 - Retrieval 이 낮으면 검색 문제, Retrieval 은 높은데 Grounding 이 낮으면 환각, 둘 다 높은데 End-to-End 가 낮으면 정답 · 질문을 다시 볼 차례입니다.
 - 유료 심판은 Grounding의 `faithfulness`와 End-to-End의 `factual_correctness`만 남습니다. 모델·프롬프트·채점 방식은 유지하며 `config.yaml`의 `evaluation` 설정을 사용합니다. 두 심판 셀을 실행할 때 OpenAI 비용이 듭니다.
+- `JUDGE = "local"`(`evaluation.judge: local`)이면 두 지표를 02 의 로컬 리랭커(`rerank.model`)로 API 없이 계산합니다. 답 · 정답을 문장으로 나눠, 리랭커가 (문장, 근거)를 관련 있다고 보고(점수 0.5 이상) 문장 속 숫자 · 날짜가 근거에 모두 있으면 지지로 봅니다. 문장이 근거에 글자 그대로 있거나 `180일` 같은 짧은 값이 문장 안에 있으면 리랭커 점수와 상관없이 지지입니다. 값의 크기가 RAGAS 와 달라 local 점수끼리만 비교하세요. 기본값은 `ragas` 입니다.
 - 프로젝트 책임자는 Langfuse Cloud 에서 질문마다 추적 하나(`answer-question` 안에 검색 `retrieve-context` · 생성 `generate-answer` — 모델 · 토큰 · 비용 포함)를 보고, 05 의 질문별 점수도 그 추적에 붙어 있습니다. 키가 없는 팀원은 노트북 표와 CSV 로 봅니다.
 
 ### IR 공식과 제외율

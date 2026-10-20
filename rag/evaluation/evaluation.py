@@ -3,6 +3,9 @@
   Generation   답이 핵심을 담았나              답변 속 핵심 사실 문자열 일치
   Grounding    답이 검색 근거 안에서만 나왔나    faithfulness
   End-to-End   최종 답이 정답과 맞나, 얼마 들었나  factual_correctness · 지연 시간 · 토큰 · 예상 비용
+faithfulness · factual_correctness 의 심판은 evaluation.judge 로 고른다.
+  ragas  RAGAS + gpt 심판 (유료, 기본값)
+  local  02 의 로컬 리랭커(크로스 인코더)로 같은 지표를 계산한다. API 를 부르지 않아 비용 0원
 .env 에 Langfuse 키가 있으면 질문별 점수를 04 생성의 추적(answer-question)에 붙인다.
 RAGAS 점수는 몇 문항씩 채점할 때마다 체크포인트에 저장해, 끊겨도 남은 문항만 채점한다.
 담당: 평가."""
@@ -24,6 +27,7 @@ from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import FactualCorrectness, Faithfulness
 
 from ..config import append_jsonl, read_checkpoint, read_jsonl, write_jsonl
+from ..retrieval.indexing import Reranker
 from ..retrieval.retrieval import retrieval_fields
 from ..usage import UsageCallback
 from .ir import coverage_group, exclusion_report, ir_scores, label_state
@@ -213,6 +217,116 @@ def _key_fact_ratio(facts: list[str], text: str) -> float:
                for f in facts) / len(facts)
 
 
+# ====================================================================================================
+# 로컬 심판 (evaluation.judge: local) — RAGAS 와 같은 열 이름의 점수를 API 없이 계산한다
+#   faithfulness         답 문장 중 검색 근거로 지지되는 비율
+#   factual_correctness  답 문장이 정답으로 지지되는 비율(정밀도)과 정답 문장이 답으로 지지되는 비율(재현율)의 F1
+# "지지"는 리랭커가 (문장, 근거)를 관련 있다고 보고, 문장 속 숫자 · 날짜가 근거에 모두 있다는 뜻이다
+# ====================================================================================================
+_SUPPORT_SCORE = 0.5  # 리랭커 점수(0~1)가 이 이상이면 문장이 근거와 관련 있다고 본다
+_NO_ANSWER = "제공된 문서에서 확인할 수 없습니다"  # 04 답변 프롬프트의 '답 없음' 문장 — 주장이 아니므로 채점하지 않는다
+_CITATION = re.compile(r"\[\d+(?:\s*,\s*\d+)*\]")
+_LIST_MARK = re.compile(r"^\s*(?:[-*•·>#]+|\d+[.)]|[가-하][.)])\s*")
+_SENTENCE_END = re.compile(r"(?<=[.!?。])\s+")
+_TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}")
+_rerankers: dict[str, Reranker] = {}
+
+
+def _local_model(cfg: dict) -> Reranker:
+    """리랭커를 한 번만 읽어 두 평가가 같이 쓴다"""
+    model = cfg["rerank"]["model"]
+    if model not in _rerankers:
+        _rerankers[model] = Reranker(cfg["rerank"])
+    return _rerankers[model]
+
+
+def _sentences(text: str) -> list[str]:
+    """채점할 문장들. 출처 표시 [1] · 목록 기호 · 표 머리글과 구분선 · 너무 짧은 제목과 '답 없음' 문장은 뺀다"""
+    lines = _CITATION.sub("", text).splitlines()
+    header = {i - 1 for i, line in enumerate(lines) if _TABLE_RULE.match(line)}  # 구분선 바로 윗줄 = 표 머리글
+    out = []
+    for i, line in enumerate(lines):
+        if i in header:
+            continue
+        for part in _SENTENCE_END.split(line):
+            sentence = _LIST_MARK.sub("", part.replace("|", " ").replace("**", "")).strip()
+            if len(re.sub(r"\W", "", sentence)) >= 6 and _NO_ANSWER not in sentence:
+                out.append(sentence)
+    return out
+
+
+def _claims(text: str) -> list[str]:
+    """채점할 문장. 문장 거르기(_sentences)에서 모두 빠지는 짧은 글('180일' · '1식' · '12개월')은 글 전체를 한 문장으로 —
+    빼면 짧은 정답의 질문은 생성을 잘해도 늘 0점이 된다. '답 없음' 문장은 그대로 뺀다"""
+    whole = _LIST_MARK.sub("", _CITATION.sub("", text).replace("|", " ").replace("**", "")).strip()
+    return _sentences(text) or ([whole] if re.search(r"\w", whole) and _NO_ANSWER not in whole else [])
+
+
+def _numbers(text: str) -> set[str]:
+    """단위까지 맞춘 숫자 · 날짜 토큰 ('3 초' = '3초', '5천만 원' = '5,000만원')"""
+    return {token for _, _, token in _semantic_spans(text)}
+
+
+def _relevance(claims: list[str], passages: list[str], cfg: dict) -> list[list[float]]:
+    """claims × passages 리랭커 점수. 문장이 근거에 글자 그대로(띄어쓰기 · 숫자 표기 차이는 무시) 있거나, 근거가 문장으로
+    거르면 남지 않는 짧은 값('180일' · '1식')이고 그 값이 문장 안에 있으면 1 — 리랭커는 짧은 글의 관련도를 낮게 매긴다.
+    정답이 '180일' 이고 답이 '사업기간은 180일입니다' 이면 그 답 문장은 정답으로 지지된다"""
+    reranker = _local_model(cfg)
+    return [[1.0 if _contains(claim, passage) else score
+             for passage, score in zip(passages, reranker.scores(claim, passages))] for claim in claims]
+
+
+def _contains(claim: str, passage: str) -> bool:
+    return _key_fact_ratio([claim], passage) == 1 or (not _sentences(passage) and _key_fact_ratio([passage], claim) == 1)
+
+
+def _supported(claims: list[str], passages: list[str], scores: list[list[float]], question: str) -> list[bool]:
+    """질문에 나온 숫자는 근거에 없어도 된다 — '5초가 아니라 3초' 처럼 잘못된 전제를 바로잡는 문장도 지지로 본다"""
+    numbers = _numbers(" ".join(passages)) | _numbers(question)
+    return [max(row) >= _SUPPORT_SCORE and _numbers(claim) <= numbers for claim, row in zip(claims, scores)]
+
+
+def _ratio(flags: list[bool]) -> float:
+    return sum(flags) / len(flags) if flags else math.nan
+
+
+def _local_grounding(row: dict, cfg: dict) -> dict:
+    """답에 채점할 문장이 없으면(빈 답 · '답 없음'만) RAGAS 처럼 NaN"""
+    claims, contexts = _claims(row["answer"]), [c for c in row["contexts"] if c.strip()]
+    if not claims or not contexts:
+        return {"faithfulness": math.nan if not claims else 0.0}
+    scores = _relevance(claims, contexts, cfg)
+    return {"faithfulness": _ratio(_supported(claims, contexts, scores, row["question"]))}
+
+
+def _windows(sentences: list[str], size: int = 3) -> list[str]:
+    """이어진 문장 size 개씩 묶는다 — 정답 한 문장의 내용이 답의 여러 문장에 나뉘어 있어도 지지로 본다"""
+    return [" ".join(sentences[i:i + size]) for i in range(max(1, len(sentences) - size + 1))]
+
+
+def _local_end_to_end(row: dict, cfg: dict) -> dict:
+    answer, references = _claims(row["answer"]), _claims(row["reference"])
+    if not answer or not references:
+        return {"factual_correctness": 0.0}
+    reference = [" ".join(references)]
+    precision = _ratio(_supported(answer, reference, _relevance(answer, reference, cfg), row["question"]))
+    windows = _windows(answer)
+    recall = _ratio(_supported(references, windows, _relevance(references, windows, cfg), row["question"]))
+    return {"factual_correctness": 2 * precision * recall / (precision + recall) if precision + recall else 0.0}
+
+
+def _judge_scores(rows: list[dict], cfg: dict, evaluation: str, answers_path: Path) -> list[dict]:
+    """질문마다 {표 열 이름: 점수}. judge 가 local 이면 API 를 부르지 않는다"""
+    if cfg["evaluation"]["judge"] == "local":
+        print(f"{evaluation}: 로컬 심판으로 {len(rows)}문항 채점 (API 호출 없음)")
+        local = _local_grounding if evaluation == "grounding" else _local_end_to_end
+        return [local(r, cfg) for r in rows]
+    metric, name, column = ((Faithfulness(), "faithfulness", "faithfulness") if evaluation == "grounding"
+                            else (FactualCorrectness(), "factual_correctness(mode=f1)", "factual_correctness"))
+    scores = _ragas(rows, [metric], cfg, evaluation, _checkpoint(answers_path, evaluation))
+    return [{column: s[name]} for s in scores]
+
+
 def _send_scores(rows: list[dict], scores: list[dict]):
     """질문별 점수를 그 질문의 Langfuse 추적에 붙인다. trace_id 가 없으면(키 없이 생성한 답) 보내지 않는다"""
     if not any(r["trace_id"] for r in rows):
@@ -334,8 +448,7 @@ def evaluate_generation(answers_path: Path, cfg: dict) -> pd.DataFrame:
 def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """Grounding: 답의 주장들이 검색한 청크로 뒷받침되나 (낮으면 환각)"""
     rows = _read_answers(answers_path)
-    ragas = _ragas(rows, [Faithfulness()], cfg, "grounding", _checkpoint(answers_path, "grounding"))
-    scores = [{"faithfulness": s["faithfulness"]} for s in ragas]
+    scores = _judge_scores(rows, cfg, "grounding", answers_path)
     _send_scores(rows, scores)
     return _table(rows, scores, answers_path.with_name("grounding.csv"))
 
@@ -343,10 +456,10 @@ def evaluate_grounding(answers_path: Path, cfg: dict) -> pd.DataFrame:
 def evaluate_end_to_end(answers_path: Path, cfg: dict) -> pd.DataFrame:
     """End-to-End: 최종 답이 정답과 사실이 맞는지 + 질문당 지연 시간·토큰·예상 비용(USD)"""
     rows = _read_answers(answers_path)
-    ragas = _ragas(rows, [FactualCorrectness()], cfg, "end_to_end", _checkpoint(answers_path, "end_to_end"))
+    judged = _judge_scores(rows, cfg, "end_to_end", answers_path)
     # 지연 시간 · 토큰 · 비용은 추적에 이미 있으므로 점수로는 factual_correctness 만 보낸다
-    _send_scores(rows, [{"factual_correctness": s["factual_correctness(mode=f1)"]} for s in ragas])
-    scores = [{"factual_correctness": s["factual_correctness(mode=f1)"], "latency_s": r["latency_s"],
+    _send_scores(rows, judged)
+    scores = [{**j, "latency_s": r["latency_s"],
                "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"],
                "cached_input_tokens": r["cached_input_tokens"], "reasoning_tokens": r["reasoning_tokens"],
                "rewrite_input_tokens": r["rewrite"]["input_tokens"],
@@ -355,5 +468,5 @@ def evaluate_end_to_end(answers_path: Path, cfg: dict) -> pd.DataFrame:
                "rewrite_reasoning_tokens": r["rewrite"]["reasoning_tokens"],
                "answer_cost_usd": r["cost_usd"], "rewrite_cost_usd": r["rewrite"]["cost_usd"],
                "cost_usd": r["cost_usd"] + r["rewrite"]["cost_usd"]}
-              for r, s in zip(rows, ragas)]
+              for r, j in zip(rows, judged)]
     return _table(rows, scores, answers_path.with_name("end_to_end.csv"))
