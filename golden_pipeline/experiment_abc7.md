@@ -21,7 +21,7 @@ golden_pipeline\golden.cmd pro-packets abc7
   몫은 자기 개선과 같은 해시 나눔(`adoption.split`)이라, A loop 가 실제로 쓰는 몫과 같습니다.
   몫이 하나라도 모자라면 계획을 쓰지 않고 멈춥니다. 일곱 주제 모두 6 · 2 · 2 를 채웠습니다.
 - 고정 기록은 `outputs/experiments/abc7/freeze.json` 입니다.
-  `freeze` 는 근거 manifest 까지 다 읽은 뒤 고정 기록을 먼저, 실험 계획을 맨 나중에 내놓습니다. 그래서 실험 계획이 있으면 그 고정 기록도 있습니다.
+  Current `freeze` copies complete source pins from the saved pool plan and rejects legacy pools without them. It publishes the provenance record first and the experiment plan last, so an existing experiment plan has its provenance record. The hashes below describe the historical run.
   두 파일은 숨은 임시 파일에 다 쓴 뒤 한 번에 내놓으므로, 다른 명령은 반쯤 쓴 파일을 보지 못합니다.
   도중에 실패하거나 프로세스가 끊겨도 계획은 남지 않습니다. 계획 없이 남은 고정 기록은 다시 고정할 때 거두므로, 원인을 고친 뒤 같은 명령으로 다시 고정합니다.
   이미 있는 계획 id 는 덮지 않고 멈춥니다. 같은 실험을 두 명령이 함께 고정하면 뒤 명령은 `freeze.lock` 의 OS 잠금에 막혀 멈춥니다.

@@ -74,6 +74,28 @@ def test_document_scoped_exact_label(mapping_input, case, expected):
     assert labelled["doc_ids"] == ([] if case == "unmapped" else ["doc"])
 
 
+ANCHOR = "계약 담당 부서는 정보화사업팀이며 문의처를 함께 적습니다."
+
+
+@pytest.mark.parametrize("evidence, chunk_bodies, expected", [
+    ("short", [ANCHOR + " 정확히 180일입니다.", "다른 사업도 정확히 180일입니다."], ("live", None)),
+    ("short", ["정확히 180일입니다.", "다른 사업도 정확히 180일입니다."], (None, "too_short")),
+    ("short", [ANCHOR + " 정확히 180일입니다.", ANCHOR + " 다른 사업도 정확히 180일입니다."], (None, "too_short")),
+    ("long", [ANCHOR + " " + TEXT, "앞 장 " + TEXT], ("live", None)),
+])
+def test_context_anchor_narrows_short_or_repeated_evidence(mapping_input, evidence, chunk_bodies, expected):
+    item, chunk, raw, package = mapping_input
+    start = TEXT.index("정확히") if evidence == "short" else 0
+    item["golden_evidence"][0]["location"]["start"] = start
+    item["golden_context"] = f"[E1]\n{TEXT[start:]}\n\n[E2]\n{ANCHOR}"
+    chunks = [{**chunk, "body": chunk_bodies[0]}, {**chunk, "chunk_id": "second", "body": chunk_bodies[1]}]
+
+    [labelled] = label_evidence([item], chunks, raw, package, raw)
+    [ref] = labelled["evidence"]
+
+    assert (ref["chunk_id"], ref["reason"]) == expected
+
+
 def test_table_text_normalization_and_context_correspondence(mapping_input):
     item, chunk, raw, package = mapping_input
     text = "사업 기간 | 계약 체결 후\n180일 동안 모든 업무 수행"

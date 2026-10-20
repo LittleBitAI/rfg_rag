@@ -10,7 +10,7 @@ Stage 1은 KURE를 고정해 공백 BM25, dense, 현재 Kiwi BM25, Kiwi+dense, �
 
 두 단계 모두 기관 라우팅과 교차 배치를 유지한다. isolated에서는 코드 승격·수량 필터 우회를 끄고, integrated에서는 운영 코드 승격·필터·중복 제거·패킹을 유지한다. 필터 경로는 일반 순위와 별도로 보고한다. `candidate_k=50`, 현행 min-max 융합, 수량 설정과 일반 컨텍스트 예산 2,500토큰을 유지한다. 모든 모델의 패킹 비용은 같은 revision KURE 토크나이저로 센다. 입력 임베딩에는 각 모델의 토크나이저를 쓴다.
 
-원본 dev와 말뭉치·설정·근거를 바이트 그대로 보존하고 지문을 로컬 manifest에 고정한다. 검색에는 dev 전체를 사용하며 정답 문자열 평가용 `key_facts` 조건으로 질문을 제외하지 않는다. 근거는 원본 계획 ref와 context의 정확한 블록으로 확인하고, 기존 동일 문서·유일한 정규화 정확 포함 규칙으로만 재매핑한다. 부분 라벨을 완전한 정답 집합으로 채점하지 않는다.
+원본 dev와 말뭉치·설정·근거를 바이트 그대로 보존하고 지문을 로컬 manifest에 고정한다. 검색에는 dev 전체를 사용하며 정답 문자열 평가용 `key_facts` 조건으로 질문을 제외하지 않는다. 근거는 원본 계획 ref와 context의 정확한 블록으로 확인하고, 동일 문서·유일한 정규화 정확 포함 규칙과, 짧거나 여러 청크에 든 근거는 같은 context의 다른 20자 이상 블록이 함께 든 청크가 하나일 때만 인정하는 문맥 앵커로 재매핑한다. 부분 라벨을 완전한 정답 집합으로 채점하지 않는다.
 
 점수 계산 전에 seed와 질문 ID를 로컬 split에 고정한다. 중복 질문·공유 원본/유효 재매핑 청크·bundle 그룹을 유지하고 주제 균형과 남은 중복 가능성을 공개한다. 기존 dev 개발·점수 노출이 있다면 명시한다. validation은 가중치 선택에서 제외하며 최종 test 결과로 부르지 않는다.
 
@@ -48,7 +48,7 @@ foreach ($model in @('kure','nemotron','harrier','jina','pplx','dragonkue','upsk
 .venv-benchmark310\Scripts\python -m rag.retrieval.benchmark summarize
 ```
 
-입력과 측정은 `artifacts/seven_model_full_dev/`, frozen 질문·split·manifest와 집계·문항별 결과는 그 아래 `record/`에 쓴다. 원래 실행의 로컬 기록은 `artifacts/seven_model/record/`에 보존한다. 완료된 측정은 덮어쓰지 않는다. BM25 사례 감사를 다시 실행하려면 로컬 입력 `audit_probes.json`에 진단 질문 ID를 준비하고 `python -m rag.retrieval.benchmark.audit`를 사용한다. 실제 ID는 코드에 넣지 않는다.
+입력과 측정은 `artifacts/seven_model_anchor/`, frozen 질문·split·manifest와 집계·문항별 결과는 그 아래 `record/`에 쓴다. 원래 실행의 로컬 기록은 `artifacts/seven_model/record/`에 보존한다. 완료된 측정은 덮어쓰지 않는다. BM25 사례 감사를 다시 실행하려면 로컬 입력 `audit_probes.json`에 진단 질문 ID를 준비하고 `python -m rag.retrieval.benchmark.audit`를 사용한다. 실제 ID는 코드에 넣지 않는다.
 
 평가 입력은 공통 로더가 `artifacts/local_inputs/`에서 읽는다. 기존 논리 경로는 유지하며 깨끗한 업데이트로 원본 파일이 사라져도 추적 해제 직전의 로컬 Git 객체에서 복원한다. 네트워크나 추론은 호출하지 않는다. 얕은 clone 또는 정리된 이력에는 소유자가 제공한 비공개 묶음을 `python -m rag.validation.local_inputs --from-directory PATH`로 먼저 복원한다. 묶음의 구조와 검증·덮어쓰기 금지 규칙은 [README](../../../README.md#로컬-평가-입력과-ocr-캡션-복원)를 따른다. 복원된 파일은 Git에서 무시한다.
 
@@ -65,5 +65,7 @@ foreach ($model in @('kure','nemotron','harrier','jina','pplx','dragonkue','upsk
 ## 집계 결과 보관
 
 기존 로컬 측정의 집계 결과는 [385문항 부분집합 보고서](historical/report.md)와 [408문항 전체 dev 보고서](full_dev/report.md)에 보관한다. 각 폴더의 `quality.csv`, `paired_differences.csv`, `latency.csv`, `exclusions.csv`, `chosen_weights.json`, `resources.json`, `sparse_build.json`은 질문별 레코드를 담지 않는 집계다. 각 `runtime-freeze.txt`는 당시 저장한 패키지 이름·버전 183개만 보존한 실행 환경 기록이며 프로젝트 설치 의존성을 바꾸지 않는다. 원래 점수·분모·시간·자원·추천과 한계를 함께 보존하며, 이번 복원에서 새로 실행하거나 점수를 다시 계산하지 않았다.
+
+문맥 앵커 라벨로 v3 봉인 조건에서 새로 잰 결과는 [329문항 재측정 보고서](anchor/report.md)에 있다. 같은 집계 파일에 dev 전체 고정 0.6 비교를 담은 `all_dev_fixed.json`을 더했다.
 
 두 기록은 완료 당시 v3 봉인이 없는 역사적 측정이다. 기존 추천을 현재 검증을 통과한 확정 결론으로 승격하지 않는다. 원시 질문·정답·근거, 문항별 순위/점수·시간 표본, split ID, 실제 사례별 감사는 원래 무시된 `artifacts/seven_model/record/`와 `artifacts/seven_model_full_dev/record/`에 둔다. 집계 파일은 Git에 보관하고 원시 레코드는 로컬에 보관한다.

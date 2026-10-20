@@ -19,14 +19,15 @@ def test_bundles_use_only_eligible_units_once_and_carry_their_context(evidence_r
     plan, sha = load_plan("p1")
 
     assert sha == storage._sha256(path)
-    assert "u7" not in unit_ids(plan)  # held 단위 (숫자가 있어 numeric 패턴에는 맞는다)
+    assert "chunk:c-u7" not in unit_ids(plan)  # Held source includes a number matching the numeric pattern.
     assert len(unit_ids(plan)) == len(set(unit_ids(plan)))
-    assert unit_ids(plan, "numeric") == ["u1", "u2"]
-    assert unit_ids(plan, "table") == ["u3", "u4", "u5"]
-    assert unit_ids(plan, "condition") == ["u6", "u8"]
+    assert unit_ids(plan, "numeric") == ["chunk:c-u1", "chunk:c-u2"]
+    assert unit_ids(plan, "table") == ["chunk:c-u3", "chunk:c-u4", "chunk:c-u5"]
+    assert unit_ids(plan, "condition") == ["chunk:c-u6", "chunk:c-u8"]
     assert plan["planned"] == {"numeric": 1, "table": 1, "condition": 1, "comparison": 0}
     assert plan["coverage"] == {"numeric": {DOC_1: 1}, "table": {DOC_1: 1}, "condition": {DOC_2: 1}}
     assert plan["package_manifest_sha256"] == storage._sha256(evidence_run / "manifest.json")
+    assert plan["pinned_sha256"] == {name: storage._sha256(evidence_run / name) for name in evidence.PINNED}
     assert plan["topic_specs"]["numeric"] == storage._sha256(storage.CONFIGS / "topics" / "numeric.json")
 
     table = next(b for b in plan["bundles"] if b["topic"] == "table")
@@ -51,12 +52,12 @@ def test_documents_are_taken_in_turn_and_long_contexts_are_left_out(evidence_run
     make_plan("p1", "ev1", {"numeric": 2}, 2000, package=evidence_run)
     plan = load_plan("p1")[0]
     assert plan["coverage"] == {"numeric": {DOC_1: 1, DOC_2: 1}}
-    assert unit_ids(plan) == ["u1", "u2", "u6", "u8"]  # DOC_2 의 held 단위 u7 을 건너뛴다
+    assert unit_ids(plan) == ["chunk:c-u1", "chunk:c-u2", "chunk:c-u6", "chunk:c-u8"]
 
     make_plan("p2", "ev1", {"numeric": 2}, 70, package=evidence_run)
     plan = load_plan("p2")[0]
     assert all(len(b["context"]) <= 70 for b in plan["bundles"])
-    assert unit_ids(plan) == ["u3", "u4", "u5"]  # 표 행 u4 · u5 에 머리글 행 u3 이 붙는다
+    assert unit_ids(plan) == ["chunk:c-u3", "chunk:c-u4", "chunk:c-u5"]
 
 
 def test_units_of_a_skipped_plan_are_left_out_and_the_skip_is_recorded(evidence_run):

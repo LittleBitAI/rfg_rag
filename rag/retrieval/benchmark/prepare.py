@@ -47,7 +47,7 @@ def remap(rows, chunks, dev):
         evidence = []
         for ref in row["evidence"]:
             doc = ref["doc_sha"] if ref["doc_sha"] in by_doc else None
-            evidence.append({**ref, "doc_id": doc, **_chunk_label(ref["text"], doc, by_doc)})
+            evidence.append({**ref, "doc_id": doc, **_chunk_label(ref["text"], doc, by_doc, dev[row["id"]]["context"])})
         mapped.append({**row, "evidence": evidence, "bundle_id": dev.get(row["id"], {}).get("bundle_id"),
                        "doc_ids": sorted({e["doc_id"] for e in evidence if e["doc_id"]})})
     return mapped

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / "artifacts/seven_model_full_dev"
+OUT = ROOT / "artifacts/seven_model_anchor"
 RECORD = OUT / "record"
 SEED = 20261018
 WEIGHTS = (0.2, 0.4, 0.6, 0.8)

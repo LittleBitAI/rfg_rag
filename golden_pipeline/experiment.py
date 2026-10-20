@@ -16,7 +16,7 @@ from string import Template
 
 import openai
 
-from golden_pipeline import adoption, generation, plan, storage, validation
+from golden_pipeline import adoption, evidence, generation, plan, storage, validation
 from golden_pipeline.schema import TOPICS
 
 # 주제마다 묶음 66개: train 6 · validation 30 · held-out 30. 몫은 자기 개선과 같은 해시 나눔(adoption.split)으로 정한다.
@@ -35,6 +35,8 @@ def freeze(experiment_id, pool_plan_id):
     주제 명세의 SHA-256 과 실제 몫별 개수를 남긴다.
     """
     pool, pool_sha = plan.load_plan(pool_plan_id)
+    if set(pool.get("pinned_sha256", {})) != set(evidence.PINNED):
+        raise ValueError("풀 계획에 고정한 원문 파일 해시가 없습니다. 새 계획과 run 을 만드세요")
     chosen, parts = [], {}
     for topic in TOPICS:
         picked = _stratified([bundle for bundle in pool["bundles"] if bundle["topic"] == topic])
@@ -51,11 +53,10 @@ def freeze(experiment_id, pool_plan_id):
         "coverage": plan._coverage(chosen), "bundles": chosen,
     }
     plan_bytes = (json.dumps(frozen, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
-    evidence_manifest = storage._read_json(storage.OUTPUTS / "evidence" / pool["evidence_run"] / "manifest.json")
     record = {
         "experiment": experiment_id, "created_at": frozen["created_at"], "code_commit": frozen["code_commit"],
         "source": {"evidence_run": pool["evidence_run"], "package_manifest_sha256": pool["package_manifest_sha256"],
-                   "pinned_sha256": evidence_manifest["pinned_sha256"]},
+                   "pinned_sha256": pool["pinned_sha256"]},
         "pool_plan": {"plan_id": pool_plan_id, "sha256": pool_sha},
         "plan": {"plan_id": experiment_id, "sha256": hashlib.sha256(plan_bytes).hexdigest()},
         "topic_specs": pool["topic_specs"], "prompts": storage.snapshot(storage.PROMPTS),
@@ -298,6 +299,7 @@ def _unanswerable_batches(planned):
     """unanswerable 묶음마다 검증기가 읽을 대상 문서 묶음 수 (validation.document_batches)."""
     bundles = [bundle for bundle in planned["bundles"] if bundle["topic"] == "unanswerable"]
     run_dir = storage.OUTPUTS / "evidence" / planned["evidence_run"]
+    validation._planned_package(planned, evidence.PINNED[1:])
     found = plan.document_units(run_dir, {bundle["doc_sha"] for bundle in bundles})
     return [len(validation.document_batches(found[bundle["doc_sha"]])) for bundle in bundles]
 
