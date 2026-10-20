@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from itertools import takewhile
 from decimal import Decimal
 from functools import lru_cache
@@ -43,6 +43,9 @@ BLANK_CELL = re.compile(r"(^|\n) *\||\| *\|")
 EVIDENCE_LABEL = re.compile(r"(?<![A-Za-z])E\d+(?!\d)|머리글 행")
 # 배점표의 값을 배점 · 평가 기준으로 묻는 질문의 낱말 (공백을 지운 질문에서 찾는다).
 SCORING_WORDS = re.compile(r"배점|점수|평가|\d+점|만점|득점|감점|가점")
+# 한 문서 요구사항 기록 중 이 몫 이상(두 기록 이상)에서 '칸 | 값' 의 왼쪽 칸으로 되풀이되면 양식의 칸 이름이다.
+# 패키지에서 왼쪽 칸은 기록 하나에만 나오는 것과 거의 모든 기록에 나오는 것으로 갈려, 몫을 0.3 으로 낮춰도 거르는 문항이 같았다.
+LABEL_SHARE = 0.5
 # unanswerable 검증기에 한 번에 주는 대상 문서의 글자 수. 문서(중앙 6만 6천 자, 가장 긴 것 20만 자)를 몇 번에 나눠 모두 읽힌다.
 DOCUMENT_BATCH_CHARS = 60_000
 # 새 묶음 앞에 다시 주는 앞 묶음 끝의 글자 수. 표 밖의 소제목('A시스템')과 그 아래 글이 경계로 갈리지 않게 한다.
@@ -662,18 +665,13 @@ def _comparison_rule(item, units):
 
 
 def _field_comparison(item, units):
-    """요구사항 표의 근거에서 대상마다 '대상 | 값' 이 이웃한 칸이고, 값끼리 같은 단위가 없으면 참. 한 요구사항의 칸끼리 견준 꼴이다.
+    """요구사항 표의 근거에서 대상마다 '대상 | 값' 이 이웃한 칸이고, 대상 중 하나가 그 문서 요구사항 양식의 칸 이름이면 참.
 
     요구사항 표는 '요구사항 고유번호 | SFR-001' 처럼 칸 이름과 값이 이웃한다. 이런 질문(분류와 명칭 중 어느 쪽이 '필수'인가)은
     RFP 를 읽는 사람이 묻지 않는데, 값은 근거와 맞아 검증을 통과한다.
-    요구사항에 딸린 세부 표('실명 인증 | 3초')도 대상과 값이 이웃한다. 칸 이름 목록은 문서마다 달라 닫을 수 없으므로,
-    같은 성질의 값(같은 단위의 수)을 견주는지로 가른다. 한 요구사항의 칸들은 값의 종류가 서로 다르다 (분류 글 · 번호 · 수준).
+    요구사항에 딸린 세부 표('실명 인증 | 3초')도 대상과 값이 이웃하므로, 대상이 양식의 칸 이름인지 문서에서 센다 (_form_labels).
     """
     if not all(ref["requirement_ids"] for ref in item["evidence"]):
-        return False
-    values = item["structure"]["values"]
-    texts = [str(values.get(name, "")) for name in item["structure"]["entities"]]
-    if set.intersection(*({unit for _, unit in quantities(text)} for text in texts)):
         return False
     pairs = set()
     for unit in units:
@@ -681,8 +679,31 @@ def _field_comparison(item, units):
         for row in [unit["text"], *unit["text"].splitlines()]:
             cells = [re.sub(r"\s", "", cell) for cell in row.split("|")]
             pairs.update(zip(cells, cells[1:]))
-    return all((re.sub(r"\s", "", name), re.sub(r"\s", "", str(values.get(name, "")))) in pairs
-               for name in item["structure"]["entities"])
+    values, names = item["structure"]["values"], [re.sub(r"\s", "", name) for name in item["structure"]["entities"]]
+    if not all((name, re.sub(r"\s", "", str(values.get(entity, "")))) in pairs
+               for name, entity in zip(names, item["structure"]["entities"])):
+        return False
+    labels = _form_labels(evidence.PACKAGE).get(item["evidence"][0]["doc_sha"], set())
+    return any(name in labels for name in names)
+
+
+@lru_cache(maxsize=1)
+def _form_labels(package):
+    """문서 SHA → 그 문서 요구사항 양식의 칸 이름 (공백을 지운 글). 패키지 청크에서 센다.
+
+    칸 이름은 양식의 글이라 한 문서의 요구사항 기록 대부분에서 '칸 | 값' 의 왼쪽 칸으로 되풀이된다 (고유번호 · 명칭 · 분류 …).
+    세부 표의 대상과 요구사항 이름은 기록 하나에만 나온다. 칸 이름은 문서마다 달라 목록으로 닫을 수 없어 문서에서 센다.
+    """
+    records, cells = defaultdict(set), defaultdict(lambda: defaultdict(set))
+    for chunk in evidence._iter_jsonl(package / evidence.CHUNKS):
+        if not chunk["requirement_ids"]:
+            continue
+        records[chunk["doc_id"]].update(chunk["requirement_ids"])
+        for row in chunk["body"].splitlines():
+            for cell in [re.sub(r"\s", "", cell) for cell in row.split("|")][:-1]:
+                cells[chunk["doc_id"]][cell].update(chunk["requirement_ids"])
+    return {doc: {cell for cell, ids in found.items() if len(ids) >= max(2, LABEL_SHARE * len(records[doc]))}
+            for doc, found in cells.items()}
 
 
 def _single_unit_verdict(item, units, full, ask, judge):

@@ -229,23 +229,40 @@ def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_fai
     assert improvement.failure_code(rule_reason({**item, field: value}, units)) == code
 
 
-@pytest.mark.parametrize("requirement_ids, entities, values, code", [
+def write_requirements(package, doc, records):
+    """패키지 청크 파일을 records({요구사항 id: 청크 본문}) 로 된 문서 doc 의 요구사항 청크로 쓴다."""
+    (package / evidence.CHUNKS).write_text("".join(
+        json.dumps({"doc_id": doc, "requirement_ids": [rid], "body": body}, ensure_ascii=False) + "\n"
+        for rid, body in records.items()), encoding="utf-8")
+
+
+DETAILS = ("실명 인증 | 3초\n로그인 | 1초\n실명 인증 | 휴대폰\n로그인 | 아이디\n"
+           "요구사항 A | 3초\n요구사항 B | 5초\n목표경영 | 42\n과제관리 | 103")
+
+
+@pytest.mark.parametrize("entities, values, code", [
     # 한 요구사항의 칸 이름끼리 견줬다. 값은 근거와 맞아 검증을 통과했지만 RFP 를 읽는 사람은 이렇게 묻지 않는다.
-    (["QUR-003"], ["요구사항 분류", "응낙수준"], {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "invalid_comparison"),
-    # 칸 이름은 문서마다 다르다 ('고유번호' · '분    류'). 이름 목록이 아니라 값의 종류로 가려야 한다.
-    (["QUR-003"], ["고유번호", "분    류"], {"고유번호": "QUR-003", "분    류": "품질 요구사항"}, "invalid_comparison"),
-    # 요구사항에 딸린 세부 표의 두 기능 · 요구사항 둘은 대상과 값이 이웃해도 같은 성질(시간)의 값을 견준다.
-    (["QUR-003"], ["실명 인증", "로그인"], {"실명 인증": "3초", "로그인": "1초"}, None),
-    (["QUR-003"], ["요구사항 A", "요구사항 B"], {"요구사항 A": "3초", "요구사항 B": "5초"}, None),
-    # 요구사항 표가 아닌 표의 행 이름(메뉴)끼리 견주는 것은 같은 종류의 비교다.
-    ([], ["목표경영", "과제관리"], {"목표경영": "42", "과제관리": "103"}, None),
+    (["요구사항 분류", "응낙수준"], {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "invalid_comparison"),
+    # 칸 이름은 문서마다 다르다 ('고유번호' · '분    류'). 이름 목록이 아니라 그 문서의 기록마다 되풀이되는지로 가린다.
+    (["고유번호", "분    류"], {"고유번호": "QUR-003", "분    류": "품질 요구사항"}, "invalid_comparison"),
+    # 요구사항에 딸린 세부 표의 대상 · 요구사항 이름은 대상과 값이 이웃해도 기록 하나에만 나온다. 값의 종류는 가리지 않는다.
+    (["실명 인증", "로그인"], {"실명 인증": "3초", "로그인": "1초"}, None),
+    (["실명 인증", "로그인"], {"실명 인증": "휴대폰", "로그인": "아이디"}, None),
+    (["요구사항 A", "요구사항 B"], {"요구사항 A": "3초", "요구사항 B": "5초"}, None),
+    (["목표경영", "과제관리"], {"목표경영": "42", "과제관리": "103"}, None),
 ])
-def test_a_comparison_between_fields_of_one_requirement_is_ruled_out(requirement_ids, entities, values, code):
+def test_a_comparison_between_fields_of_one_requirement_is_ruled_out(tmp_path, monkeypatch, entities, values, code):
+    record = "고유번호 | {} | 분    류 | {}\n요구사항 분류 | {} | 응낙수준 | {}"
+    (tmp_path / "corpus").mkdir()
+    monkeypatch.setattr(evidence, "PACKAGE", tmp_path)
+    write_requirements(tmp_path, "d1", {
+        "QUR-003": record.format("QUR-003", "품질 요구사항", "품질 요구사항", "필수") + "\n" + DETAILS,
+        "SER-001": record.format("SER-001", "보안 요구사항", "보안 요구사항", "선택"),
+    })
     item = {"primary_topic": "comparison", "question": "어느 쪽이 더 큰가?", "answer": "",
-            "evidence": [{"chunk_id": "c1", "requirement_ids": requirement_ids}],
+            "evidence": [{"chunk_id": "c1", "doc_sha": "d1", "requirement_ids": ["QUR-003"]}],
             "structure": {"entities": entities, "values": values, "choice": entities[1]}}
-    text = ("고유번호 | QUR-003 | 분    류 | 품질 요구사항\n요구사항 분류 | 품질 요구사항 | 응낙수준 | 필수\n"
-            "실명 인증 | 3초\n로그인 | 1초\n요구사항 A | 3초\n요구사항 B | 5초\n목표경영 | 42\n과제관리 | 103")
+    text = record.format("QUR-003", "품질 요구사항", "품질 요구사항", "필수") + "\n" + DETAILS
     reason = rule_reason(item, [{"text": text, "ref": {"location": {"kind": "table", "row": 1}}}])
     assert (reason and improvement.failure_code(reason)) == code
 
@@ -535,6 +552,8 @@ def released_under(version, agency, run_id, make_item, text="사업 예산은 1�
 
 def test_a_rename_drops_what_a_newer_rule_rules_out_and_records_it_as_a_failure(evidence_run, make_item):
     # 칸 비교 규칙은 비교 문항을 출시한 뒤에 생겼다. 판정 없이 다시 낸 출시본에 그 문항이 남으면 규칙이 없는 것과 같다.
+    write_requirements(evidence_run, "1" * 64, {rid: f"요구사항 분류 | {kind} | 응낙수준 | 필수"
+                                                for rid, kind in (("SFR-001", "품질 요구사항"), ("SER-001", "보안 요구사항"))})
     released_under("v1", "가기관", "r1", make_item, text="요구사항 분류 | 품질 요구사항 | 응낙수준 | 필수",
                    candidate_id="comparison-A-r1-0001", primary_topic="comparison", secondary_tags=[],
                    structure={"entities": ["요구사항 분류", "응낙수준"],
