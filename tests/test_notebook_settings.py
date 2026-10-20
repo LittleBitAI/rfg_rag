@@ -13,7 +13,7 @@ from rag.usage import UsageCallback
 
 
 def test_notebooks_have_no_saved_execution_results():
-    for path in sorted(ROOT.glob("*.ipynb")):
+    for path in sorted([*ROOT.glob("*.ipynb"), *ROOT.glob("preprocessing/*.ipynb")]):
         notebook = json.loads(path.read_text(encoding="utf-8"))
         for cell in notebook["cells"]:
             assert cell.get("execution_count") is None, path.name
