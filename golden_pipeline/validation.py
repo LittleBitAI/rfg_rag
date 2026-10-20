@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from itertools import takewhile
 from decimal import Decimal
 from functools import lru_cache
@@ -19,7 +19,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-7"
+VALIDATOR_VERSION = "validation-15"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -206,7 +206,7 @@ def _documents(topic, planned, bundles, candidates):
     if topic not in DOCUMENT_TOPICS:
         return {}
     run_dir = storage._child(storage.OUTPUTS / "evidence", planned["evidence_run"])
-    plan._check_package(evidence.PACKAGE, storage._read_json(run_dir / "manifest.json")["pinned_sha256"])
+    _planned_package(planned, evidence.PINNED[1:])
     asked = {item["candidate_id"]: bundles[item["bundle_id"]]["doc_sha"] for item in candidates}
     found = plan.document_units(run_dir, set(asked.values()))
     return {candidate_id: found[doc] for candidate_id, doc in asked.items()}
@@ -297,6 +297,8 @@ def rename(topic, version, sources):
     """이미 낸 출시본들을 쓸모 판정 없이 합쳐, 질문 앞 문서 이름만 지금 data_list.csv 의 이름으로 바꿔 releases/{version}/ 로 낸다.
 
     팀이 기관 이름을 고친 뒤 판정을 다시 사지 않으려는 것이다. 항목 내용은 write_release 가 카탈로그 기록과 대조한다.
+    규칙 검사(rule_reason)는 돈이 들지 않으므로 다시 본다. 규칙이 생기기 전에 낸 출시본도 같은 기준으로 내기 위해서다.
+    빠진 항목은 release 처럼 매니페스트의 dropped 에 남아 improvement.record_screen 이 실패 기록으로 옮긴다.
     """
     items, runs, golden = [], set(), {}
     for source in sources:
@@ -304,11 +306,30 @@ def rename(topic, version, sources):
         items += released
         runs.update(tuple(run.split("/", 1)) for run in manifest["runs"])
         golden[source] = manifest["golden_sha256"]
+    units = _planned_units(topic, items)
+    ruled = {item["candidate_id"]: rule for item in items if (rule := rule_reason(item, units[item["candidate_id"]]))}
+    dropped = [{"candidate_id": item["candidate_id"], "method": item["method"], "run_id": item["run_id"],
+                "question": item["question"], "code": None, "reason": ruled[item["candidate_id"]]}
+               for item in items if item["candidate_id"] in ruled]
+    items = [item for item in items if item["candidate_id"] not in ruled]
     docs = {item["candidate_id"]: plan.asked_document(item) for item in items}
     items = _current_names(items, docs)
     # 이름이 같아진 뒤에 견준다. 옛 이름 · 새 이름 질문은 앞머리만 달라 이름을 바꾸기 전에는 같은 질문으로 보이지 않는다.
     _refuse_duplicates(items)
-    return storage.write_release(topic, version, items, runs, {"renamed_from": golden})
+    return storage.write_release(topic, version, items, runs, {"renamed_from": golden, "dropped": dropped})
+
+
+def _planned_units(topic, items):
+    """candidate_id → 그 항목을 만든 run 의 고정 계획에서 읽은 인용 근거 단위 (출시 때 규칙 검사가 읽는 것과 같다)."""
+    bundles = {}
+    for method, run_id in {(item["method"], item["run_id"]) for item in items}:
+        generated = storage._read_json(storage.run_path(topic, method, run_id) / "manifest.json")["generation"]
+        planned, sha = plan.load_plan(generated["plan_id"])
+        if sha != generated["plan_sha256"]:
+            raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {run_id} 을 만든 뒤 바뀌었습니다")
+        bundles[method, run_id] = {bundle["bundle_id"]: bundle for bundle in planned["bundles"]}
+    return {item["candidate_id"]: evidence_units(item, bundles[item["method"], item["run_id"]][item["bundle_id"]])
+            for item in items}
 
 
 def _current_names(items, docs):
@@ -622,14 +643,59 @@ def _topic_rule(item, question, units):
         return "빈 칸 표: 인용한 표 행이나 머리글에 빈 칸으로 시작하거나 빈 칸이 이어진 행이 있습니다"
     if topic == "condition" and "(조건:" in item["answer"]:
         return "답 덧붙임: 답에 '(조건: …)' 이 붙었습니다"
-    # 생성 검사도 choice 를 요구하지만, 그 전에 검증한 run 을 출시할 때 여기서 걸러진다.
-    if topic == "comparison" and item["structure"].get("choice") is None:
-        return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
+    if topic == "comparison" and (reason := _comparison_rule(item, units)):
+        return reason
     if topic == "multi_hop" and len({ref["chunk_id"] for ref in item["evidence"]}) < 2:
         return "multi_hop 아님: 인용한 근거가 모두 한 청크 안에 있습니다"
     if topic == "unanswerable" and EVIDENCE_LABEL.search(question):
         return "근거 지칭: 질문에 'E1' · '머리글 행' 같은 근거 라벨이 있습니다"
     return None
+
+
+def _comparison_rule(item, units):
+    # 생성 검사도 choice 를 요구하지만, 그 전에 검증한 run 을 출시할 때 여기서 걸러진다.
+    if item["structure"].get("choice") is None:
+        return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
+    return _comparison_role_reason(item, units)
+
+
+def _comparison_role_reason(item, units):
+    """Requirement comparisons need source-declared entities; reject fields and unknown roles."""
+    if not any(ref["requirement_ids"] for ref in item["evidence"]):
+        return None
+    cited = [unit for unit in units if unit["ref"] in item["evidence"]]
+    evidence.check_unit_roles(cited, _pinned_roles(item))
+    if not cited or any(unit.get("roles") is None for unit in cited):
+        return "비교 역할 미확정: 인용 근거의 원문에 칸·대상 역할이 없습니다. 역할을 표시한 새 근거와 계획을 만드세요"
+    names = {re.sub(r"\s", "", name) for name in item["structure"]["entities"]}
+    fields = {name for unit in cited for name in unit["roles"]["fields"]}
+    if names & fields:
+        return "칸 비교: 비교 대상이 고정 원문에서 요구사항의 칸으로 표시되었습니다"
+    entities = {name for unit in cited for name in unit["roles"]["entities"]}
+    if not names <= entities:
+        return "비교 역할 미확정: 비교 이름 중 고정 원문에서 대상으로 표시하지 않은 이름이 있습니다"
+    return None
+
+
+def _pinned_roles(item):
+    """Follow generation provenance and verify the source hash before using cached roles."""
+    run_dir = storage.run_path(item["primary_topic"], item["method"], item["run_id"])
+    generated = storage._read_json(run_dir / "manifest.json")["generation"]
+    planned, sha = plan.load_plan(generated["plan_id"])
+    if sha != generated["plan_sha256"]:
+        raise ValueError(f"계획 {generated['plan_id']} 가 생성 run {item['run_id']} 을 만든 뒤 바뀌었습니다")
+    # Rename may update agency names; only the source chunks affect role judgments.
+    pinned = _planned_package(planned, [evidence.CHUNKS])
+    return evidence.role_annotations(evidence.PACKAGE, pinned[evidence.CHUNKS])
+
+
+def _planned_package(planned, files):
+    """Check each required file against hashes frozen inside the generation plan."""
+    if "pinned_sha256" not in planned:
+        raise ValueError("계획에 고정한 원문 파일 해시가 없습니다. 새 계획과 run 을 만드세요")
+    pinned = {name: planned["pinned_sha256"][name] for name in files}
+    plan._check_package(evidence.PACKAGE, pinned)
+    return pinned
 
 
 def _single_unit_verdict(item, units, full, ask, judge):

@@ -261,16 +261,23 @@
   "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f8-1.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f8-2.md",
+  "docs/research/review-littlebitai-golden-comparison-fields-f1-1.md",
+  "docs/research/review-littlebitai-golden-comparison-fields-f1-2.md",
+  "docs/research/review-littlebitai-golden-comparison-fields-f3-1.md",
+  "docs/research/review-littlebitai-golden-comparison-fields-f3-2.md",
   "docs/research/review-offline-retrieval-seven-model-benchmark-f3-1.md",
   "docs/research/review-offline-retrieval-seven-model-benchmark-f3-2.md",
   "docs/research/review-restore-aggregate-measurements-f1-1.md",
-  "docs/research/review-restore-aggregate-measurements-f1-2.md"
+  "docs/research/review-restore-aggregate-measurements-f1-2.md",
+  "docs/research/review-retrieval-port-requirement-links-f4-1.md",
+  "docs/research/review-retrieval-port-requirement-links-f7-1.md",
+  "docs/research/review-retrieval-port-requirement-links-f7-2.md"
  ],
  "counts": {
-  "docs": 41,
+  "docs": 48,
   "linked": 26,
   "read": 0,
-  "orphans": 15,
+  "orphans": 22,
   "pages": 1,
   "decisions": 0,
   "injectable_decisions": 0

@@ -1,13 +1,12 @@
 """요구사항 코드·토큰 예산·중복 제거·기관 라우팅의 회귀를 확인한다."""
-from collections import defaultdict
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from rag.preprocessing import parsing
-from rag.retrieval.indexing import Embedder, KiwiTokenizer, find_codes
-from rag.retrieval.retrieval import DocRouter, HybridIndex, read_csv_orgs
+from rag.retrieval.indexing import Embedder, KiwiTokenizer, find_codes, search_texts, texts_digest
+from rag.retrieval.retrieval import DocRouter, HybridIndex, _check_index, _link_index, read_csv_orgs
 
 
 def ranked(pairs):
@@ -16,16 +15,16 @@ def ranked(pairs):
             for rank, (i, score) in enumerate(pairs, 1)]
 
 
-def make_index(bodies, costs, budget=2500, doc_ids=None):
+def make_index(bodies, costs, budget=2500, doc_ids=None, requirements=None, tables=None):
     index = HybridIndex.__new__(HybridIndex)
     doc_ids = doc_ids or ["doc-a"] * len(bodies)
-    index.chunks = [{"chunk_id": f"c{i}", "doc_id": doc, "text": body, "body": body}
-                    for i, (body, doc) in enumerate(zip(bodies, doc_ids))]
+    requirements = requirements or [None] * len(bodies)
+    tables = tables or [[] for _ in bodies]
+    index.chunks = [{"chunk_id": f"c{i}", "doc_id": doc, "text": body, "body": body,
+                     "requirement_key": req, "requirement_ids": [req] if req else [], "table_refs": table}
+                    for i, (body, doc, req, table) in enumerate(zip(bodies, doc_ids, requirements, tables))]
     index.doc_ids = np.array(doc_ids)
-    index.code_chunks = defaultdict(set)
-    for i, body in enumerate(bodies):
-        for code in find_codes(body):
-            index.code_chunks[code].add(i)
+    index.code_chunks, index.links = _link_index(index.chunks)
     index.rcfg = {"token_budget": budget, "dense_weight": 0.6, "candidate_k": 50}
     index.chunk_file = "fixture/chunks.jsonl"
     index.embedder = MagicMock()
@@ -268,3 +267,97 @@ def test_csv_case_only_collision_does_not_choose_an_organization():
     docs = [{"doc_id": "a", "source": "RFP_A.pdf", "title": "사업", "cover_text": "", "head_text": ""}]
     router = DocRouter(docs, {"RFP_A.pdf": "기관가공사", "rfp_a.pdf": "기관나공사"})
     assert router.route("기관가공사와 기관나공사 요구사항") == {}
+
+
+# 요구사항 ID · 명칭 청크와 상세 내용 청크가 나뉜 전처리 패키지 사례 (합성 예시)
+_SPLIT_REQUIREMENT = ["요구사항 고유번호 | TST-901 / 요구사항 명칭 | 시험 데이터 보관",
+                      "요구사항 상세내용 | 예시 점검 절차는 매주 수행한다",
+                      "다른 요구사항 상세 내용", "다른 문서의 같은 코드 상세 내용"]
+
+
+def test_detail_chunk_without_id_text_matches_its_requirement_code():
+    index = make_index(_SPLIT_REQUIREMENT, [5, 5, 5, 5], doc_ids=["a", "a", "a", "b"],
+                       requirements=["TST-901", "TST-901", None, "TST-901"])
+    index.router.route.return_value = {"가상기관": {"a"}}
+    index._dense = MagicMock(return_value={2: 1.0})
+    index._sparse = MagicMock(return_value={2: 1.0})
+
+    hits = index.search("가상기관 TST-901 예시 점검 절차")
+
+    assert [hit["chunk_id"] for hit in hits] == ["c0", "c1", "c2"]  # 다른 문서(b)의 TST-901 은 라우팅으로 제외
+
+
+@pytest.mark.parametrize("found", [0, 1])
+def test_pack_adds_other_chunks_of_the_same_requirement_right_after_the_found_one(found):
+    index = make_index(_SPLIT_REQUIREMENT, [5, 5, 5, 5], doc_ids=["a", "a", "a", "b"],
+                       requirements=["TST-901", "TST-901", None, "TST-901"])
+
+    hits = index._pack([(found, 0.9), (2, 0.5)])
+
+    assert [hit["chunk_id"] for hit in hits] == [f"c{found}", f"c{1 - found}", "c2"]
+    assert hits[1]["score"] == 0.9
+
+
+def test_requirement_chunks_still_respect_token_budget():
+    index = make_index(_SPLIT_REQUIREMENT, [5, 30, 5, 5], budget=12, doc_ids=["a", "a", "a", "b"],
+                       requirements=["TST-901", "TST-901", None, "TST-901"])
+
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (2, 0.5)])] == ["c0", "c2"]
+
+
+def test_long_table_chunk_packs_the_table_head_and_its_nearest_row_in_document_order():
+    """9청크 표의 가운데(c5)를 찾으면 600토큰 안에서 머리글이 있는 첫 청크와 가장 가까운 청크를 문서 순서로 담는다"""
+    index = make_index([f"표 {i}" for i in range(9)], [300] * 9, tables=[["t1"]] * 9)
+
+    assert [hit["chunk_id"] for hit in index._pack([(5, 0.9)])] == ["c5", "c0", "c4"]
+
+
+def test_links_already_packed_or_dropped_as_duplicates_do_not_use_the_link_cap():
+    """연결 한도는 실제로 담은 연결 청크만 쓴다 — 앞서 담긴 첫 청크(c0)나 찾은 청크와 거의 같아 빠지는
+    600토큰 첫 청크가 가까운 행(c4 · c6)의 자리를 빼앗지 않는다"""
+    index = make_index([f"표 {i}" for i in range(9)], [300] * 9, tables=[["t1"]] * 9)
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (5, 0.8)])] == ["c0", "c1", "c2", "c5", "c4", "c6"]
+
+    bodies = ["가 나 다 라 마 바", *[f"표 {i}" for i in range(1, 5)], "가 나 다 라 마", *[f"표 {i}" for i in range(6, 9)]]
+    index = make_index(bodies, [600, 300, 300, 300, 100, 300, 300, 300, 300], tables=[["t1"]] * 9)
+    assert [hit["chunk_id"] for hit in index._pack([(5, 0.9)])] == ["c5", "c4", "c6"]
+
+
+def test_links_of_a_found_chunk_dropped_as_a_duplicate_are_not_packed():
+    index = make_index(["가 나 다 라 마", "가 나 다 라 마 바", "표 이어짐"], [5, 5, 5], tables=[[], ["t1"], ["t1"]])
+
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9), (1, 0.8)])] == ["c0"]
+
+
+def test_same_table_ref_in_another_document_is_not_linked():
+    """표 참조가 같아도 다른 문서의 청크는 연결하지 않는다 — 라우팅된 문서 밖 청크가 담기지 않게"""
+    index = make_index(["A 표", "B 표"], [1, 1], doc_ids=["doc-a", "doc-b"], tables=[["t1"], ["t1"]])
+
+    assert [hit["doc_id"] for hit in index._pack([(0, 0.9)])] == ["doc-a"]
+
+
+def test_linked_chunks_stop_at_link_token_cap():
+    index = make_index(["ID 청크", "상세 하나", "상세 둘"], [5, 400, 400], requirements=["TST-901"] * 3)
+
+    assert [hit["chunk_id"] for hit in index._pack([(0, 0.9)])] == ["c0", "c1"]  # 400 + 400 > 600
+
+
+_REQUIREMENT_CHUNKS = [
+    {"doc_id": "a", "text": "요구사항 고유번호 | TST-901\n요구사항 명칭 | 시험 데이터 보관", "requirement_key": "TST-901"},
+    {"doc_id": "a", "text": "요구사항 상세내용 | 예시 점검 절차는 매주 수행한다", "requirement_key": "TST-901"},
+    {"doc_id": "a", "text": "일반 본문", "requirement_key": None}]
+
+
+def test_search_texts_label_detail_chunks_with_their_requirement_id_and_name():
+    assert search_texts(_REQUIREMENT_CHUNKS) == [
+        _REQUIREMENT_CHUNKS[0]["text"],  # ID · 명칭이 이미 있으면 그대로
+        "[요구사항 TST-901 시험 데이터 보관]\n요구사항 상세내용 | 예시 점검 절차는 매주 수행한다",
+        "일반 본문"]
+
+
+def test_index_built_from_other_texts_is_rejected(tmp_path):
+    texts = search_texts(_REQUIREMENT_CHUNKS)
+    (tmp_path / "texts.sha256").write_text(texts_digest(texts), encoding="utf-8")
+    _check_index(tmp_path, texts)
+    with pytest.raises(ValueError, match="02"):
+        _check_index(tmp_path, [c["text"] for c in _REQUIREMENT_CHUNKS])

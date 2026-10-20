@@ -30,9 +30,8 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         raise ValueError(f"counts 는 주제 {TOPICS} 별 양의 정수여야 합니다: {counts}")
     path = storage._child(storage.OUTPUTS / "plans", f"{plan_id}.json")
     run_dir = storage._child(storage.OUTPUTS / "evidence", evidence_run)
-    pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
-    _check_package(package, pinned)
-    units = [unit for unit in eligible_units(run_dir) if not _is_toc(unit["text"])]
+    pinned = _verified_evidence_pins(run_dir, package)
+    units = [unit for unit in eligible_units(run_dir, package) if not _is_toc(unit["text"])]
     names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
@@ -58,6 +57,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         "side": side and {"split": side[0], "part": side[1],
                           "manifest_sha256": storage._sha256(storage.OUTPUTS / "splits" / side[0] / "manifest.json")},
         "package_manifest_sha256": pinned["manifest.json"],
+        "pinned_sha256": pinned,
         "topic_specs": {topic: sha for topic, (_, sha) in specs.items()},
         "max_context_chars": max_context_chars,
         "counts": {topic: counts[topic] for topic in specs},
@@ -83,15 +83,14 @@ def topic_spec(topic):
     return storage._read_json(path), storage._sha256(path)
 
 
-def eligible_units(run_dir):
+def eligible_units(run_dir, package=None):
     """eligible 판정을 받은 단위만, 근거 참조 필드와 본문 · 표 앞 제목 여부(titled)를 붙여 패키지 순서대로 돌려준다."""
-    eligible = {
-        row["unit_id"] for row in evidence._iter_jsonl(run_dir / "judgments.jsonl") if row["judgment"] == "eligible"
-    }
+    units, judgments = evidence.read_verified(run_dir, package if package is not None else evidence.PACKAGE)
+    eligible = {row["unit_id"] for row in judgments if row["judgment"] == "eligible"}
     return [
         {"unit_id": unit["unit_id"], "ref": {name: unit[name] for name in EVIDENCE_FIELDS}, "text": unit["text"],
-         "titled": unit["titled"]}
-        for unit in evidence._iter_jsonl(run_dir / "units.jsonl")
+         "titled": unit["titled"], "roles": unit.get("roles")}
+        for unit in units
         if unit["unit_id"] in eligible and unit["text"].strip()
     ]
 
@@ -103,8 +102,9 @@ def document_units(run_dir, docs):
     문서에 무엇이 없음을 보이려면 보류된 단위(원본 대조 예외, 범위 없는 OCR)까지 읽어야 한다.
     eligible 만 보면 보류된 글에 든 답을 놓친다.
     """
+    units, _ = evidence.read_verified(run_dir, evidence.PACKAGE)
     found = defaultdict(list)
-    for unit in evidence._iter_jsonl(run_dir / "units.jsonl"):
+    for unit in units:
         if unit["doc_sha"] in docs:
             found[unit["doc_sha"]].append({key: unit[key] for key in ("unit_id", "element_id", "location", "text")})
     return found
@@ -157,6 +157,15 @@ def _is_toc(text):
     return len(lines) >= 2 and 2 * sum(bool(TOC_LINE.search(line)) for line in lines) >= len(lines)
 
 
+def _verified_evidence_pins(run_dir, package):
+    """Bind the complete evidence pin set to files verified against package declarations."""
+    pinned = evidence.pin(package)
+    recorded = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
+    if recorded != pinned:
+        raise evidence.PackageMismatch("근거 run 의 pinned_sha256 이 검증된 패키지의 전체 해시와 다릅니다. 새 근거 run 을 만드세요")
+    return pinned
+
+
 def _check_package(package, pinned):
     """근거 어댑터가 판정한 패키지와 지금 읽을 패키지가 같아야 본문이 판정과 맞는다."""
     for name, sha in pinned.items():
@@ -166,6 +175,8 @@ def _check_package(package, pinned):
 
 def _groups(topic, spec, units, used, max_context_chars, names):
     """문서마다 주제에 맞는 단위를 패키지 순서대로 bundle_units 개씩 묶는다. 컨텍스트가 한도를 넘는 묶음은 버린다."""
+    if topic == "comparison":
+        units = [unit for unit in units if not unit["ref"]["requirement_ids"] or unit.get("roles") is not None]
     # 다른 주제가 이미 가진 머리글 행은 붙이지 않는다. 그 표의 나머지 행은 묶음이 되지 못한다.
     headers = {unit["ref"]["element_id"]: unit for unit in units if _table_row(unit) == 0 and unit["unit_id"] not in used}
     pattern = re.compile(spec["pattern"]) if spec["pattern"] else None

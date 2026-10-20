@@ -4,7 +4,7 @@ from collections import deque
 
 import pytest
 
-from golden_pipeline import generation, improvement, report, storage, validation
+from golden_pipeline import evidence, generation, improvement, report, storage, validation
 from golden_pipeline.generation import comparison_answer, generate, import_c, with_document
 from golden_pipeline.plan import load_plan, make_plan
 from golden_pipeline.plan import topic_spec as load_topic_spec
@@ -12,7 +12,7 @@ from golden_pipeline.schema import DIFFICULTIES
 from golden_pipeline.validation import (
     VALIDATOR_VERSION, _premise_absent, difficulty, quantities, release, same_answer, same_comparison, validate,
 )
-from conftest import DOC_2, UNITS
+from conftest import DOC_2, UNITS, _write_jsonl
 
 CONFIG = {
     "model": "validator-test", "reasoning_effort": "high", "max_calls": 20, "budget_usd": 1.0,
@@ -498,6 +498,30 @@ def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_agains
     assert item["state"] == "auto_validated"
 
 
+@pytest.mark.parametrize("method", ["B", "C"])
+@pytest.mark.parametrize("previous_version", ["validation-7", "validation-8", "validation-9", "validation-10", "validation-11", "validation-12", "validation-13", "validation-14"])
+def test_resume_refuses_pending_candidates_validated_under_previous_versions(config, monkeypatch, tmp_path, method, previous_version):
+    current = validation.VALIDATOR_VERSION
+    generator = Generator(NUMERIC)
+    if method == "B":
+        generate(method, "numeric", "p1", "old", config, generator)
+    else:
+        import_rows(tmp_path, "numeric", [NUMERIC], run_id="old")
+    monkeypatch.setattr(validation, "VALIDATOR_VERSION", previous_version)
+
+    def exhausted(**kwargs):
+        raise generation.BudgetExceeded("실험 상한")
+
+    run_dir = validate("numeric", method, "old", config, exhausted)
+    assert storage._read_json(run_dir / "validation.json")["pending"]
+    before = storage.snapshot(run_dir)
+    monkeypatch.setattr(validation, "VALIDATOR_VERSION", current)
+    client = Validator({"*": verdict("130,000,000원", ["부가세 포함"])})
+    with pytest.raises(ValueError, match="validator_version"):
+        validation.resume_validation("numeric", method, "old", config, client)
+    assert client.requests == [] and storage.snapshot(run_dir) == before
+
+
 def test_a_settled_judge_call_does_not_count_as_a_paid_validator_call(config):
     # 판정기 요청은 같은 질문 · 근거에 두 답이 더 있어 검증기 요청과 SHA-256 이 다르다. 그 출력이 남아 있어도 검증기 호출 셋은 그대로 사야 한다.
     planned = bundle("p2", "multi_hop")
@@ -553,6 +577,36 @@ def borrowed(config):
     return config
 
 
+@pytest.mark.parametrize("topic", ["unanswerable", "false_premise"])
+@pytest.mark.parametrize("change", ["source_with_repin", "adapter_body", "judgment"])
+def test_document_validation_rejects_inconsistent_source_or_adapter_records(config, topic, change):
+    package = config.parent / "v12"
+    make_plan("p-document", "ev1", {topic: 1}, 2000, package=package)
+    row = (unanswerable("계약 기간은 얼마인가?", "계약 기간", ["계약"], ["E1"]) if topic == "unanswerable"
+           else {"question": "계약 기간 9개월은 언제 끝나나?", "answer": "계약 기간은 9개월이 아니라 12개월이다.",
+                 "evidence": ["E1"], "structure": {"stated": "9개월", "actual": "12개월"}, "secondary_tags": []})
+    generate("A", topic, "p-document", "a-document", config, Generator(row))
+    evidence_dir = storage.OUTPUTS / "evidence/ev1"
+    if change == "source_with_repin":
+        path = package / evidence.CHUNKS
+        path.write_text(path.read_text(encoding="utf-8") + '\n', encoding="utf-8")
+        manifest_path = evidence_dir / "manifest.json"
+        manifest = storage._read_json(manifest_path)
+        manifest["pinned_sha256"][evidence.CHUNKS] = storage._sha256(path)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    else:
+        path = evidence_dir / ("units.jsonl" if change == "adapter_body" else "judgments.jsonl")
+        rows = storage._read_jsonl(path)
+        rows[-1].update({"text": "tampered held evidence"} if change == "adapter_body" else {"judgment": "eligible"})
+        _write_jsonl(path, rows)
+    before = storage.snapshot(storage.OUTPUTS)
+    validator = Validator({"*": verdict("12개월", answerable=topic != "unanswerable")})
+    with pytest.raises(evidence.PackageMismatch, match="SHA-256|units.jsonl|judgments.jsonl"):
+        validate(topic, "A", "a-document", config, validator)
+    assert validator.requests == []
+    assert storage.snapshot(storage.OUTPUTS) == before
+
+
 def test_an_attribute_found_only_in_a_held_unit_of_the_asked_document_is_rejected(borrowed):
     # 문서 2 에서 하자 보수 기간은 원본 대조 예외로 보류된 청크에만 있다. eligible 만 보면 없는 것으로 잘못 출시된다.
     row = unanswerable("하자 보수 기간은 얼마인가?", "하자 보수 기간", ["하자"], ["E2"])
@@ -563,7 +617,7 @@ def test_an_attribute_found_only_in_a_held_unit_of_the_asked_document_is_rejecte
 
     [item] = validated(run_dir).values()
     assert item["state"] == "rejected"
-    assert item["state_history"][-1]["reason"].startswith("대상 문서에 있음: 핵심어 ['하자'] 가 근거 단위 u9")
+    assert item["state_history"][-1]["reason"].startswith("대상 문서에 있음: 핵심어 ['하자'] 가 근거 단위 chunk:c-u9")
     assert validator.requests == []
 
 
