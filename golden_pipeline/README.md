@@ -238,8 +238,11 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 ```
 
 1. 근거 어댑터 run 의 `manifest.json` 에 고정된 파일 SHA-256 과 지금 패키지 파일이 같은지 확인하고, 다르면 멈춥니다.
-2. `judgments.jsonl` 에서 `eligible` 인 단위만 씁니다. `held` 단위는 어떤 묶음에도 들어가지 않습니다.
-   단위 본문은 근거 어댑터가 `units.jsonl` 에 남긴 청크 본문입니다.
+2. Before selecting units, replay the offline adapter against the pinned source package and compare
+   all records in both `units.jsonl` and `judgments.jsonl`. Bodies, references, roles, eligibility flags,
+   reasons, record order and held units must match the producer's current output. Missing, duplicate
+   or changed records stop planning before any plan is written, even if both mutable manifests have
+   been rehashed. Then select only `eligible` units; held units cannot enter bundles.
 3. 주제 순서(`numeric` → `table` → `condition` → `comparison` → `multi_hop` → `unanswerable` → `false_premise`)대로, 주제 명세의 `pattern` · `table_only` 에 맞는 단위를
    문서마다 패키지 순서로 `bundle_units` 개씩 묶습니다. 컨텍스트가 `--max-context-chars` 를 넘는 묶음은 버립니다.
    multi_hop 은 청크 둘 이상에 걸친 묶음만 냅니다 (`_spanning`). 이어진 단위는 대개 한 표의 이웃 행이라
@@ -457,7 +460,11 @@ Both reasons map to `invalid_comparison` in A's failure memory. Only names expli
 entities proceed to the existing independent answer checks. Uncited headers cannot authorize names.
 Comparisons citing no requirement IDs retain their existing behavior.
 
-The planner copies the evidence run's verified per-file hashes into `plan.pinned_sha256`.
+The planner checks package hashes and replays the adapter before copying per-file hashes into
+`plan.pinned_sha256`. This binds saved bodies and judgments to the same source bytes being fixed.
+`eligible_units` and `document_units` both use this verified reader, so whole-document validation
+and absence-batch estimation also reject inconsistent saved adapter output. Replay is local and
+uses the same adapter implementation as evidence generation, without API calls or output writes.
 Before reading roles, each consumer verifies the generation run's plan SHA, then checks
 `corpus/chunks.jsonl` against its hash inside that fixed plan. It does not obtain expected hashes
 from the current evidence or package manifests. Updating `data/data_list.csv` and its package-manifest
@@ -478,7 +485,7 @@ run. Existing outputs are not rewritten. Legacy unannotated requirement comparis
 when validated or rechecked by release/rename. This change includes no dataset migration or paid
 annotation calls; the producer-to-consumer contract is tested with synthetic source packages.
 
-The validator version is `validation-13`. B/C validation and A loops started with versions 7–12
+The validator version is `validation-14`. B/C validation and A loops started with versions 7–13
 must use new runs, preventing old and new criteria from being mixed within a run.
 
 거절은 끝 상태라 사람이 되돌릴 수 없습니다.

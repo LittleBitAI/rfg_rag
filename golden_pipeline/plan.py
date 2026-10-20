@@ -32,8 +32,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     run_dir = storage._child(storage.OUTPUTS / "evidence", evidence_run)
     pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
     _check_package(package, pinned)
-    units = [unit for unit in eligible_units(run_dir) if not _is_toc(unit["text"])]
-    evidence.check_unit_roles(units, evidence.role_annotations(package, pinned[evidence.CHUNKS]))
+    units = [unit for unit in eligible_units(run_dir, package) if not _is_toc(unit["text"])]
     names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
@@ -85,15 +84,14 @@ def topic_spec(topic):
     return storage._read_json(path), storage._sha256(path)
 
 
-def eligible_units(run_dir):
+def eligible_units(run_dir, package=None):
     """eligible 판정을 받은 단위만, 근거 참조 필드와 본문 · 표 앞 제목 여부(titled)를 붙여 패키지 순서대로 돌려준다."""
-    eligible = {
-        row["unit_id"] for row in evidence._iter_jsonl(run_dir / "judgments.jsonl") if row["judgment"] == "eligible"
-    }
+    units, judgments = evidence.read_verified(run_dir, package if package is not None else evidence.PACKAGE)
+    eligible = {row["unit_id"] for row in judgments if row["judgment"] == "eligible"}
     return [
         {"unit_id": unit["unit_id"], "ref": {name: unit[name] for name in EVIDENCE_FIELDS}, "text": unit["text"],
          "titled": unit["titled"], "roles": unit.get("roles")}
-        for unit in evidence._iter_jsonl(run_dir / "units.jsonl")
+        for unit in units
         if unit["unit_id"] in eligible and unit["text"].strip()
     ]
 
@@ -105,8 +103,9 @@ def document_units(run_dir, docs):
     문서에 무엇이 없음을 보이려면 보류된 단위(원본 대조 예외, 범위 없는 OCR)까지 읽어야 한다.
     eligible 만 보면 보류된 글에 든 답을 놓친다.
     """
+    units, _ = evidence.read_verified(run_dir, evidence.PACKAGE)
     found = defaultdict(list)
-    for unit in evidence._iter_jsonl(run_dir / "units.jsonl"):
+    for unit in units:
         if unit["doc_sha"] in docs:
             found[unit["doc_sha"]].append({key: unit[key] for key in ("unit_id", "element_id", "location", "text")})
     return found

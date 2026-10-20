@@ -36,15 +36,7 @@ def run(run_id, package=PACKAGE):
     out = storage._child(storage.OUTPUTS / "evidence", run_id)
     package = Path(package)
     hashes = pin(package)
-    chunks = list(_iter_jsonl(package / CHUNKS))
-    docs = {doc["doc_id"] for doc in _iter_jsonl(package / DOCS)}
-    counts = {"v12_search_chunks": len(chunks), "v12_documents": len(docs)}
-    declared = {name: storage._read_json(package / "manifest.json")["counts"][name] for name in counts}
-    if counts != declared:
-        raise PackageMismatch(f"파일에서 센 수 {counts} 가 manifest.json {declared} 과 다릅니다")
-    pairs = [chunk_unit(chunk, docs) for chunk in chunks]
-    units = [unit for unit, _ in pairs]
-    judgments = [judge(unit, reasons) for unit, reasons in pairs]
+    units, judgments, counts = _adapt(package)
 
     out.mkdir(parents=True, exist_ok=False)
     storage._write_jsonl(out / "units.jsonl", units)
@@ -59,6 +51,27 @@ def run(run_id, package=PACKAGE):
         "units": _unit_counts(units, judgments),
     })
     return out
+
+
+def _adapt(package):
+    """Derive complete adapter records from source files without writing or calling an API."""
+    chunks = list(_iter_jsonl(package / CHUNKS))
+    docs = {doc["doc_id"] for doc in _iter_jsonl(package / DOCS)}
+    counts = {"v12_search_chunks": len(chunks), "v12_documents": len(docs)}
+    declared = {name: storage._read_json(package / "manifest.json")["counts"][name] for name in counts}
+    if counts != declared:
+        raise PackageMismatch(f"파일에서 센 수 {counts} 가 manifest.json {declared} 과 다릅니다")
+    pairs = [chunk_unit(chunk, docs) for chunk in chunks]
+    return [unit for unit, _ in pairs], [judge(unit, reasons) for unit, reasons in pairs], counts
+
+
+def read_verified(run_dir, package):
+    """Return adapter records only after matching both saved files to a fresh source replay."""
+    units, judgments, _ = _adapt(package)
+    for name, expected in (("units.jsonl", units), ("judgments.jsonl", judgments)):
+        if list(_iter_jsonl(run_dir / name)) != expected:
+            raise PackageMismatch(f"{name} 이 현재 원문에서 만든 근거 · 판정과 다릅니다. 새 근거 run 을 만드세요")
+    return units, judgments
 
 
 def pin(package):

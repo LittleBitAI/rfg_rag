@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from golden_pipeline import evidence, generation, improvement, plan, storage, validation
+from golden_pipeline import evidence, experiment, generation, improvement, plan, storage, validation
 from golden_pipeline.state import transition
 from conftest import DOC_1, _write_jsonl
 
@@ -224,14 +224,23 @@ def test_new_comparison_plans_exclude_unannotated_requirement_chunks(field_run, 
     assert storage._read_json(path)["planned"]["comparison"] == 0
 
 
-def test_new_plans_refuse_roles_changed_in_adapter_output(field_run, evidence_run):
-    path = storage.OUTPUTS / "evidence/ev-roles/units.jsonl"
-    [unit] = storage._read_jsonl(path)
-    unit["roles"] = {"fields": [], "entities": ["고유번호", "분류"]}
-    _write_jsonl(path, [unit])
-    with pytest.raises(evidence.PackageMismatch, match="roles.*고정 원문"):
+@pytest.mark.parametrize("file, field, value", [
+    ("units.jsonl", "roles", {"fields": [], "entities": ["고유번호", "분류"]}),
+    ("units.jsonl", "text", "tampered body"),
+    ("units.jsonl", "requirement_ids", ["QUR-999"]),
+    ("units.jsonl", "ids_linked", False),
+    ("judgments.jsonl", "judgment", "held"),
+    ("judgments.jsonl", "reasons", ["invented reason"]),
+])
+def test_new_plans_refuse_adapter_output_that_differs_from_source(field_run, evidence_run, file, field, value):
+    path = storage.OUTPUTS / "evidence/ev-roles" / file
+    [row] = storage._read_jsonl(path)
+    row[field] = value
+    _write_jsonl(path, [row])
+    before = storage.snapshot(storage.OUTPUTS)
+    with pytest.raises(evidence.PackageMismatch, match=file):
         plan.make_plan("new", "ev-roles", {"comparison": 1}, 2000, package=evidence_run)
-    assert not (storage.OUTPUTS / "plans/new.json").exists()
+    assert storage.snapshot(storage.OUTPUTS) == before
 
 
 def test_plans_without_frozen_file_hashes_require_regeneration(field_run):
@@ -245,3 +254,38 @@ def test_plans_without_frozen_file_hashes_require_regeneration(field_run):
     write_json(run_dir / "manifest.json", manifest)
     with pytest.raises(ValueError, match="새 계획과 run"):
         validation.rule_reason(item, units)
+
+
+@pytest.mark.parametrize("change", ["body", "requirement_ids"])
+@pytest.mark.parametrize("field_run", ["detail_entities"], indirect=True)
+@pytest.mark.parametrize("reader", ["plan", "eligible", "document", "estimate"])
+def test_readers_reject_stale_adapter_records_after_both_manifests_are_rewritten(field_run, evidence_run, change, reader):
+    [chunk] = storage._read_jsonl(evidence_run / evidence.CHUNKS)
+    chunk[change] = chunk["body"].replace("3초", "9초") if change == "body" else ["QUR-999"]
+    _write_jsonl(evidence_run / evidence.CHUNKS, [chunk])
+    path = evidence_run / "manifest.json"
+    manifest = storage._read_json(path)
+    manifest["files"][evidence.CHUNKS]["sha256"] = storage._sha256(evidence_run / evidence.CHUNKS)
+    write_json(path, manifest)
+    path = storage.OUTPUTS / "evidence/ev-roles/manifest.json"
+    manifest = storage._read_json(path)
+    manifest["pinned_sha256"] = evidence.pin(evidence_run)
+    write_json(path, manifest)
+    before = storage.snapshot(storage.OUTPUTS)
+    run_dir = storage.OUTPUTS / "evidence/ev-roles"
+    read = {
+        "plan": lambda: plan.make_plan("stale", "ev-roles", {"comparison": 1}, 2000, package=evidence_run),
+        "eligible": lambda: plan.eligible_units(run_dir),
+        "document": lambda: plan.document_units(run_dir, {DOC_1}),
+        "estimate": lambda: experiment._unanswerable_batches({"evidence_run": "ev-roles", "bundles": [
+            {"topic": "unanswerable", "doc_sha": DOC_1}]}),
+    }
+    with pytest.raises(evidence.PackageMismatch, match="units.jsonl"):
+        read[reader]()
+    assert storage.snapshot(storage.OUTPUTS) == before
+    if reader == "plan":
+        evidence.run("fresh", package=evidence_run)
+        path = plan.make_plan("fresh", "fresh", {"comparison": 1}, 2000, package=evidence_run)
+        [unit] = storage._read_json(path)["bundles"][0]["units"]
+        assert unit["text"] == chunk["body"]
+        assert unit["ref"]["requirement_ids"] == chunk["requirement_ids"]

@@ -5,7 +5,8 @@ import json
 
 import pytest
 
-from golden_pipeline import evidence
+from golden_pipeline import evidence, storage
+from conftest import _write_jsonl
 
 DOC = "a" * 64
 IMAGE = "c" * 64
@@ -65,7 +66,9 @@ def run(package_dir):
 
 
 def test_run_pins_counts_and_writes_one_unit_per_chunk_with_separate_judgments(outputs, package):
-    out, units, judgments = run(package())
+    package_dir = package()
+    out, units, judgments = run(package_dir)
+    assert evidence.read_verified(out, package_dir) == (list(units.values()), list(judgments.values()))
 
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert set(manifest["pinned_sha256"]) == set(evidence.PINNED)
@@ -161,3 +164,28 @@ def test_invalid_roles_stop_before_writing_an_evidence_run(outputs, package, rol
     with pytest.raises(evidence.PackageMismatch, match="roles"):
         evidence.run("bad-roles", package=package(chunks))
     assert not (outputs / "outputs/evidence/bad-roles").exists()
+
+
+@pytest.mark.parametrize("file, change", [
+    ("units.jsonl", "missing"), ("units.jsonl", "duplicate"), ("units.jsonl", "reversed"),
+    ("judgments.jsonl", "missing"), ("judgments.jsonl", "promoted"),
+])
+def test_verified_reader_checks_complete_records_including_held_units(outputs, package, file, change):
+    chunks = copy.deepcopy(BASE)
+    chunks[0]["source_locations"][0]["location"]["supplier_metadata"]["review_status"] = evidence.EXCEPTION
+    package_dir = package(chunks)
+    out, _, _ = run(package_dir)
+    path = out / file
+    rows = storage._read_jsonl(path)
+    if change == "missing":
+        rows.pop(0)
+    elif change == "duplicate":
+        rows.append(rows[0])
+    elif change == "promoted":
+        assert rows[0]["judgment"] == "held"
+        rows[0]["judgment"] = "eligible"
+    else:
+        rows.reverse()
+    _write_jsonl(path, rows)
+    with pytest.raises(evidence.PackageMismatch, match=file):
+        evidence.read_verified(out, package_dir)
