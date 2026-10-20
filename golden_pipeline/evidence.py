@@ -5,7 +5,9 @@
 청크마다 자동 승인 가능(eligible) 또는 보류(held)를 이유와 함께 별도 판정 기록으로 남긴다. 패키지는 고치지 않는다.
 """
 import json
+import re
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 
 from golden_pipeline import storage
@@ -95,11 +97,53 @@ def chunk_unit(chunk, docs):
         "ocr_scope": OCR_SCOPES.get(image.get("scope"), "hold") if image else None,
         "text": chunk["body"],
         "titled": bool(tables) and first is not chunk["spans"][0],
+        "roles": comparison_roles(chunk),
     }
     errors = _link_errors(chunk, sources, docs)
     gaps = _meaning_gaps(unit, [location["supplier_metadata"] for location in sources.values()])
     unit.update(ids_linked=not errors, meaning_verified=not gaps)
     return unit, [*errors, *gaps]
+
+
+def comparison_roles(chunk):
+    """Read source-authored field/entity roles; leave absent annotations unknown."""
+    roles = chunk.get("roles")
+    if roles is None:
+        return None
+    if not isinstance(roles, dict) or set(roles) != {"fields", "entities"}:
+        raise PackageMismatch("roles 는 fields · entities 문자열 리스트를 가진 객체여야 합니다")
+    parsed = {key: _role_names(names, chunk["body"]) for key, names in roles.items()}
+    if set(parsed["fields"]) & set(parsed["entities"]):
+        raise PackageMismatch("roles 에서 같은 이름을 칸과 대상으로 함께 지정했습니다")
+    return parsed
+
+
+def _role_names(names, body):
+    """Require distinct, nonempty names present in the body after removing whitespace."""
+    if not isinstance(names, list) or any(not isinstance(name, str) or not name.strip() for name in names):
+        raise PackageMismatch("roles 의 이름은 비어 있지 않은 문자열 리스트여야 합니다")
+    normalized = [re.sub(r"\s", "", name) for name in names]
+    if len(set(normalized)) != len(normalized):
+        raise PackageMismatch("roles 의 같은 역할에 겹치는 이름이 있습니다")
+    text = re.sub(r"\s", "", body)
+    if any(name not in text for name in normalized):
+        raise PackageMismatch("roles 의 이름이 청크 본문에 없습니다")
+    return normalized
+
+
+@lru_cache(maxsize=1)
+def role_annotations(package, chunks_sha):
+    """Index pinned source roles by document/chunk. Callers verify SHA before cache access."""
+    return {(chunk["doc_id"], chunk["chunk_id"]): roles
+            for chunk in _iter_jsonl(package / CHUNKS) if (roles := comparison_roles(chunk)) is not None}
+
+
+def check_unit_roles(units, source_roles):
+    """Prevent adapter or plan edits from overriding pinned source annotations."""
+    for unit in units:
+        ref = unit["ref"]
+        if unit.get("roles") != source_roles.get((ref["doc_sha"], ref["chunk_id"])):
+            raise PackageMismatch(f"{ref['chunk_id']} 의 roles 가 고정 원문과 다릅니다")
 
 
 def judge(unit, reasons):

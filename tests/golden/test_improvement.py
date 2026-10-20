@@ -229,10 +229,11 @@ def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_fai
     assert improvement.failure_code(rule_reason({**item, field: value}, units)) == code
 
 
-def write_requirements(package, doc, records):
+def write_requirements(package, doc, records, roles):
     """패키지 청크 파일을 records({요구사항 id: 청크 본문}) 로 된 문서 doc 의 요구사항 청크로 쓴다."""
     (package / evidence.CHUNKS).write_text("".join(
-        json.dumps({"doc_id": doc, "requirement_ids": [rid], "body": body}, ensure_ascii=False) + "\n"
+        json.dumps({"doc_id": doc, "chunk_id": f"c-{rid}", "requirement_ids": [rid], "body": body,
+                    "roles": roles.get(rid)}, ensure_ascii=False) + "\n"
         for rid, body in records.items()), encoding="utf-8")
     path = storage.OUTPUTS / "evidence/ev1/manifest.json"
     path.write_text(json.dumps({"pinned_sha256": {name: storage._sha256(package / name) for name in evidence.PINNED}}),
@@ -246,9 +247,9 @@ DETAILS = ("실명 인증 | 3초\n로그인 | 1초\n실명 인증 | 휴대폰\n�
 @pytest.mark.parametrize("entities, values, code", [
     # 한 요구사항의 칸 이름끼리 견줬다. 값은 근거와 맞아 검증을 통과했지만 RFP 를 읽는 사람은 이렇게 묻지 않는다.
     (["요구사항 분류", "응낙수준"], {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "invalid_comparison"),
-    # 칸 이름은 문서마다 다르다 ('고유번호' · '분    류'). 이름 목록이 아니라 그 문서의 기록마다 되풀이되는지로 가린다.
+    # Source roles identify field names after whitespace normalization.
     (["고유번호", "분    류"], {"고유번호": "QUR-003", "분    류": "품질 요구사항"}, "invalid_comparison"),
-    # 요구사항에 딸린 세부 표의 대상 · 요구사항 이름은 대상과 값이 이웃해도 기록 하나에만 나온다. 값의 종류는 가리지 않는다.
+    # Source-declared detail entities stay comparable with numeric or textual values.
     (["실명 인증", "로그인"], {"실명 인증": "3초", "로그인": "1초"}, None),
     (["실명 인증", "로그인"], {"실명 인증": "휴대폰", "로그인": "아이디"}, None),
     (["요구사항 A", "요구사항 B"], {"요구사항 A": "3초", "요구사항 B": "5초"}, None),
@@ -256,16 +257,18 @@ DETAILS = ("실명 인증 | 3초\n로그인 | 1초\n실명 인증 | 휴대폰\n�
 ])
 def test_a_comparison_between_fields_of_one_requirement_is_ruled_out(evidence_run, make_item, entities, values, code):
     record = "고유번호 | {} | 분    류 | {}\n요구사항 분류 | {} | 응낙수준 | {}"
+    roles = {"fields": ["고유번호", "분류", "요구사항분류", "응낙수준"],
+             "entities": ["실명인증", "로그인", "요구사항A", "요구사항B", "목표경영", "과제관리"]}
     write_requirements(evidence_run, "1" * 64, {
         "QUR-003": record.format("QUR-003", "품질 요구사항", "품질 요구사항", "필수") + "\n" + DETAILS,
         "SER-001": record.format("SER-001", "보안 요구사항", "보안 요구사항", "선택"),
-    })
+    }, {"QUR-003": roles})
     item = make_item(primary_topic="comparison", candidate_id="comparison-A-r1-0001", secondary_tags=[],
                      question="어느 쪽이 더 큰가?", structure={"entities": entities, "values": values, "choice": entities[1]})
-    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "requirement_ids": ["QUR-003"]}]
+    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": "c-QUR-003", "requirement_ids": ["QUR-003"]}]
     text = record.format("QUR-003", "품질 요구사항", "품질 요구사항", "필수") + "\n" + DETAILS
-    storage.write_run("comparison", "A", "r1", [item], info=planned_item(item, text))
-    reason = rule_reason(item, [{"text": text, "ref": {"location": {"kind": "table", "row": 1}}}])
+    storage.write_run("comparison", "A", "r1", [item], info=planned_item(item, text, roles))
+    reason = rule_reason(item, [{"text": text, "ref": item["evidence"][0], "roles": roles}])
     assert (reason and improvement.failure_code(reason)) == code
 
 
@@ -311,6 +314,7 @@ def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits,
     ("validator_version_7", ["thresholds"]),
     ("validator_version_8", ["thresholds"]),
     ("validator_version_9", ["thresholds"]),
+    ("validator_version_10", ["thresholds"]),
 ])
 def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, monkeypatch, change, changed):
     # 이어 돌면서 한도 · 계획 · 검증 기준이 바뀌면 한 loop 의 round 들이 서로 다른 조건으로 돌고 report 가 그것을 숨긴다.
@@ -540,16 +544,16 @@ def test_a_rename_reissues_releases_under_current_names_without_screening(looped
     assert manifest["runs"] == ["A/l1-r1"]
 
 
-def planned_item(item, text):
+def planned_item(item, text, roles=None):
     """규칙 검사가 읽을 고정 계획을 쓰고 run 의 생성 정보를 돌려준다."""
     plan_path = storage.OUTPUTS / "plans" / f"p-{item['run_id']}.json"
     plan_path.parent.mkdir(exist_ok=True)
     plan_path.write_text(json.dumps({"evidence_run": "ev1", "bundles": [{"bundle_id": item["bundle_id"],
-                                       "units": [{"ref": item["evidence"][0], "text": text}]}]}), encoding="utf-8")
+                                       "units": [{"ref": item["evidence"][0], "text": text, "roles": roles}]}]}), encoding="utf-8")
     return {"plan_id": f"p-{item['run_id']}", "plan_sha256": storage._sha256(plan_path)}
 
 
-def released_under(version, agency, run_id, make_item, text="사업 예산은 1억 3천만원이다", **overrides):
+def released_under(version, agency, run_id, make_item, text="사업 예산은 1억 3천만원이다", roles=None, chunk_id=None, **overrides):
     """가기관 문서의 같은 예산 질문을 run 마다 다른 근거 묶음 · 계획으로 등록하고, agency 이름을 붙여 출시한다.
 
     계획의 근거 단위 본문은 text 다. 다시 낼 때 규칙 검사가 이 본문을 읽는다.
@@ -557,19 +561,21 @@ def released_under(version, agency, run_id, make_item, text="사업 예산은 1�
     item = make_item(**{"candidate_id": f"numeric-A-{run_id}-0001", "run_id": run_id, "bundle_id": f"b-{run_id}",
                         "question": with_document("사업 예산은 얼마인가?", {"agency": agency, "title": "가사업 구축"}),
                         **overrides})
-    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": f"c-{run_id}"}]
+    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": chunk_id or f"c-{run_id}"}]
     topic = item["primary_topic"]
     accepted = transition(item, "auto_validated", "통과", validator_version="val-0.1", difficulty="easy")
-    storage.write_run(topic, "A", run_id, [accepted], info=planned_item(item, text))
+    storage.write_run(topic, "A", run_id, [accepted], info=planned_item(item, text, roles))
     return storage.write_release(topic, version, [transition(accepted, "released", "출시")], [("A", run_id)])
 
 
 def test_a_rename_drops_what_a_newer_rule_rules_out_and_records_it_as_a_failure(evidence_run, make_item):
     # 칸 비교 규칙은 비교 문항을 출시한 뒤에 생겼다. 판정 없이 다시 낸 출시본에 그 문항이 남으면 규칙이 없는 것과 같다.
+    roles = {"fields": ["요구사항분류", "응낙수준"], "entities": []}
     write_requirements(evidence_run, "1" * 64, {rid: f"요구사항 분류 | {kind} | 응낙수준 | 필수"
-                                                for rid, kind in (("SFR-001", "품질 요구사항"), ("SER-001", "보안 요구사항"))})
+                                                for rid, kind in (("SFR-001", "품질 요구사항"), ("SER-001", "보안 요구사항"))},
+                       {"SFR-001": roles})
     released_under("v1", "가기관", "r1", make_item, text="요구사항 분류 | 품질 요구사항 | 응낙수준 | 필수",
-                   candidate_id="comparison-A-r1-0001", primary_topic="comparison", secondary_tags=[],
+                   candidate_id="comparison-A-r1-0001", primary_topic="comparison", secondary_tags=[], roles=roles, chunk_id="c-SFR-001",
                    structure={"entities": ["요구사항 분류", "응낙수준"],
                               "values": {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "choice": "응낙수준"})
 

@@ -41,6 +41,7 @@ FAILURE_CODES = (
     ("답 덧붙임", "answer_dump"),
     ("비교 아님", "invalid_comparison"),
     ("칸 비교", "invalid_comparison"),
+    ("비교 역할 미확정", "invalid_comparison"),
     ("판정기 출력 오류", "validator_output"),
     ("대상 문서에 있음", "present_in_target"),
     ("전제가 문서에 있음", "premise_in_document"),

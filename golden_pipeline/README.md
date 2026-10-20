@@ -380,7 +380,7 @@ validate(topic, method, run_id, config_path, client)
 | 순서 | 검사 | 걸리면 |
 |---|---|---|
 | 1 | 주제 구조 (`check_structure`, 생성과 같은 검사) | `rejected` `유형 불일치` |
-| 1 | 규칙 검사 (`rule_reason`, 아래 출시에서도 다시 봄): 답은 맞지만 평가에 쓸 수 없던 꼴. 대상을 이름으로 밝히지 않은 numeric 질문의 `값과 단위` · `수치와 단위` · `첫 번째 값`, table 질문의 줄바꿈, 인용한 표 행·머리글의 빈 칸(빈 칸으로 시작하거나 이어짐), condition 답의 `(조건:` 덧붙임, comparison 의 `choice` 없음 (1 이 먼저 막지만 그 전에 검증한 run 을 출시할 때 걸림), 요구사항 표 근거에서 견주는 대상마다 `대상 \| 값` 이 이웃한 칸이고 대상 중 하나가 그 문서 요구사항 양식의 칸 이름인 comparison (요구사항 분류 · 응낙수준처럼 한 요구사항의 칸 이름끼리 견줌. 칸 이름은 그 문서 요구사항 기록의 절반 이상 · 두 기록 이상에 왼쪽 칸으로 되풀이되는 글이거나, 요구사항 ID 를 값으로 둔 행의 이름 · 값 쌍에서 읽은 이름입니다. ID 행은 기록이 하나뿐이어도 적용합니다. 그 밖에 기록 하나에만 나오는 `실명 인증 \| 3초` · `로그인 \| 1초` 같은 세부 표는 값의 종류와 상관없이 통과), multi_hop 근거가 모두 한 청크, unanswerable 질문의 근거 라벨(`E1` · `머리글 행`, 생성기가 다른 문서 묶음의 라벨을 옮겨 적음), numeric · false_premise 가 인용한 표가 배점표(머리글에 `배점`)인데 질문에 배점 · 점수 · 평가 같은 말이 없음(배점 기준값 `5건 이상 \| 10` 을 제출 요건처럼 물음). 무료 검사는 호출 한도 확인 전에 모든 후보에 적용하고, 검증 도중 새로 확인된 중복도 한도 종료 뒤 거절로 남깁니다 | `rejected` `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `칸 비교` · `multi_hop 아님` · `근거 지칭` · `배점 기준` |
+| 1 | `rule_reason`, also checked at release and rename: ambiguous numeric targets; broken table questions or blank cited cells; appended condition answers; comparisons without a choice; requirement comparisons involving source-declared fields or names without confirmed entity roles (see the role contract below); multi_hop evidence from one chunk; unanswerable questions naming evidence labels; numeric/false_premise questions presenting scoring-table values as requirements. Free rules run before call limits, including duplicates discovered during validation. | `rejected`: `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `칸 비교` · `비교 역할 미확정` · `multi_hop 아님` · `근거 지칭` · `배점 기준` |
 | 2 | 표: 인용한 표에서 행 이름 · 열 이름이 만나는 칸의 값이 답에 있음 | `rejected` `표 관계` |
 | 2 | 조건: 구조의 조건 · 예외 문구가 답에 있음 | `rejected` `조건 · 예외 누락` |
 | 2 | unanswerable: `key_terms` 가 묻는 문서 B 의 어느 근거 단위에도 없음 (공백 · 쉼표 무시) | `rejected` `대상 문서에 있음` |
@@ -433,23 +433,43 @@ unanswerable · false_premise 의 2번 검사는 근거 묶음이 아니라 질�
 - 수가 없는 답은 공백 · 쉼표만 지우고 글자로 맞추고, 글자가 다르면 표현만 다를 수 있어 판정기가 정합니다.
   조건 · 예외 문구 비교는 글자로 맞춥니다.
 
-칸 이름을 읽기 전에 후보의 생성 run → 고정 계획 → 근거 어댑터 run 을 따라가,
-현재 `corpus/chunks.jsonl` 이 그 어댑터의 `pinned_sha256` 과 같은지 확인합니다.
-본문이나 requirement 연결이 바뀌면 검증 · 출시 · rename 모두 판정과 기록 전에 멈춥니다.
-칸 이름 캐시는 청크 SHA 를 키에 넣으며, 캐시를 쓰기 전에도 해시를 확인합니다.
-rename 의 기관 이름 갱신은 현재 `data/data_list.csv` 를 읽는 기존 동작을 유지합니다.
+Requirement comparisons use explicit roles authored by the trusted source-package owner.
+Each annotated record in `corpus/chunks.jsonl` carries `roles` with exactly two lists:
 
-반복과 ID 행 검사에 더해, 표준 양식 칸 이름은 `STANDARD_REQUIREMENT_FIELDS` 와 정확히 맞춥니다.
-따라서 요구사항이 하나뿐이고 `분류 | 기능 요구사항`, `응낙수준 | 필수` 가 ID 행과 다른 행에 있어도 칸 비교를 거절합니다.
-공백은 지우지만 `요구사항` 접두만으로 이름을 넓혀 맞추지 않습니다. `요구사항 A` · `요구사항 B` 같은 대상과
-세부 표의 기능 이름은 이 목록에 들지 않습니다. 새로운 양식 이름은 기존 반복 · ID 행 검사로 배우거나 정확한 이름을 목록에 추가해야 합니다.
+```json
+{"roles": {"fields": ["고유번호", "요구분류", "결과물"], "entities": ["실명 인증", "로그인"]}}
+```
 
-연구 문서가 명시한 다른 양식 이름인 `요구사항명` · `상세설명` · `제약사항` · `수용여부` · `비고` 도 정확히 맞춥니다.
-이 목록은 임의의 새 이름을 모두 판별하는 규칙이 아닙니다. 입력에 칸 역할 표시가 없으면 처음 보는 단일 기록의 이름과
-세부 표의 대상은 같은 `이름 | 값` 구조일 수 있으므로, 아직 배우거나 등록하지 않은 이름까지 판별한다고 보장하지 않습니다.
+This is a synthetic schema example. `fields` identifies requirement form labels, and `entities`
+identifies subjects that may be compared. Each name must occur in that chunk's body.
+Whitespace is removed before matching; empty names, duplicates and names assigned both roles are invalid.
+The pipeline checks this contract but does not certify the source owner's semantic annotations.
+It infers neither role from a finite vocabulary, repeated rows, requirement IDs, nor value types.
 
-검증기 버전은 `validation-10` 입니다. `validation-7` · `validation-8` · `validation-9` 로 시작한
-B · C 검증과 A loop 는 그대로 재개할 수 없습니다. 같은 run 에 서로 다른 기준을 섞지 않도록 새 run 을 만듭니다.
+The evidence adapter copies normalized roles into `units.jsonl`. The planner checks them against
+the pinned source and preserves them in plan units. New comparison plans exclude requirement chunks
+without roles before attaching table headers. Other topics may still use unannotated chunks.
+When any cited reference has a requirement ID, validation, release and rename require roles on
+every cited unit. A requested name marked as a field is rejected as `칸 비교`; missing annotations
+or a name absent from the entity annotations are rejected as `비교 역할 미확정`, before API calls.
+Both reasons map to `invalid_comparison` in A's failure memory. Only names explicitly marked as
+entities proceed to the existing independent answer checks. Uncited headers cannot authorize names.
+Comparisons citing no requirement IDs retain their existing behavior.
+
+Before reading roles, each consumer follows the generation run → pinned plan → evidence run and
+checks `corpus/chunks.jsonl` against the evidence run's SHA-256. It also compares cited plan roles
+with the source roles. Changes to bodies, requirement links or annotations stop processing before
+judgments, calls or output writes. The role cache includes the chunk hash, which is checked even
+on cache hits. Rename still reads the current `data/data_list.csv` for updated organization names.
+
+To use requirement comparisons from an old package, its owner must prepare a new package with
+trusted annotations and updated manifest hashes, then create a new evidence run, plan and generation
+run. Existing outputs are not rewritten. Legacy unannotated requirement comparisons are rejected
+when validated or rechecked by release/rename. This change includes no dataset migration or paid
+annotation calls; the producer-to-consumer contract is tested with synthetic source packages.
+
+The validator version is `validation-11`. B/C validation and A loops started with versions 7–10
+must use new runs, preventing old and new criteria from being mixed within a run.
 
 거절은 끝 상태라 사람이 되돌릴 수 없습니다.
 

@@ -33,6 +33,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
     pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
     _check_package(package, pinned)
     units = [unit for unit in eligible_units(run_dir) if not _is_toc(unit["text"])]
+    evidence.check_unit_roles(units, evidence.role_annotations(package, pinned[evidence.CHUNKS]))
     names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
     specs = {topic: topic_spec(topic) for topic in TOPICS if topic in counts}
@@ -90,7 +91,7 @@ def eligible_units(run_dir):
     }
     return [
         {"unit_id": unit["unit_id"], "ref": {name: unit[name] for name in EVIDENCE_FIELDS}, "text": unit["text"],
-         "titled": unit["titled"]}
+         "titled": unit["titled"], "roles": unit.get("roles")}
         for unit in evidence._iter_jsonl(run_dir / "units.jsonl")
         if unit["unit_id"] in eligible and unit["text"].strip()
     ]
@@ -166,6 +167,8 @@ def _check_package(package, pinned):
 
 def _groups(topic, spec, units, used, max_context_chars, names):
     """문서마다 주제에 맞는 단위를 패키지 순서대로 bundle_units 개씩 묶는다. 컨텍스트가 한도를 넘는 묶음은 버린다."""
+    if topic == "comparison":
+        units = [unit for unit in units if not unit["ref"]["requirement_ids"] or unit.get("roles") is not None]
     # 다른 주제가 이미 가진 머리글 행은 붙이지 않는다. 그 표의 나머지 행은 묶음이 되지 못한다.
     headers = {unit["ref"]["element_id"]: unit for unit in units if _table_row(unit) == 0 and unit["unit_id"] not in used}
     pattern = re.compile(spec["pattern"]) if spec["pattern"] else None

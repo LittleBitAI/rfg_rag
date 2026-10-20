@@ -19,7 +19,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-10"
+VALIDATOR_VERSION = "validation-11"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -43,15 +43,6 @@ BLANK_CELL = re.compile(r"(^|\n) *\||\| *\|")
 EVIDENCE_LABEL = re.compile(r"(?<![A-Za-z])E\d+(?!\d)|머리글 행")
 # 배점표의 값을 배점 · 평가 기준으로 묻는 질문의 낱말 (공백을 지운 질문에서 찾는다).
 SCORING_WORDS = re.compile(r"배점|점수|평가|\d+점|만점|득점|감점|가점")
-# 한 문서 요구사항 기록 중 이 몫 이상(두 기록 이상)에서 '칸 | 값' 의 왼쪽 칸으로 되풀이되면 양식의 칸 이름이다.
-# 패키지에서 왼쪽 칸은 기록 하나에만 나오는 것과 거의 모든 기록에 나오는 것으로 갈려, 몫을 0.3 으로 낮춰도 거르는 문항이 같았다.
-LABEL_SHARE = 0.5
-# 단일 기록은 반복으로 칸 이름을 배울 수 없다. 표준 양식 이름만 정확히 맞추고 '요구사항 A' 같은 대상 이름은 포함하지 않는다.
-STANDARD_REQUIREMENT_FIELDS = {
-    "고유번호", "명칭", "분류", "정의", "세부내용", "응낙수준", "산출정보",
-    "요구사항고유번호", "요구사항명칭", "요구사항분류", "요구사항정의", "요구사항세부내용",
-    "요구사항명", "상세설명", "제약사항", "수용여부", "비고",
-}
 # unanswerable 검증기에 한 번에 주는 대상 문서의 글자 수. 문서(중앙 6만 6천 자, 가장 긴 것 20만 자)를 몇 번에 나눠 모두 읽힌다.
 DOCUMENT_BATCH_CHARS = 60_000
 # 새 묶음 앞에 다시 주는 앞 묶음 끝의 글자 수. 표 밖의 소제목('A시스템')과 그 아래 글이 경계로 갈리지 않게 한다.
@@ -665,36 +656,29 @@ def _comparison_rule(item, units):
     # 생성 검사도 choice 를 요구하지만, 그 전에 검증한 run 을 출시할 때 여기서 걸러진다.
     if item["structure"].get("choice") is None:
         return "비교 아님: 대상 하나를 고르지 않아 값을 나란히 조회할 뿐입니다"
-    if _field_comparison(item, units):
-        return "칸 비교: 요구사항 표의 서로 다른 칸 이름(고유번호 · 명칭 · 분류 등)을 대상으로 견줍니다"
+    return _comparison_role_reason(item, units)
+
+
+def _comparison_role_reason(item, units):
+    """Requirement comparisons need source-declared entities; reject fields and unknown roles."""
+    if not any(ref["requirement_ids"] for ref in item["evidence"]):
+        return None
+    cited = [unit for unit in units if unit["ref"] in item["evidence"]]
+    evidence.check_unit_roles(cited, _pinned_roles(item))
+    if not cited or any(unit.get("roles") is None for unit in cited):
+        return "비교 역할 미확정: 인용 근거의 원문에 칸·대상 역할이 없습니다. 역할을 표시한 새 근거와 계획을 만드세요"
+    names = {re.sub(r"\s", "", name) for name in item["structure"]["entities"]}
+    fields = {name for unit in cited for name in unit["roles"]["fields"]}
+    if names & fields:
+        return "칸 비교: 비교 대상이 고정 원문에서 요구사항의 칸으로 표시되었습니다"
+    entities = {name for unit in cited for name in unit["roles"]["entities"]}
+    if not names <= entities:
+        return "비교 역할 미확정: 비교 이름 중 고정 원문에서 대상으로 표시하지 않은 이름이 있습니다"
     return None
 
 
-def _field_comparison(item, units):
-    """요구사항 표의 근거에서 대상마다 '대상 | 값' 이 이웃한 칸이고, 대상 중 하나가 그 문서 요구사항 양식의 칸 이름이면 참.
-
-    요구사항 표는 '요구사항 고유번호 | SFR-001' 처럼 칸 이름과 값이 이웃한다. 이런 질문(분류와 명칭 중 어느 쪽이 '필수'인가)은
-    RFP 를 읽는 사람이 묻지 않는데, 값은 근거와 맞아 검증을 통과한다.
-    요구사항에 딸린 세부 표('실명 인증 | 3초')도 대상과 값이 이웃하므로, 대상이 양식의 칸 이름인지 문서에서 센다 (_form_labels).
-    """
-    if not all(ref["requirement_ids"] for ref in item["evidence"]):
-        return False
-    pairs = set()
-    for unit in units:
-        # v12 청크는 한 줄이 한 행이고, v11 행은 칸 안에 줄바꿈이 있을 수 있어 두 방식으로 모두 칸을 나눈다.
-        for row in [unit["text"], *unit["text"].splitlines()]:
-            cells = [re.sub(r"\s", "", cell) for cell in row.split("|")]
-            pairs.update(zip(cells, cells[1:]))
-    values, names = item["structure"]["values"], [re.sub(r"\s", "", name) for name in item["structure"]["entities"]]
-    if not all((name, re.sub(r"\s", "", str(values.get(entity, "")))) in pairs
-               for name, entity in zip(names, item["structure"]["entities"])):
-        return False
-    labels = _pinned_form_labels(item).get(item["evidence"][0]["doc_sha"], set())
-    return any(name in labels for name in names)
-
-
-def _pinned_form_labels(item):
-    """생성 run 의 계획과 근거 어댑터가 고정한 청크에서만 칸 이름을 센다. 캐시를 써도 해시는 먼저 확인한다."""
+def _pinned_roles(item):
+    """Follow generation provenance and verify the source hash before using cached roles."""
     run_dir = storage.run_path(item["primary_topic"], item["method"], item["run_id"])
     generated = storage._read_json(run_dir / "manifest.json")["generation"]
     planned, sha = plan.load_plan(generated["plan_id"])
@@ -704,41 +688,7 @@ def _pinned_form_labels(item):
     pinned = storage._read_json(evidence_dir / "manifest.json")["pinned_sha256"]
     # rename 은 현재 기관 이름을 써야 하므로 이름 파일이 아니라 판정에 쓰는 청크의 해시만 확인한다.
     plan._check_package(evidence.PACKAGE, {evidence.CHUNKS: pinned[evidence.CHUNKS]})
-    return _form_labels(evidence.PACKAGE, pinned[evidence.CHUNKS])
-
-
-@lru_cache(maxsize=1)
-def _form_labels(package, chunks_sha):
-    """문서 SHA → 그 문서 요구사항 양식의 칸 이름 (공백을 지운 글). 패키지 청크에서 센다.
-
-    칸 이름은 양식의 글이라 한 문서의 요구사항 기록 대부분에서 '칸 | 값' 의 왼쪽 칸으로 되풀이된다 (고유번호 · 명칭 · 분류 …).
-    단일 기록의 다른 행에 있는 칸은 표준 양식 이름으로 확인한다. 요구사항 ID 행의 칸 이름과 반복으로 배운 이름도 유지한다.
-    chunks_sha 는 캐시 키다. 같은 경로에 다른 고정 패키지를 두어도 앞 패키지의 칸 이름을 재사용하지 않는다.
-    """
-    records, cells = defaultdict(set), defaultdict(lambda: defaultdict(set))
-    headers = defaultdict(set)
-    for chunk in evidence._iter_jsonl(package / evidence.CHUNKS):
-        if not chunk["requirement_ids"]:
-            continue
-        records[chunk["doc_id"]].update(chunk["requirement_ids"])
-        headers[chunk["doc_id"]].update(_requirement_header_labels(chunk))
-        for row in chunk["body"].splitlines():
-            for cell in [re.sub(r"\s", "", cell) for cell in row.split("|")][:-1]:
-                cells[chunk["doc_id"]][cell].update(chunk["requirement_ids"])
-    return {doc: headers[doc] | {cell for cell, ids in found.items()
-                               if cell in STANDARD_REQUIREMENT_FIELDS or len(ids) >= max(2, LABEL_SHARE * len(records[doc]))}
-            for doc, found in cells.items()}
-
-
-def _requirement_header_labels(chunk):
-    """요구사항 ID 가 값인 행은 그 요구사항의 양식이다. 같은 행의 이름 · 값 쌍에서 이름만 읽는다."""
-    labels = set()
-    for row in chunk["body"].splitlines():
-        cells = [re.sub(r"\s", "", cell) for cell in row.split("|")]
-        for index, cell in enumerate(cells[1:], 1):
-            if cell in chunk["requirement_ids"]:
-                labels.update(cells[(index - 1) % 2:-1:2])
-    return labels
+    return evidence.role_annotations(evidence.PACKAGE, pinned[evidence.CHUNKS])
 
 
 def _single_unit_verdict(item, units, full, ask, judge):

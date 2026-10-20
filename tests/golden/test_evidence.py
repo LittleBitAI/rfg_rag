@@ -138,3 +138,26 @@ def test_image_evidence_carries_sha_and_scope_and_is_held_without_one(outputs, p
 def test_linked_unit_without_verified_meaning_is_never_eligible():
     unit = {"unit_id": "u", "ids_linked": True, "meaning_verified": False}
     assert evidence.judge(unit, [])["judgment"] == "held"
+
+
+def test_roles_are_copied_from_source_with_whitespace_normalized(outputs, package):
+    chunks = copy.deepcopy(BASE)
+    chunks[1]["body"] = "구분 | A안 | B안\n예산 | 1억 | 2억"
+    chunks[1]["roles"] = {"fields": ["구 분", "예 산"], "entities": ["A 안", "B안"]}
+    _, units, _ = run(package(chunks))
+    assert units["c-table"]["roles"] == {"fields": ["구분", "예산"], "entities": ["A안", "B안"]}
+    assert units["c-text"]["roles"] is None
+
+
+@pytest.mark.parametrize("roles", [
+    "fields", {"fields": []}, {"fields": "예산", "entities": []},
+    {"fields": [3], "entities": []}, {"fields": [" "], "entities": []},
+    {"fields": ["예 산"], "entities": ["예산"]},
+    {"fields": ["예산", "예 산"], "entities": []}, {"fields": ["없는 칸"], "entities": []},
+])
+def test_invalid_roles_stop_before_writing_an_evidence_run(outputs, package, roles):
+    chunks = copy.deepcopy(BASE)
+    chunks[1]["roles"] = roles
+    with pytest.raises(evidence.PackageMismatch, match="roles"):
+        evidence.run("bad-roles", package=package(chunks))
+    assert not (outputs / "outputs/evidence/bad-roles").exists()
