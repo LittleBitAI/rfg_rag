@@ -13,8 +13,10 @@ def write_json(path, value):
 
 
 @pytest.fixture
-def field_run(evidence_run, make_item, tmp_path):
-    text = "고유번호 | QUR-001 | 분류 | 기능 요구사항\n실명 인증 | 3초\n로그인 | 1초"
+def field_run(evidence_run, make_item, tmp_path, request):
+    split_rows = getattr(request, "param", "same_row") == "split_rows"
+    text = ("고유번호 | QUR-001\n분류 | 기능 요구사항\n응낙수준 | 필수" if split_rows
+            else "고유번호 | QUR-001 | 분류 | 기능 요구사항") + "\n실명 인증 | 3초\n로그인 | 1초"
     _write_jsonl(evidence_run / evidence.CHUNKS, [
         {"doc_id": DOC_1, "requirement_ids": ["QUR-001"], "body": text},
     ])
@@ -22,7 +24,9 @@ def field_run(evidence_run, make_item, tmp_path):
     write_json(ev_dir / "manifest.json", {
         "pinned_sha256": {name: storage._sha256(evidence_run / name) for name in evidence.PINNED},
     })
-    structure = {"entities": ["고유번호", "분류"], "values": {"고유번호": "QUR-001", "분류": "기능 요구사항"}, "choice": "분류"}
+    entities = ["분류", "응낙수준"] if split_rows else ["고유번호", "분류"]
+    values = {"고유번호": "QUR-001", "분류": "기능 요구사항", "응낙수준": "필수"}
+    structure = {"entities": entities, "values": {name: values[name] for name in entities}, "choice": entities[-1]}
     item = make_item(candidate_id="comparison-C-c1-0001", primary_topic="comparison", secondary_tags=[],
                      method="C", run_id="c1", structure=structure, answer=generation.comparison_answer(structure))
     item["evidence"] = [{**item["evidence"][0], "doc_sha": DOC_1, "requirement_ids": ["QUR-001"]}]
@@ -41,11 +45,37 @@ def field_run(evidence_run, make_item, tmp_path):
     return item, validation.evidence_units(item, bundle), config, run_dir
 
 
-def test_single_requirement_fields_are_rejected_but_detail_entities_are_not(field_run):
+@pytest.mark.parametrize("field_run", ["same_row", "split_rows"], indirect=True)
+def test_single_requirement_detail_entities_are_not_fields(field_run):
     item, units, _, _ = field_run
-    assert validation.rule_reason(item, units).startswith("칸 비교")
     item["structure"] = {"entities": ["실명 인증", "로그인"], "values": {"실명 인증": "3초", "로그인": "1초"}, "choice": "로그인"}
     assert validation.rule_reason(item, units) is None
+
+
+@pytest.mark.parametrize("field_run", ["same_row", "split_rows"], indirect=True)
+@pytest.mark.parametrize("stage", ["validate", "release", "rename"])
+def test_single_requirement_fields_are_rejected_without_calls_in_every_consumer(field_run, stage):
+    item, _, config, run_dir = field_run
+    if stage != "validate":
+        accepted = transition(item, "auto_validated", "이전 검증 통과", validator_version="validation-8", difficulty="easy")
+        storage.write_validation("comparison", "C", "c1", [accepted], {"pending": [], "calls": []})
+        if stage == "rename":
+            storage.write_release("comparison", "v1", [transition(accepted, "released", "출시")], [("C", "c1")])
+
+    def no_calls(**kwargs):
+        raise AssertionError("칸 비교는 유료 호출 없이 거절해야 합니다")
+
+    if stage == "validate":
+        validation.validate("comparison", "C", "c1", config, no_calls)
+        [rejected] = storage._read_jsonl(run_dir / "rejected.jsonl")
+        assert rejected["state_history"][-1]["reason"].startswith("칸 비교")
+        assert storage._read_jsonl(run_dir / "accepted.jsonl") == []
+    else:
+        released = (validation.release("comparison", "v2", [("C", "c1")], config, no_calls) if stage == "release"
+                    else validation.rename("comparison", "v2", ["v1"]))
+        assert storage._read_jsonl(released / "golden.jsonl") == []
+        [dropped] = storage._read_json(released / "manifest.json")["release"]["dropped"]
+        assert dropped["reason"].startswith("칸 비교")
 
 
 @pytest.mark.parametrize("stage", ["validate", "release", "rename"])

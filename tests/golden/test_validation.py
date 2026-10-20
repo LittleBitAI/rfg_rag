@@ -499,14 +499,15 @@ def test_resume_counts_only_the_calls_a_candidate_has_not_already_settled_agains
 
 
 @pytest.mark.parametrize("method", ["B", "C"])
-def test_resume_refuses_pending_candidates_validated_under_validation_7(config, monkeypatch, tmp_path, method):
+@pytest.mark.parametrize("previous_version", ["validation-7", "validation-8"])
+def test_resume_refuses_pending_candidates_validated_under_previous_versions(config, monkeypatch, tmp_path, method, previous_version):
     current = validation.VALIDATOR_VERSION
     generator = Generator(NUMERIC)
     if method == "B":
         generate(method, "numeric", "p1", "old", config, generator)
     else:
         import_rows(tmp_path, "numeric", [NUMERIC], run_id="old")
-    monkeypatch.setattr(validation, "VALIDATOR_VERSION", "validation-7")
+    monkeypatch.setattr(validation, "VALIDATOR_VERSION", previous_version)
 
     def exhausted(**kwargs):
         raise generation.BudgetExceeded("실험 상한")

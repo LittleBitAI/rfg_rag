@@ -19,7 +19,7 @@ from golden_pipeline import evidence, generation, plan, storage
 from golden_pipeline.generation import _contains, _norm
 from golden_pipeline.state import transition
 
-VALIDATOR_VERSION = "validation-8"
+VALIDATOR_VERSION = "validation-9"
 DIFFICULTY_RULE = (
     "difficulty-2: hard = multi_hop 이고 근거 단위를 하나씩만 준 검증기 답이 모두 독립 답에 못 미침 (근거 둘 이상 필요). "
     "easy = 그 밖에 질문의 내용 형태소(NNG · NNP · SL · SN, 의문사 제외, 앞에 붙인 문서 이름 제외)가 모두 근거 본문에 그대로 있음. "
@@ -46,6 +46,11 @@ SCORING_WORDS = re.compile(r"배점|점수|평가|\d+점|만점|득점|감점|�
 # 한 문서 요구사항 기록 중 이 몫 이상(두 기록 이상)에서 '칸 | 값' 의 왼쪽 칸으로 되풀이되면 양식의 칸 이름이다.
 # 패키지에서 왼쪽 칸은 기록 하나에만 나오는 것과 거의 모든 기록에 나오는 것으로 갈려, 몫을 0.3 으로 낮춰도 거르는 문항이 같았다.
 LABEL_SHARE = 0.5
+# 단일 기록은 반복으로 칸 이름을 배울 수 없다. 표준 양식 이름만 정확히 맞추고 '요구사항 A' 같은 대상 이름은 포함하지 않는다.
+STANDARD_REQUIREMENT_FIELDS = {
+    "고유번호", "명칭", "분류", "정의", "세부내용", "응낙수준", "산출정보",
+    "요구사항고유번호", "요구사항명칭", "요구사항분류", "요구사항정의", "요구사항세부내용",
+}
 # unanswerable 검증기에 한 번에 주는 대상 문서의 글자 수. 문서(중앙 6만 6천 자, 가장 긴 것 20만 자)를 몇 번에 나눠 모두 읽힌다.
 DOCUMENT_BATCH_CHARS = 60_000
 # 새 묶음 앞에 다시 주는 앞 묶음 끝의 글자 수. 표 밖의 소제목('A시스템')과 그 아래 글이 경계로 갈리지 않게 한다.
@@ -706,7 +711,7 @@ def _form_labels(package, chunks_sha):
     """문서 SHA → 그 문서 요구사항 양식의 칸 이름 (공백을 지운 글). 패키지 청크에서 센다.
 
     칸 이름은 양식의 글이라 한 문서의 요구사항 기록 대부분에서 '칸 | 값' 의 왼쪽 칸으로 되풀이된다 (고유번호 · 명칭 · 분류 …).
-    세부 표의 대상과 요구사항 이름은 기록 하나에만 나온다. 단일 기록에서도 요구사항 ID 를 값으로 둔 행의 칸 이름은 확인할 수 있다.
+    단일 기록의 다른 행에 있는 칸은 표준 양식 이름으로 확인한다. 요구사항 ID 행의 칸 이름과 반복으로 배운 이름도 유지한다.
     chunks_sha 는 캐시 키다. 같은 경로에 다른 고정 패키지를 두어도 앞 패키지의 칸 이름을 재사용하지 않는다.
     """
     records, cells = defaultdict(set), defaultdict(lambda: defaultdict(set))
@@ -719,7 +724,8 @@ def _form_labels(package, chunks_sha):
         for row in chunk["body"].splitlines():
             for cell in [re.sub(r"\s", "", cell) for cell in row.split("|")][:-1]:
                 cells[chunk["doc_id"]][cell].update(chunk["requirement_ids"])
-    return {doc: headers[doc] | {cell for cell, ids in found.items() if len(ids) >= max(2, LABEL_SHARE * len(records[doc]))}
+    return {doc: headers[doc] | {cell for cell, ids in found.items()
+                               if cell in STANDARD_REQUIREMENT_FIELDS or len(ids) >= max(2, LABEL_SHARE * len(records[doc]))}
             for doc, found in cells.items()}
 
 

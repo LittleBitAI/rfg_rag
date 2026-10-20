@@ -308,13 +308,14 @@ def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits,
     ("config", ["config"]),
     ("plan", ["plan_id", "plan_sha256"]),
     ("validator_prompt", ["thresholds"]),
-    ("validator_version", ["thresholds"]),
+    ("validator_version_7", ["thresholds"]),
+    ("validator_version_8", ["thresholds"]),
 ])
 def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, monkeypatch, change, changed):
     # 이어 돌면서 한도 · 계획 · 검증 기준이 바뀌면 한 loop 의 round 들이 서로 다른 조건으로 돌고 report 가 그것을 숨긴다.
     current = validation.VALIDATOR_VERSION
-    if change == "validator_version":
-        monkeypatch.setattr(validation, "VALIDATOR_VERSION", "validation-7")
+    if change.startswith("validator_version_"):
+        monkeypatch.setattr(validation, "VALIDATOR_VERSION", f"validation-{change.rsplit('_', 1)[1]}")
     with pytest.raises(ConnectionError):
         improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=3))
     config, plan_id = loop_config(), "p3"
@@ -323,7 +324,7 @@ def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config
     elif change == "plan":
         make_plan("p1", "ev1", {"numeric": 1}, 2000, package=evidence_run)
         plan_id = "p1"
-    elif change == "validator_version":
+    elif change.startswith("validator_version_"):
         monkeypatch.setattr(validation, "VALIDATOR_VERSION", current)
     else:
         prompt = storage.PROMPTS / "validator.txt"
