@@ -104,17 +104,21 @@
   "docs/research/review-golden-abc-seven-topic-comparison-f6-1.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f8-1.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f8-2.md",
+  "docs/research/review-littlebitai-golden-comparison-fields-f1-1.md",
+  "docs/research/review-littlebitai-golden-comparison-fields-f1-2.md",
+  "docs/research/review-littlebitai-golden-comparison-fields-f3-1.md",
+  "docs/research/review-littlebitai-golden-comparison-fields-f3-2.md",
   "docs/research/review-offline-retrieval-seven-model-benchmark-f3-1.md",
   "docs/research/review-offline-retrieval-seven-model-benchmark-f3-2.md",
   "docs/research/review-review-kiwi-bm25-tokenizer-f1-1.md"
  ],
  "counts": {
-  "docs": 36,
+  "docs": 40,
   "linked": 9,
   "read": 0,
-  "orphans": 27,
+  "orphans": 31,
   "pages": 1,
-  "decisions": 56,
-  "injectable_decisions": 12
+  "decisions": 0,
+  "injectable_decisions": 0
  }
 }
