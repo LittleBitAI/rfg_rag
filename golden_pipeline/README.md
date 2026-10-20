@@ -460,8 +460,12 @@ Both reasons map to `invalid_comparison` in A's failure memory. Only names expli
 entities proceed to the existing independent answer checks. Uncited headers cannot authorize names.
 Comparisons citing no requirement IDs retain their existing behavior.
 
-The planner checks package hashes and replays the adapter before copying per-file hashes into
-`plan.pinned_sha256`. This binds saved bodies and judgments to the same source bytes being fixed.
+The shared reader first verifies current files against the package manifest declarations, then
+replays the adapter and compares both complete saved record sequences, including held units.
+The planner also requires the evidence run's complete hash set to equal that verified package
+before copying the verified per-file hashes into `plan.pinned_sha256`. Matching replacements of
+source and adapter records cannot bypass an unchanged package declaration. This binds saved bodies,
+roles and judgments to the same declared source bytes being fixed.
 `eligible_units` and `document_units` both use this verified reader, so whole-document validation
 and absence-batch estimation also reject inconsistent saved adapter output. Replay is local and
 uses the same adapter implementation as evidence generation, without API calls or output writes.
@@ -485,7 +489,7 @@ run. Existing outputs are not rewritten. Legacy unannotated requirement comparis
 when validated or rechecked by release/rename. This change includes no dataset migration or paid
 annotation calls; the producer-to-consumer contract is tested with synthetic source packages.
 
-The validator version is `validation-14`. B/C validation and A loops started with versions 7–13
+The validator version is `validation-15`. B/C validation and A loops started with versions 7–14
 must use new runs, preventing old and new criteria from being mixed within a run.
 
 거절은 끝 상태라 사람이 되돌릴 수 없습니다.

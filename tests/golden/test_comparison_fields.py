@@ -289,3 +289,60 @@ def test_readers_reject_stale_adapter_records_after_both_manifests_are_rewritten
         [unit] = storage._read_json(path)["bundles"][0]["units"]
         assert unit["text"] == chunk["body"]
         assert unit["ref"]["requirement_ids"] == chunk["requirement_ids"]
+
+
+@pytest.mark.parametrize("change", ["body", "roles"])
+@pytest.mark.parametrize("field_run", ["detail_entities"], indirect=True)
+@pytest.mark.parametrize("reader", ["direct", "plan", "eligible", "document", "estimate"])
+def test_matching_adapter_replacements_cannot_bypass_package_declarations(field_run, evidence_run, change, reader):
+    package_manifest = (evidence_run / "manifest.json").read_bytes()
+    [chunk] = storage._read_jsonl(evidence_run / evidence.CHUNKS)
+    chunk[change] = (chunk["body"].replace("3초", "9초") if change == "body" else
+                     {"fields": ["고유번호"], "entities": ["요구분류", "결과물", "실명 인증", "로그인"]})
+    _write_jsonl(evidence_run / evidence.CHUNKS, [chunk])
+    run_dir = storage.OUTPUTS / "evidence/ev-roles"
+    units, judgments, _ = evidence._adapt(evidence_run)
+    for name, rows in (("units.jsonl", units), ("judgments.jsonl", judgments)):
+        _write_jsonl(run_dir / name, rows)
+        assert storage._read_jsonl(run_dir / name) == rows
+    manifest = storage._read_json(run_dir / "manifest.json")
+    manifest["pinned_sha256"][evidence.CHUNKS] = storage._sha256(evidence_run / evidence.CHUNKS)
+    write_json(run_dir / "manifest.json", manifest)
+    assert (evidence_run / "manifest.json").read_bytes() == package_manifest
+    assert json.loads(package_manifest)["files"][evidence.CHUNKS]["sha256"] != manifest["pinned_sha256"][evidence.CHUNKS]
+    before = storage.snapshot(storage.OUTPUTS)
+    read = {
+        "direct": lambda: evidence.read_verified(run_dir, evidence_run),
+        "plan": lambda: plan.make_plan("mixed", "ev-roles", {"comparison": 1}, 2000, package=evidence_run),
+        "eligible": lambda: plan.eligible_units(run_dir),
+        "document": lambda: plan.document_units(run_dir, {DOC_1}),
+        "estimate": lambda: experiment._unanswerable_batches({"evidence_run": "ev-roles", "bundles": [
+            {"topic": "unanswerable", "doc_sha": DOC_1}]}),
+    }
+    with pytest.raises(evidence.PackageMismatch, match=r"corpus/chunks.jsonl SHA-256.*manifest.json"):
+        read[reader]()
+    assert storage.snapshot(storage.OUTPUTS) == before
+    if reader == "plan":
+        manifest = json.loads(package_manifest)
+        manifest["files"][evidence.CHUNKS]["sha256"] = storage._sha256(evidence_run / evidence.CHUNKS)
+        write_json(evidence_run / "manifest.json", manifest)
+        evidence.run("fresh", package=evidence_run)
+        path = plan.make_plan("fresh", "fresh", {"comparison": 1}, 2000, package=evidence_run)
+        planned = storage._read_json(path)
+        [unit] = planned["bundles"][0]["units"]
+        assert planned["pinned_sha256"] == evidence.pin(evidence_run)
+        assert unit["text"] == chunk["body"]
+        assert unit["ref"]["requirement_ids"] == chunk["requirement_ids"]
+        assert unit["roles"] == units[0]["roles"]
+
+
+@pytest.mark.parametrize("missing", evidence.PINNED[1:])
+def test_plan_requires_the_complete_verified_evidence_pin_set(field_run, evidence_run, missing):
+    path = storage.OUTPUTS / "evidence/ev-roles/manifest.json"
+    manifest = storage._read_json(path)
+    del manifest["pinned_sha256"][missing]
+    write_json(path, manifest)
+    before = storage.snapshot(storage.OUTPUTS)
+    with pytest.raises(evidence.PackageMismatch, match="pinned_sha256"):
+        plan.make_plan("incomplete", "ev-roles", {"comparison": 1}, 2000, package=evidence_run)
+    assert storage.snapshot(storage.OUTPUTS) == before

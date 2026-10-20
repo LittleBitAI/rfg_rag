@@ -30,8 +30,7 @@ def make_plan(plan_id, evidence_run, counts, max_context_chars, package=evidence
         raise ValueError(f"counts 는 주제 {TOPICS} 별 양의 정수여야 합니다: {counts}")
     path = storage._child(storage.OUTPUTS / "plans", f"{plan_id}.json")
     run_dir = storage._child(storage.OUTPUTS / "evidence", evidence_run)
-    pinned = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
-    _check_package(package, pinned)
+    pinned = _verified_evidence_pins(run_dir, package)
     units = [unit for unit in eligible_units(run_dir, package) if not _is_toc(unit["text"])]
     names = doc_names(package, {unit["ref"]["doc_sha"] for unit in units})
 
@@ -156,6 +155,15 @@ def doc_names(package, docs):
 def _is_toc(text):
     lines = [line for line in text.splitlines() if line.strip()]
     return len(lines) >= 2 and 2 * sum(bool(TOC_LINE.search(line)) for line in lines) >= len(lines)
+
+
+def _verified_evidence_pins(run_dir, package):
+    """Bind the complete evidence pin set to files verified against package declarations."""
+    pinned = evidence.pin(package)
+    recorded = storage._read_json(run_dir / "manifest.json")["pinned_sha256"]
+    if recorded != pinned:
+        raise evidence.PackageMismatch("근거 run 의 pinned_sha256 이 검증된 패키지의 전체 해시와 다릅니다. 새 근거 run 을 만드세요")
+    return pinned
 
 
 def _check_package(package, pinned):

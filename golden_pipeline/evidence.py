@@ -66,7 +66,8 @@ def _adapt(package):
 
 
 def read_verified(run_dir, package):
-    """Return adapter records only after matching both saved files to a fresh source replay."""
+    """Verify package declarations before matching both saved files to a fresh source replay."""
+    pin(package)
     units, judgments, _ = _adapt(package)
     for name, expected in (("units.jsonl", units), ("judgments.jsonl", judgments)):
         if list(_iter_jsonl(run_dir / name)) != expected:
