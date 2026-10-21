@@ -8,7 +8,7 @@
 | 김민혁 | 기록 · 이슈 · 버그 처리, 발표 자료 제작 | [@minheouk](https://github.com/minheouk) |
 | 이재웅 | Retrieval | [@mitguchin](https://github.com/mitguchin) |
 | 서정철 | Generation | [@SeoJungCheol](https://github.com/SeoJungCheol) |
-| 채윤휘빈센트 | Generation | — |
+| 채윤휘빈센트 | Generation | [@mackievboy](https://github.com/mackievboy) |
 | 김민기 | 평가 및 검증 | [@LittleBitAI](https://github.com/LittleBitAI) |
 
 팀원별 협업일지: [협업일지 (Google 스프레드시트)](https://docs.google.com/spreadsheets/d/1ciom4c4E7GuZnrYYwT71he4cOzB56T89PTy-Kf-rXu4/edit?gid=327834733#gid=327834733)
