@@ -101,20 +101,41 @@ def requirement_names(chunks: list[dict]) -> dict[tuple[str, str], str]:
     return names
 
 
+# 한 줄 표로 읽혀 따로 청크가 된 절 제목: '3 | 구축범위' · 'Ⅰ | 사업 안내' · '[IMAGE] Ⅱ | 구축 방안'
+_HEADING = re.compile(r"(?:\[IMAGE\]\s*)?(?:[0-9]{1,2}|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]{1,3})\.?\s*\|\s*([^|\n]{1,30})")
+
+
+def section_headings(chunks: list[dict]) -> list[str]:
+    """청크마다 같은 문서에서 앞서 나온 가장 가까운 절 제목 청크의 제목. 제목 청크 자신, 섹션이 있는 청크,
+    그 뒤의 청크(다음 제목 청크 전까지)는 빈 글 — 섹션이 있는 청크의 글에는 이미 섹션이 들어 있다."""
+    headings, current = [], {}
+    for chunk in chunks:
+        found = _HEADING.fullmatch(chunk["text"].strip())
+        if found:
+            current[chunk["doc_id"]] = found[1].strip()
+            headings.append("")
+            continue
+        if chunk.get("section"):
+            current.pop(chunk["doc_id"], None)
+        headings.append(current.get(chunk["doc_id"], ""))
+    return headings
+
+
 def search_texts(chunks: list[dict]) -> list[str]:
     """검색(BM25 · 임베딩)이 읽는 청크 글. 요구사항에 속한 청크의 글에 그 요구사항 ID 나 명칭이 없으면
     '[요구사항 TST-901 시험 데이터 보관]' 을 앞에 붙인다 — 전처리에서 ID · 명칭 청크와 상세 내용 청크가
     나뉘어도 상세 내용 청크가 요구사항 ID · 이름으로 찾히게 (요구사항 소속 정보 requirement_key 를 쓴다).
-    답변 근거와 화면에는 원래 글(text · body)을 그대로 쓴다."""
+    절 제목이 따로 청크가 된 문서는 그 절의 청크 앞에 '[구축범위]' 처럼 제목을 붙인다 — 본문 청크에는 제목 낱말이
+    없어 '사업범위' 를 묻는 질문에 찾히지 않았다. 답변 근거와 화면에는 원래 글(text · body)을 그대로 쓴다."""
     names = requirement_names(chunks)
     texts = []
-    for chunk in chunks:
+    for chunk, heading in zip(chunks, section_headings(chunks)):
         key = chunk.get("requirement_key")
         label = [key, names[(chunk["doc_id"], key)]] if key else []
-        if any(part and _squash(part) not in _squash(chunk["text"]) for part in label):
-            texts.append(f"[요구사항 {' '.join(filter(None, label))}]\n{chunk['text']}")
-        else:
-            texts.append(chunk["text"])
+        text = chunk["text"]
+        if any(part and _squash(part) not in _squash(text) for part in label):
+            text = f"[요구사항 {' '.join(filter(None, label))}]\n{text}"
+        texts.append(f"[{heading}]\n{text}" if heading else text)
     return texts
 
 
@@ -257,7 +278,7 @@ def _build_index(chunks, cfg, out_dir, checkpoint_dir):
     build_quantity_index(chunks, embedder, out_dir)
     max_len = int(cfg["embedding"]["max_seq_length"])
     labelled = sum(text != chunk["text"] for text, chunk in zip(texts, chunks))
-    return {"청크": len(chunks), "요구사항 머리말을 붙인 청크": labelled, "벡터 차원": int(vectors.shape[1]),
+    return {"청크": len(chunks), "요구사항 · 절 제목 머리말을 붙인 청크": labelled, "벡터 차원": int(vectors.shape[1]),
             "BM25 토큰": sum(map(len, tokens)),
             "BM25 어휘": len({w for t in tokens for w in t}),
             f"임베딩에서 잘린 청크(>{max_len} 토큰)": sum(n > max_len for n in embedder.token_counts(texts))}
