@@ -41,7 +41,7 @@ def test_rewrite_settings_usage_and_empty_output(monkeypatch, content, details, 
                       "cost_usd": 0.000085, "latency_s": 0.25}
 
 
-def test_rewrite_sends_last_ten_turns_as_chat_messages(monkeypatch):
+def test_rewrite_quotes_last_ten_turns_instead_of_assistant_messages(monkeypatch):
     response = ChatCompletion(
         id="rewrite-test", created=0, model="rewrite-model", object="chat.completion",
         choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "검색용 질문"}}],
@@ -56,10 +56,9 @@ def test_rewrite_sends_last_ten_turns_as_chat_messages(monkeypatch):
     rewrite.rewrite_question("그 사업 예산은?", cfg, history=history)
 
     messages = client.chat.completions.create.call_args.kwargs["messages"]
-    assert messages == ([{"role": "system", "content": rewrite.REWRITE_PROMPT}]
-                        + [message for i in range(2, 12) for message in
-                           [{"role": "user", "content": f"질문 {i}"}, {"role": "assistant", "content": f"답변 {i}"}]]
-                        + [{"role": "user", "content": "그 사업 예산은?"}])
+    turns = "\n\n".join(f"질문: 질문 {i}\n답변: 답변 {i}" for i in range(2, 12))
+    assert messages == [{"role": "system", "content": rewrite.REWRITE_PROMPT},
+                        {"role": "user", "content": f"[이전 대화]\n{turns}\n\n[재작성할 질문]\n그 사업 예산은?"}]
 
 
 @pytest.mark.parametrize("route",[{}, {"A": {"doc-a"}}, {"A": {"doc-a"}, "B": {"doc-b"}}])
