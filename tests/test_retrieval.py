@@ -357,6 +357,18 @@ def test_search_texts_label_detail_chunks_with_their_requirement_id_and_name():
         "일반 본문"]
 
 
+def test_search_texts_label_chunks_under_a_heading_chunk_until_next_heading_or_section():
+    chunks = [{"doc_id": "a", "text": "3 | 구축범위"},
+              {"doc_id": "a", "text": "□ 운영프로그램 개발"},
+              {"doc_id": "a", "text": "◦ 통계관리"},
+              {"doc_id": "b", "text": "다른 문서 본문"},
+              {"doc_id": "a", "text": "[Ⅲ. 첨부자료]\n서식", "section": "Ⅲ. 첨부자료"},
+              {"doc_id": "a", "text": "첨부 뒤 본문"}]
+
+    assert search_texts(chunks) == ["3 | 구축범위", "[구축범위]\n□ 운영프로그램 개발", "[구축범위]\n◦ 통계관리",
+                                    "다른 문서 본문", "[Ⅲ. 첨부자료]\n서식", "첨부 뒤 본문"]
+
+
 def test_index_built_from_other_texts_is_rejected(tmp_path):
     texts = search_texts(_REQUIREMENT_CHUNKS)
     (tmp_path / "texts.sha256").write_text(texts_digest(texts), encoding="utf-8")
