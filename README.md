@@ -30,6 +30,7 @@
 
 - [팀원](#팀원)
 - [프로젝트 소개](#프로젝트-소개)
+- [보고서](#보고서)
 - [빠른 시작](#빠른-시작)
 - [파이프라인](#파이프라인)
 - [질문 화면](#질문-화면)
@@ -39,6 +40,21 @@
 - [개발 규칙](#개발-규칙)
 - [폴더 구조](#폴더-구조)
 - [자세한 문서](#자세한-문서)
+
+## 보고서
+
+파트별 담당자가 작성한 보고서와 발표 자료입니다. 파일은 [docs/reports/](docs/reports/)에 있습니다.
+
+| 파트 | 담당 | 보고서 | 내용 |
+| --- | --- | --- | --- |
+| 전처리 | 황세희 | [RFP EDA · 전처리 보고서](docs/reports/RFP_EDA_Processing_보고서.pdf) | 원본 EDA부터 표 · 이미지 · 문자 정제, 청킹 비교, v12 원문 보존 확인까지 |
+| 전처리 | 황세희 | [EDA 최종 발표 · 회고](docs/reports/EDA_최종발표본_회고.pptx) | 중복 문서 확인, 본문 · 표 중복, 이미지 추출, 요구사항 번호 처리, 회고 |
+| 검색 | 이재웅 | [Retrieval 발표](docs/reports/retrieval_발표.pptx) | 검색 다섯 단계, 하이브리드 검색, 임베딩 모델 선택, 재작성 추론 강도 비교 |
+| 생성 | 서정철 | [Generation 발표](docs/reports/generation_발표자료.pptx) | 답변 생성의 입력 · 처리 흐름 · 모델 설정 |
+| 평가 | 김민기 | [보고서 1 · 평가 방법](docs/reports/rfg_rag_보고서1_평가방법.pdf) | 네 가지 평가와 지표를 정한 방법 |
+| 평가 | 김민기 | [보고서 2 · 평가 데이터셋](docs/reports/rfg_rag_보고서2_평가데이터셋.pdf) | dev · test 평가 데이터셋을 만들고 검증한 과정 |
+| 평가 | 김민기 | [보고서 3 · dev와 test 평가 결과](docs/reports/rfg_rag_보고서3_dev와_test_set으로_rag를_평가한_결과.pdf) | 청킹 · 기관 필터 비교, 최종 정답률 · 응답 시간 · 비용 |
+| 평가 | 김민기 | [보고서 3 · 골든 데이터셋 A·B·C 비교](docs/reports/rfg_rag_보고서3_골든데이터셋_ABC_비교_보고서.pdf) | 골든 데이터셋을 만드는 세 방식을 일곱 주제에서 비교 |
 
 ## 빠른 시작
 
@@ -274,7 +290,7 @@ frontend/                  ⑥ 화면
   start.cmd · start.command  Windows · macOS 실행기
 preprocessing/             전처리 담당자의 EDA · 청킹 비교 · 개선 이력 노트북
 tools/                     paddle_ocr.py (PaddleOCR-VL 별도 환경)
-docs/                      자세한 문서 · 측정 보고서
+docs/                      자세한 문서 · 측정 보고서 · 팀 보고서(reports/)
 tests/                     게이트 (pytest)
 eval/                      무시된 과거 논리 경로 — 실제 입력은 artifacts/local_inputs/
 artifacts/                 (커밋 안 함) 노트북 사이에 주고받는 파일
