@@ -122,7 +122,7 @@ def api_ocr(path: Path, model: str, subject: str, stage: str) -> dict:
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
         ]}])
     seconds = time.perf_counter() - started
-    usage = record_usage("ocr", model, response.usage.model_dump(), cfg["usd_per_1m_tokens"],
+    usage = record_usage("ocr", model, response.usage.model_dump(), cfg["usd_per_1m_tokens"], "",  # 추론 강도를 보내지 않음
                          subject=subject, evaluation=stage)
     return {"engine": model, "text": response.choices[0].message.content or "",
             "seconds": seconds, "finish_reason": response.choices[0].finish_reason, **usage}

@@ -160,7 +160,7 @@ measures multi-evidence completeness. Coverage also requires fully chunk-labelle
 `search()` must keep its return values and order. `search_with_candidates()` adds a read-only
 pre-packing snapshot: chunk_id, doc_id, fused rank, raw dense/BM25 scores and ranks, exact-code
 membership. 04 saves this as `ranked_candidates`, plus `rewrite`, `context_chunk_ids` and
-`retrieval_settings` (dense_weight, candidate_k, token_budget, active chunk_file, k_values,
+`retrieval_settings` (fusion, dense_weight, candidate_k, token_budget, active chunk_file, k_values,
 stored_rewrites_reused). 05 rejects incomplete answers before any paid call.
 `rerun_retrieval` searches dev again using each stored rewritten query, without rewrite,
 generation or judge API calls, and writes the same row format in a separate experiment folder.

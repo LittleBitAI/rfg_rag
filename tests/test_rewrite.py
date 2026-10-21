@@ -41,7 +41,7 @@ def test_rewrite_settings_usage_and_empty_output(monkeypatch, content, details, 
                       "cost_usd": 0.000085, "latency_s": 0.25}
 
 
-def test_rewrite_sends_last_ten_turns_as_chat_messages(monkeypatch):
+def test_rewrite_quotes_last_ten_turns_instead_of_assistant_messages(monkeypatch):
     response = ChatCompletion(
         id="rewrite-test", created=0, model="rewrite-model", object="chat.completion",
         choices=[{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "검색용 질문"}}],
@@ -56,10 +56,9 @@ def test_rewrite_sends_last_ten_turns_as_chat_messages(monkeypatch):
     rewrite.rewrite_question("그 사업 예산은?", cfg, history=history)
 
     messages = client.chat.completions.create.call_args.kwargs["messages"]
-    assert messages == ([{"role": "system", "content": rewrite.REWRITE_PROMPT}]
-                        + [message for i in range(2, 12) for message in
-                           [{"role": "user", "content": f"질문 {i}"}, {"role": "assistant", "content": f"답변 {i}"}]]
-                        + [{"role": "user", "content": "그 사업 예산은?"}])
+    turns = "\n\n".join(f"질문: 질문 {i}\n답변: 답변 {i}" for i in range(2, 12))
+    assert messages == [{"role": "system", "content": rewrite.REWRITE_PROMPT},
+                        {"role": "user", "content": f"[이전 대화]\n{turns}\n\n[재작성할 질문]\n그 사업 예산은?"}]
 
 
 @pytest.mark.parametrize("route",[{}, {"A": {"doc-a"}}, {"A": {"doc-a"}, "B": {"doc-b"}}])
@@ -77,10 +76,13 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
     index.rcfg = {"token_budget": 2500}
     index.chunk_file = "fixture/chunks.jsonl"
     index.chunks = [hit]
+    index.links = [[]]
     index.embedder = MagicMock()
     index.embedder.token_counts.return_value = [1]
     index.router = MagicMock()
     index.router.route.return_value = route
+    index.router.focus.side_effect = lambda query, org, doc_ids: query
+    index.router.prefer.return_value = set()
     index._rank = MagicMock(return_value=ranked([(0, 1.0)]))
     generate_fn = MagicMock(return_value={"answer": "답변", "input_tokens": 100,
                                           "output_tokens": 50, "reasoning_tokens": 20})
@@ -92,8 +94,8 @@ def test_answer_flow_preserves_original_question_without_langfuse_keys(monkeypat
 
     rewrite_fn.assert_called_once_with(item["question"], rewrite_cfg, history=[])
     index.router.route.assert_called_once_with("검색용 질문")
-    expected_calls = ([call("검색용 질문", set(), doc_ids) for doc_ids in route.values()] if len(route) > 1
-                      else [call("검색용 질문", set(), next(iter(route.values()), None))])
+    expected_calls = ([call("검색용 질문", set(), doc_ids, set()) for doc_ids in route.values()] if route
+                      else [call("검색용 질문", set(), None)])
     assert index._rank.call_args_list == expected_calls
     generate_fn.assert_called_once_with(item["question"], [{**hit, "score": 1.0}], llm_cfg, history=[])
     assert row["question"] == item["question"]

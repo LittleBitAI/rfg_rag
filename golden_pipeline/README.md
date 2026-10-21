@@ -49,8 +49,8 @@ Windows 는 `golden_pipeline\golden.cmd`, macOS 는 `golden_pipeline/golden.comm
 | `audit` | B · C run 의 독립 검증. A 는 loop 안에서 검증합니다 | 유료 |
 | `resume` | 끊긴 A loop 잇기, 또는 한도에 닿은 B · C 검증의 pending 후보 검증 | 유료 |
 | `release` | 검증한 run 들을 쓸모 판정을 거쳐 출시본으로 (아래 출시) | 유료 |
-| `rename` | 출시본들을 합쳐 질문 앞 문서 이름만 지금 `data/data_list.csv` 의 이름으로 바꾼 새 출시본으로. 쓸모 판정은 다시 하지 않습니다 | 없음 |
-| `split` | 주제들의 출시본을 문서 단위 dev 30% · test 70% 로, 또는 앞 분할(`--base`)을 그대로 두고 새 주제를 더함 (아래 dev · test 나누기) | 없음 |
+| `rename` | 출시본들을 합쳐 질문 앞 문서 이름만 지금 `data/data_list.csv` 의 이름으로 바꾼 새 출시본으로. 쓸모 판정은 다시 하지 않고, 돈이 들지 않는 규칙 검사(`rule_reason`)는 다시 봐서 걸린 항목을 빼고 실패 기록에 남깁니다 | 없음 |
+| `split` | 주제들의 출시본을 문서 단위 dev 30% · test 70% 로, 또는 앞 분할(`--base`)을 그대로 두고 새 주제를 더하거나 주제를 바꿈(`--replace`) (아래 dev · test 나누기) | 없음 |
 | `report` | A · B · C 비교 보고서 (아래 비교 보고서) | 없음 |
 | `freeze` · `estimate` · `pro-packets` · `review-packets` · `compare` | 비교 실험의 계획 고정, 비용 어림, Pro 프롬프트, 눈가림 검토지, 결과 (`experiment_abc7.md`) | 없음 |
 
@@ -226,7 +226,17 @@ golden_pipeline\golden.cmd evidence <run_id>
 
 이미지 청크는 `image_source.scope` 로 `FULL_VISIBLE_TEXT` → `full_visible_text`, `PARTIAL_REGION(S)` → `partial_region`, 선언이 없으면 `hold` 입니다.
 
-Actual dataset records and evidence remain in ignored local outputs. Aggregate counts, validation rates, cost, and other measurements may be published without the underlying records.
+집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
+
+2026-10-14 실제 v11 실행 결과 (두 사본 SHA 일치):
+
+| 항목 | 값 |
+|---|---|
+| 개수 | 문서 98 · 레코드 23,761 · 요소 26,040 · 청크 18,992 · 검색 입력 청크 18,984 (`manifest.json` 과 같음) |
+| 제외 청크 | 8개, 모두 본문이 `[IMAGE]` 표시뿐 |
+| `artifacts/raw` | 100개 모두 SHA 로 연결 (문서 98개, 두 파일은 다른 파일과 바이트가 같음), 이름만 같은 파일 0 |
+| 근거 단위 | 136,581 (청크 86,995 · 그리드 셀 49,586), `eligible` 64,904 · `held` 71,677 |
+| 이미지 | v11 검증 OCR 12개는 범위 안이라 검증, 범위 선언이 없는 7개(v10 OCR 1 · 이미지 패널 6)는 `hold` |
 
 ## 분포 계획
 
@@ -238,12 +248,17 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 ```
 
 1. 근거 어댑터 run 의 `manifest.json` 에 고정된 파일 SHA-256 과 지금 패키지 파일이 같은지 확인하고, 다르면 멈춥니다.
-2. `judgments.jsonl` 에서 `eligible` 인 단위만 씁니다. `held` 단위는 어떤 묶음에도 들어가지 않습니다.
-   단위 본문은 근거 어댑터가 `units.jsonl` 에 남긴 청크 본문입니다.
+2. Before selecting units, replay the offline adapter against the pinned source package and compare
+   all records in both `units.jsonl` and `judgments.jsonl`. Bodies, references, roles, eligibility flags,
+   reasons, record order and held units must match the producer's current output. Missing, duplicate
+   or changed records stop planning before any plan is written, even if both mutable manifests have
+   been rehashed. Then select only `eligible` units; held units cannot enter bundles.
 3. 주제 순서(`numeric` → `table` → `condition` → `comparison` → `multi_hop` → `unanswerable` → `false_premise`)대로, 주제 명세의 `pattern` · `table_only` 에 맞는 단위를
    문서마다 패키지 순서로 `bundle_units` 개씩 묶습니다. 컨텍스트가 `--max-context-chars` 를 넘는 묶음은 버립니다.
    multi_hop 은 청크 둘 이상에 걸친 묶음만 냅니다 (`_spanning`). 이어진 단위는 대개 한 표의 이웃 행이라
-   같은 청크만 반복 인용하지 않도록 청크 구분을 컨텍스트 라벨에 보존한다.
+   그대로 묶으면 절반 넘게(night 계획 300개 중 162개) 한 청크 안에 들었고, 그 묶음의 후보 431개는 하나도 출시되지 못했습니다.
+   multi_hop 컨텍스트는 라벨 옆에 청크 번호를 보입니다 (`[E3 · 청크 2]`). 번호가 없을 때 생성기는 청크가 다른 근거를 고를 수 없어,
+   청크 둘에 걸친 묶음에서도 round 마다 후보의 절반 넘게 한 청크만 인용했습니다 (계획 `v11-20261015-span`, loop `span1`).
    한 단위는 한 주제의 묶음에만 들어갑니다 (카탈로그가 같은 근거를 두 주제에 두지 않기 때문).
    표 중간 행부터 시작하는 청크가 든 묶음에는 그 표의 머리글 행(논리 표 0행)부터 시작하는 청크를 맨 앞에 붙입니다.
    열 이름 없이는 칸을 가리킬 수 없기 때문입니다. 그 청크가 `eligible` 이 아니거나 앞 주제의 묶음이 이미 가졌으면 그 묶음을 버립니다.
@@ -269,6 +284,7 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | 필드 | 값 |
 |---|---|
 | `evidence_run` · `package_manifest_sha256` | 근거 어댑터 run 과 패키지 `manifest.json` SHA-256 |
+| `pinned_sha256` | Source file hashes copied into the plan at creation; protected by the generation run's plan SHA |
 | `topic_specs` | 주제 명세 파일별 SHA-256. 생성 때 명세가 바뀌었으면 멈춥니다 |
 | `skipped_plans` | 단위를 뺀 앞 계획 id → 그 계획 파일 SHA-256 (없으면 `{}`) |
 | `side` | `--side` 의 `{"split", "part", "manifest_sha256"}`, 주지 않았으면 `null` |
@@ -276,7 +292,16 @@ golden_pipeline\golden.cmd plan <plan_id> <근거 어댑터 run_id> --count nume
 | `counts` · `planned` · `coverage` | 요청 개수, 실제 묶음 수, 주제별 문서 SHA → 묶음 수 |
 | `bundles[]` | `bundle_id`, `topic`, `doc_sha` (질문이 묻는 문서), `doc` (`agency`, `title`), `units[]` (`label` `E1`…, `unit_id`, 근거 참조 `ref`, `text`), `context` |
 
+Experiment freeze selects saved pool bundles and copies the pool's complete `pinned_sha256`
+into both the derived plan and `freeze.json.source`. It never substitutes hashes from the current
+evidence manifest. Missing or incomplete pool pins require a new plan before any freeze outputs
+are written. A later coherent package replacement therefore leaves the frozen provenance tied
+to the original pool snapshot; live evidence consumers check that snapshot before reading files.
+
 `context` 는 `[E1]\n본문\n\n[E2]\n본문` 형식이며 생성기에 이 문자열을 그대로 보냅니다. 문서 이름은 컨텍스트에 넣지 않습니다.
+
+2026-10-14 실제 v11 근거 run(`v11-20261014`)으로 주제마다 20개를 요청한 계획은 약 8초에 만들어졌고,
+다섯 주제 모두 20개 묶음을 서로 다른 문서 20개에서 골랐습니다.
 
 ## 주제 명세
 
@@ -380,7 +405,7 @@ validate(topic, method, run_id, config_path, client)
 | 순서 | 검사 | 걸리면 |
 |---|---|---|
 | 1 | 주제 구조 (`check_structure`, 생성과 같은 검사) | `rejected` `유형 불일치` |
-| 1 | 규칙 검사 (`rule_reason`, 아래 출시에서도 다시 봄): 답은 맞지만 평가에 쓸 수 없던 꼴. 대상을 이름으로 밝히지 않은 numeric 질문의 `값과 단위` · `수치와 단위` · `첫 번째 값`, table 질문의 줄바꿈, 인용한 표 행·머리글의 빈 칸(빈 칸으로 시작하거나 이어짐), condition 답의 `(조건:` 덧붙임, comparison 의 `choice` 없음 (1 이 먼저 막지만 그 전에 검증한 run 을 출시할 때 걸림), multi_hop 근거가 모두 한 청크, unanswerable 질문의 근거 라벨(`E1` · `머리글 행`, 생성기가 다른 문서 묶음의 라벨을 옮겨 적음), numeric · false_premise 가 인용한 표가 배점표(머리글에 `배점`)인데 질문에 배점 · 점수 · 평가 같은 말이 없음(배점 기준값 `5건 이상 \| 10` 을 제출 요건처럼 물음). 무료 검사는 호출 한도 확인 전에 모든 후보에 적용하고, 검증 도중 새로 확인된 중복도 한도 종료 뒤 거절로 남깁니다 | `rejected` `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `multi_hop 아님` · `근거 지칭` · `배점 기준` |
+| 1 | `rule_reason`, also checked at release and rename: ambiguous numeric targets; broken table questions or blank cited cells; appended condition answers; comparisons without a choice; requirement comparisons involving source-declared fields or names without confirmed entity roles (see the role contract below); multi_hop evidence from one chunk; unanswerable questions naming evidence labels; numeric/false_premise questions presenting scoring-table values as requirements. Free rules run before call limits, including duplicates discovered during validation. | `rejected`: `모호한 대상` · `끊긴 질문` · `빈 칸 표` · `답 덧붙임` · `비교 아님` · `칸 비교` · `비교 역할 미확정` · `multi_hop 아님` · `근거 지칭` · `배점 기준` |
 | 2 | 표: 인용한 표에서 행 이름 · 열 이름이 만나는 칸의 값이 답에 있음 | `rejected` `표 관계` |
 | 2 | 조건: 구조의 조건 · 예외 문구가 답에 있음 | `rejected` `조건 · 예외 누락` |
 | 2 | unanswerable: `key_terms` 가 묻는 문서 B 의 어느 근거 단위에도 없음 (공백 · 쉼표 무시) | `rejected` `대상 문서에 있음` |
@@ -432,6 +457,63 @@ unanswerable · false_premise 의 2번 검사는 근거 묶음이 아니라 질�
   대상은 값 앞에서만 읽으므로 `validator.txt` 는 대상을 값 앞에 쓰라고 합니다.
 - 수가 없는 답은 공백 · 쉼표만 지우고 글자로 맞추고, 글자가 다르면 표현만 다를 수 있어 판정기가 정합니다.
   조건 · 예외 문구 비교는 글자로 맞춥니다.
+
+Requirement comparisons use explicit roles authored by the trusted source-package owner.
+Each annotated record in `corpus/chunks.jsonl` carries `roles` with exactly two lists:
+
+```json
+{"roles": {"fields": ["고유번호", "요구분류", "결과물"], "entities": ["실명 인증", "로그인"]}}
+```
+
+This is a synthetic schema example. `fields` identifies requirement form labels, and `entities`
+identifies subjects that may be compared. Each name must occur in that chunk's body.
+Whitespace is removed before matching; empty names, duplicates and names assigned both roles are invalid.
+The pipeline checks this contract but does not certify the source owner's semantic annotations.
+It infers neither role from a finite vocabulary, repeated rows, requirement IDs, nor value types.
+
+The evidence adapter copies normalized roles into `units.jsonl`. The planner checks them against
+the pinned source and preserves them in plan units. New comparison plans exclude requirement chunks
+without roles before attaching table headers. Other topics may still use unannotated chunks.
+When any cited reference has a requirement ID, validation, release and rename require roles on
+every cited unit. A requested name marked as a field is rejected as `칸 비교`; missing annotations
+or a name absent from the entity annotations are rejected as `비교 역할 미확정`, before API calls.
+Both reasons map to `invalid_comparison` in A's failure memory. Only names explicitly marked as
+entities proceed to the existing independent answer checks. Uncited headers cannot authorize names.
+Comparisons citing no requirement IDs retain their existing behavior.
+
+The shared reader first verifies current files against the package manifest declarations, then
+replays the adapter and compares both complete saved record sequences, including held units.
+The planner also requires the evidence run's complete hash set to equal that verified package
+before copying the verified per-file hashes into `plan.pinned_sha256`. Matching replacements of
+source and adapter records cannot bypass an unchanged package declaration. This binds saved bodies,
+roles and judgments to the same declared source bytes being fixed.
+`eligible_units` and `document_units` both use this verified reader, so whole-document validation
+and absence-batch estimation also reject inconsistent saved adapter output. Replay is local and
+uses the same adapter implementation as evidence generation, without API calls or output writes.
+Before reading roles, each consumer verifies the generation run's plan SHA, then checks
+`corpus/chunks.jsonl` against its hash inside that fixed plan. It does not obtain expected hashes
+from the current evidence or package manifests. Updating `data/data_list.csv` and its package-manifest
+declaration therefore allows rename to use current organization names while keeping source chunks fixed.
+Cited plan roles must still match source roles. Changes to bodies, requirement links or annotations
+stop processing before judgments, calls or output writes, including on role-cache hits and even when
+both mutable manifests are rewritten. Whole-document validation and absence-batch cost estimation
+check the plan-pinned chunks, document list and agency CSV before reading current document units.
+Estimation performs this check before document batching or history loading, so coherent package
+and adapter replacements require a new plan to change estimated validation calls and costs.
+
+Plans created before per-file hashes were stored cannot independently prove chunk identity after
+a manifest update. They stop with an instruction to create new evidence/plans/runs; this change
+does not backfill or rewrite old outputs using mutable metadata. The whole-package manifest hash
+remains in the plan as provenance, but role checks do not require the current manifest to match it.
+
+To use requirement comparisons from an old package, its owner must prepare a new package with
+trusted annotations and updated manifest hashes, then create a new evidence run, plan and generation
+run. Existing outputs are not rewritten. Legacy unannotated requirement comparisons are rejected
+when validated or rechecked by release/rename. This change includes no dataset migration or paid
+annotation calls; the producer-to-consumer contract is tested with synthetic source packages.
+
+The validator version is `validation-15`. B/C validation and A loops started with versions 7–14
+must use new runs, preventing old and new criteria from being mixed within a run.
 
 거절은 끝 상태라 사람이 되돌릴 수 없습니다.
 
@@ -603,7 +685,8 @@ unanswerable · false_premise 는 판정기 프롬프트 뒤에 주제 명세의
 출력이 두 번 다 계약을 어기면 쓸모 없다고 봅니다. 빠진 항목은 `candidate_id` · 방식 · `run_id` · 질문 · 코드 · 이유와 함께 매니페스트 `release.dropped` 에,
 판정 설정 · 프롬프트 SHA-256 · 호출 수 · 비용은 `release` 에 남습니다. CLI 는 다른 유료 명령처럼 모델 · 추론 강도 · 단가 · 한도를 받고,
 한도에 닿으면 일부만 판정한 출시본을 만들지 않고 멈춥니다.
-출시 판정의 모델·설정은 계획에 고정하며 실행별 결과는 로컬에 보관한다.
+2026-10-15 실제 표본(비교 40 · 표 30)에서 `low` 는 같은 기준을 들쭉날쭉 적용해, 출시에는 `high` 를 씁니다.
+집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
 
 | 거절 | 이유 |
 |---|---|
@@ -631,6 +714,7 @@ unanswerable · false_premise 는 판정기 프롬프트 뒤에 주제 명세의
 - 새 질문은 그 질문이 묻는 문서가 `B` 에서 간 쪽으로 갑니다. 문서가 쪽을 바꾸면 팀이 dev 로 맞춰 온 설정이 test 문서까지 보게 되기 때문입니다. `B` 에 없는 문서의 질문이 있으면 나누지 않습니다.
 - `B` 의 `dev.jsonl` · `test.jsonl` 이 `B` 매니페스트의 SHA-256 과 다르면 멈춥니다.
 - 매니페스트의 `sources` 는 `B` 의 출처에 더한 주제의 출시본 SHA-256 을 더한 것이고, `base` 에 `B` 와 그 매니페스트의 SHA-256 을 남깁니다.
+- `--replace T` (여러 번 줄 수 있음)는 `B` 에 이미 있는 주제 `T` 를 출시본 `V` 로 바꿉니다. `V` 에 없는 `B` 의 `T` 질문은 빠지고, 남는 질문은 같은 쪽 같은 차례에 `V` 의 레코드(바뀐 문서 이름 포함)로 있으며, `V` 의 새 질문은 위와 같이 문서가 간 쪽 뒤에 붙습니다. 규칙 검사로 뺀 질문을 다시 만들어 채울 때 다른 질문이 쪽을 바꾸지 않게 하려는 것입니다.
 
 ## 비교 보고서
 

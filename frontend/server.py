@@ -1,6 +1,6 @@
 """질문 화면의 API — 04 생성과 같은 설정으로 answer_question 을 감싼다.
 대화 기록은 화면(브라우저 탭)이 갖고 질문마다 보내므로 서버는 대화 상태를 갖지 않는다.
-저장소 최상위에서 실행: .venv\\Scripts\\python -m uvicorn frontend.server:app --port 8765"""
+저장소 최상위에서 실행: .venv\\Scripts\\python -m uvicorn frontend.server:app --port 8767"""
 from __future__ import annotations
 
 import uuid

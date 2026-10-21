@@ -7,7 +7,7 @@ import pytest
 
 from rag.retrieval.benchmark.common import MODEL_IGNORE_PATTERNS, no_network
 from rag.retrieval.benchmark.embedding import LocalEmbedder, cosine_vectors
-from rag.retrieval.benchmark.prepare import evidence_groups, grouped_split
+from rag.retrieval.benchmark.prepare import evidence_groups, grouped_split, remap
 from rag.retrieval.benchmark.search import BenchmarkIndex
 from test_retrieval import make_index
 
@@ -27,6 +27,18 @@ def test_duplicate_and_shared_evidence_groups_never_cross_partitions():
     assert set(ids["tuning"]).isdisjoint(ids["validation"])
     assert set(ids["tuning"] + ids["validation"]) == {str(i) for i in range(5)}
     assert any({"0", "1", "2"} <= set(partition) for partition in ids.values())
+
+
+def test_remap_anchors_short_evidence_with_the_golden_context():
+    anchor = "계약 담당 부서는 정보화사업팀이며 문의처를 함께 적습니다."
+    chunks = [{"chunk_id": cid, "doc_id": "doc", "source_sha256": "doc", "body": body}
+              for cid, body in (("a", anchor + " 180일"), ("b", "다른 사업 180일"))]
+    rows = [{"id": "q", "evidence": [{"doc_sha": "doc", "text": "180일"}]}]
+    dev = {"q": {"context": f"[E1]\n180일\n\n[E2]\n{anchor}", "bundle_id": None}}
+
+    [row] = remap(rows, chunks, dev)
+
+    assert (row["evidence"][0]["chunk_id"], row["evidence"][0]["reason"]) == ("a", None)
 
 
 def test_int8_output_is_cast_before_cosine_normalization():
@@ -77,6 +89,29 @@ def test_model_prompts_adapter_and_batch_one_are_forwarded():
     embedder.encode(["document"])
     assert embedder.model.encode.call_args.kwargs["prompt_name"] == "document"
     assert embedder.model.encode.call_args.kwargs["batch_size"] == 4
+
+
+def test_sparse_preparation_reuses_production_tokens_of_requirement_labelled_chunks(monkeypatch, tmp_path):
+    """상세 내용 청크에 요구사항 머리말이 붙어도 운영 색인과 같은 검색 글로 토큰을 만든다"""
+    import json
+
+    from rag.config import write_jsonl
+    from rag.retrieval.benchmark import run
+    from rag.retrieval.indexing import KiwiTokenizer, search_texts
+
+    chunks = [{"chunk_id": f"c{i}", "doc_id": "d", "text": text, "body": text, "requirement_key": "TST-901"}
+              for i, text in enumerate(["요구사항 고유번호 | TST-901\n요구사항 명칭 | 시험 데이터 보관", "예시 점검 절차"])]
+    write_jsonl(chunks, tmp_path / "out/input/chunks.jsonl")
+    tokenizer = KiwiTokenizer()
+    production = {"tokenizer": tokenizer.fingerprint, "tokens": tokenizer.batch(search_texts(chunks))}
+    (tmp_path / "artifacts/index").mkdir(parents=True)
+    (tmp_path / "artifacts/index/bm25_tokens.json").write_text(json.dumps(production, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(run, "OUT", tmp_path / "out")
+    monkeypatch.setattr(run, "ROOT", tmp_path)
+
+    run.prepare_sparse()
+
+    assert json.loads((tmp_path / "out/kiwi_tokens.json").read_text(encoding="utf-8")) == production
 
 
 def controlled_index():

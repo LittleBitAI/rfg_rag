@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from kiwipiepy import Kiwi
 from langchain_core.embeddings import Embeddings
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from ..config import write_jsonl
 from .quantity_metadata import quantity_rows
@@ -53,6 +53,23 @@ class Embedder(Embeddings):
         return self._st.tokenizer.decode(ids[:max(0, budget)], skip_special_tokens=True)
 
 
+class Reranker:
+    """질문과 청크를 한 입력으로 함께 읽는 크로스 인코더. 로컬(GPU)에서 돌아 API 비용이 없다.
+    임베딩은 질문과 청크를 따로 벡터로 만들어 비교하지만, 리랭커는 둘을 같이 읽어 관련도를 더 정확히 매긴다."""
+
+    def __init__(self, rcfg: dict):
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.batch_size = int(rcfg["batch_size"])
+        self._ce = CrossEncoder(rcfg["model"], device=device, max_length=int(rcfg["max_length"]))
+        if device == "cuda":
+            self._ce.model.half()  # fp16: 메모리 절반, 텐서코어 사용
+
+    def scores(self, query: str, texts: list[str]) -> list[float]:
+        """질문과 각 청크의 관련도 (0~1, 클수록 관련)"""
+        pairs = [(query, text) for text in texts]
+        return self._ce.predict(pairs, batch_size=self.batch_size).tolist()
+
+
 # 형태소 분석으로 쪼개지는 요구사항 코드를 한 토큰으로도 색인한다
 _CODE_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,5})-?(\d{2,4})(?![A-Za-z0-9])")
 
@@ -60,6 +77,71 @@ _CODE_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,5})-?(\d{2,4})(?![A-Za-z0-9]
 def find_codes(text: str) -> set[str]:
     """글 속 요구사항 코드를 'SFR-001' 꼴로 통일한다. 긴 영숫자 식별자의 일부는 코드로 보지 않는다."""
     return {f"{letters.upper()}-{digits}" for letters, digits in _CODE_RE.findall(text)}
+
+
+# 요구사항 표의 명칭 칸: '요구사항 명칭 | 시험 데이터 보관' ·'요구사항명 | …' · 오타 '요사항 명칭 | …'
+_REQUIREMENT_NAME = re.compile(r"(?:요?구?사항\s*)?명\s*칭\s*\|\s*([^\n|]+)|요구사항\s*명\s*\|\s*([^\n|]+)")
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def requirement_names(chunks: list[dict]) -> dict[tuple[str, str], str]:
+    """(문서, 소속 요구사항) → 요구사항 명칭. 전처리 패키지가 같은 요구사항으로 묶은 청크(requirement_key 가 같은 청크)
+    중 명칭 칸이 있는 첫 청크에서 가져온다. 명칭 칸이 있는 청크가 없으면 빈 글"""
+    names: dict[tuple[str, str], str] = {}
+    for chunk in chunks:
+        if not chunk.get("requirement_key"):
+            continue
+        group = (chunk["doc_id"], chunk["requirement_key"])
+        if not names.get(group):
+            found = _REQUIREMENT_NAME.search(chunk["text"])
+            names[group] = (found[1] or found[2]).strip() if found else ""
+    return names
+
+
+# 한 줄 표로 읽혀 따로 청크가 된 절 제목: '3 | 구축범위' · 'Ⅰ | 사업 안내' · '[IMAGE] Ⅱ | 구축 방안'
+_HEADING = re.compile(r"(?:\[IMAGE\]\s*)?(?:[0-9]{1,2}|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]{1,3})\.?\s*\|\s*([^|\n]{1,30})")
+
+
+def section_headings(chunks: list[dict]) -> list[str]:
+    """청크마다 같은 문서에서 앞서 나온 가장 가까운 절 제목 청크의 제목. 제목 청크 자신, 섹션이 있는 청크,
+    그 뒤의 청크(다음 제목 청크 전까지)는 빈 글 — 섹션이 있는 청크의 글에는 이미 섹션이 들어 있다."""
+    headings, current = [], {}
+    for chunk in chunks:
+        found = _HEADING.fullmatch(chunk["text"].strip())
+        if found:
+            current[chunk["doc_id"]] = found[1].strip()
+            headings.append("")
+            continue
+        if chunk.get("section"):
+            current.pop(chunk["doc_id"], None)
+        headings.append(current.get(chunk["doc_id"], ""))
+    return headings
+
+
+def search_texts(chunks: list[dict]) -> list[str]:
+    """검색(BM25 · 임베딩)이 읽는 청크 글. 요구사항에 속한 청크의 글에 그 요구사항 ID 나 명칭이 없으면
+    '[요구사항 TST-901 시험 데이터 보관]' 을 앞에 붙인다 — 전처리에서 ID · 명칭 청크와 상세 내용 청크가
+    나뉘어도 상세 내용 청크가 요구사항 ID · 이름으로 찾히게 (요구사항 소속 정보 requirement_key 를 쓴다).
+    절 제목이 따로 청크가 된 문서는 그 절의 청크 앞에 '[구축범위]' 처럼 제목을 붙인다 — 본문 청크에는 제목 낱말이
+    없어 '사업범위' 를 묻는 질문에 찾히지 않았다. 답변 근거와 화면에는 원래 글(text · body)을 그대로 쓴다."""
+    names = requirement_names(chunks)
+    texts = []
+    for chunk, heading in zip(chunks, section_headings(chunks)):
+        key = chunk.get("requirement_key")
+        label = [key, names[(chunk["doc_id"], key)]] if key else []
+        text = chunk["text"]
+        if any(part and _squash(part) not in _squash(text) for part in label):
+            text = f"[요구사항 {' '.join(filter(None, label))}]\n{text}"
+        texts.append(f"[{heading}]\n{text}" if heading else text)
+    return texts
+
+
+def texts_digest(texts: list[str]) -> str:
+    """색인을 만든 검색 글의 해시 — 검색 때 다시 계산해 색인이 지금 청크와 맞는지 확인한다"""
+    return sha256("\n\x00".join(texts).encode("utf-8")).hexdigest()
 
 
 _USER_WORDS = ("지체 상금", "부가 가치세", "하자 보수", "과업 지시서", "제안 요청서", "기술 협상", "공동 수급")
@@ -121,14 +203,15 @@ class KiwiTokenizer:
         return [self._keep(toks, text) for toks, text in zip(analyzed, texts)]
 
 
-def build_index(chunks: list[dict], cfg: dict, out_dir: Path) -> dict:
-    """Build coupled artifacts privately and restore the old directory if publication fails."""
+def build_index(chunks: list[dict], cfg: dict, out_dir: Path, checkpoint_dir: Path | None = None) -> dict:
+    """Build coupled artifacts privately and restore the old directory if publication fails.
+    checkpoint_dir 를 주면 임베딩을 묶음별로 저장해, 중간에 끊겨도 다시 실행하면 이어서 만든다."""
     out_dir.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix=f".{out_dir.name}-", dir=out_dir.parent) as folder:
         workspace = Path(folder)
         staged = workspace / "next"
         staged.mkdir()
-        result = _build_index(chunks, cfg, staged)
+        result = _build_index(chunks, cfg, staged, checkpoint_dir)
         _publish_index(staged, out_dir, workspace / "previous")
     return result
 
@@ -144,10 +227,46 @@ def _publish_index(staged, out_dir, previous):
         raise
 
 
-def _build_index(chunks, cfg, out_dir):
-    texts = [c["text"] for c in chunks]
+# 임베딩을 이 개수씩 나눠 저장한다 — 끊기면 마지막 묶음 하나만 다시 계산한다
+_PART_SIZE = 1000
+
+
+def _part_file(ckpt_dir: Path, ecfg: dict, texts: list[str]) -> Path:
+    """임베딩 묶음 하나의 저장 파일. 모델 · 최대 길이 · 청크 글이 모두 같을 때만 같은 이름이 되므로,
+    01 을 다시 돌려 청크가 바뀌거나 임베딩 설정을 바꾸면 그 묶음은 새로 계산한다"""
+    key = json.dumps({"model": ecfg["model"], "max_seq_length": int(ecfg["max_seq_length"]), "texts": texts},
+                     ensure_ascii=False)
+    return ckpt_dir / f"{sha256(key.encode('utf-8')).hexdigest()[:16]}.npy"
+
+
+def _embed_with_checkpoint(embedder: Embedder, texts: list[str], ecfg: dict, ckpt_dir: Path) -> np.ndarray:
+    """묶음마다 임베딩을 ckpt_dir 에 저장한다. 다시 실행하면 저장된 묶음은 읽기만 하고 남은 묶음부터 이어서 계산한다.
+    임시 파일에 쓴 뒤 바꿔치기해서, 쓰는 도중 끊겨도 반쯤 쓰인 파일이 남지 않는다."""
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    parts = [texts[i: i + _PART_SIZE] for i in range(0, len(texts), _PART_SIZE)]
+    files = [_part_file(ckpt_dir, ecfg, part) for part in parts]
+    vectors = []
+    for k, (part, file) in enumerate(zip(parts, files), 1):
+        if file.exists():
+            vectors.append(np.load(file))
+            print(f"임베딩 ({k}/{len(parts)}) 청크 {len(part)}개 — 저장된 결과")
+            continue
+        vectors.append(embedder.encode(part, progress=True))
+        tmp = file.with_suffix(".tmp")
+        with open(tmp, "wb") as f:
+            np.save(f, vectors[-1])
+        tmp.replace(file)
+        print(f"임베딩 ({k}/{len(parts)}) 청크 {len(part)}개 — 저장")
+    for stale in set(ckpt_dir.glob("*.npy")) - set(files):  # 예전 청크의 묶음은 지워 디스크가 쌓이지 않게
+        stale.unlink()
+    return np.concatenate(vectors)
+
+
+def _build_index(chunks, cfg, out_dir, checkpoint_dir):
+    texts = search_texts(chunks)
     embedder = Embedder(cfg["embedding"])
-    vectors = embedder.encode(texts, progress=True)
+    vectors = (_embed_with_checkpoint(embedder, texts, cfg["embedding"], checkpoint_dir) if checkpoint_dir
+               else embedder.encode(texts, progress=True))
     index = faiss.IndexFlatIP(vectors.shape[1])
     index.add(vectors)
     faiss.write_index(index, str(out_dir / "faiss.index"))
@@ -155,9 +274,12 @@ def _build_index(chunks, cfg, out_dir):
     tokens = tokenizer.batch(texts)
     payload = {"tokenizer": tokenizer.fingerprint, "tokens": tokens}
     (out_dir / "bm25_tokens.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "texts.sha256").write_text(texts_digest(texts), encoding="utf-8")
     build_quantity_index(chunks, embedder, out_dir)
     max_len = int(cfg["embedding"]["max_seq_length"])
-    return {"청크": len(chunks), "벡터 차원": int(vectors.shape[1]), "BM25 토큰": sum(map(len, tokens)),
+    labelled = sum(text != chunk["text"] for text, chunk in zip(texts, chunks))
+    return {"청크": len(chunks), "요구사항 · 절 제목 머리말을 붙인 청크": labelled, "벡터 차원": int(vectors.shape[1]),
+            "BM25 토큰": sum(map(len, tokens)),
             "BM25 어휘": len({w for t in tokens for w in t}),
             f"임베딩에서 잘린 청크(>{max_len} 토큰)": sum(n > max_len for n in embedder.token_counts(texts))}
 

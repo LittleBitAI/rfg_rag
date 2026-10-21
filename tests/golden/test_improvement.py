@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from golden_pipeline import adoption, evidence, improvement, storage
+from golden_pipeline import adoption, evidence, improvement, storage, validation
 from golden_pipeline.generation import generate, import_c, with_document
 from golden_pipeline.improvement import PREVENTION_RULES, PREVENTION_VERSION, improve, thresholds
 from golden_pipeline.plan import load_plan, make_plan
@@ -219,13 +219,61 @@ def test_an_item_the_release_screen_drops_becomes_a_failure_the_next_loop_can_tr
 def test_shapes_that_pass_validation_but_cannot_be_used_are_ruled_out_with_a_failure_code(topic, field, value, code):
     # 검증은 답이 근거와 맞는지만 봐서 이 꼴은 통과하지만 평가에 쓸 수 없었다. 코드가 없으면 다음 생성이 배우지 못한다.
     item = {"primary_topic": topic, "question": "사업 예산은 얼마인가?", "answer": "1억원",
-            "context": "[E1]\n예산 | 1억원", "evidence": [{"chunk_id": "c1"}, {"chunk_id": "c2"}],
+            "context": "[E1]\n예산 | 1억원",
+            "evidence": [{"chunk_id": "c1", "requirement_ids": []}, {"chunk_id": "c2", "requirement_ids": []}],
             "structure": {"choice": "A안"}}
     units = [{"text": "예산 | 1억원", "ref": {"location": {"kind": "table", "row": 1}}}]
     assert rule_reason(item, units) is None
     if field == "table_text":
         units[0]["text"] = value
     assert improvement.failure_code(rule_reason({**item, field: value}, units)) == code
+
+
+def write_requirements(package, doc, records, roles):
+    """패키지 청크 파일을 records({요구사항 id: 청크 본문}) 로 된 문서 doc 의 요구사항 청크로 쓴다."""
+    (package / evidence.CHUNKS).write_text("".join(
+        json.dumps({"doc_id": doc, "chunk_id": f"c-{rid}", "requirement_ids": [rid], "body": body,
+                    "roles": roles.get(rid)}, ensure_ascii=False) + "\n"
+        for rid, body in records.items()), encoding="utf-8")
+    package_path = package / "manifest.json"
+    manifest = storage._read_json(package_path)
+    manifest["files"][evidence.CHUNKS]["sha256"] = storage._sha256(package / evidence.CHUNKS)
+    package_path.write_text(json.dumps(manifest), encoding="utf-8")
+    path = storage.OUTPUTS / "evidence/ev1/manifest.json"
+    path.write_text(json.dumps({"pinned_sha256": {name: storage._sha256(package / name) for name in evidence.PINNED}}),
+                    encoding="utf-8")
+
+
+DETAILS = ("실명 인증 | 3초\n로그인 | 1초\n실명 인증 | 휴대폰\n로그인 | 아이디\n"
+           "요구사항 A | 3초\n요구사항 B | 5초\n목표경영 | 42\n과제관리 | 103")
+
+
+@pytest.mark.parametrize("entities, values, code", [
+    # 한 요구사항의 칸 이름끼리 견줬다. 값은 근거와 맞아 검증을 통과했지만 RFP 를 읽는 사람은 이렇게 묻지 않는다.
+    (["요구사항 분류", "응낙수준"], {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "invalid_comparison"),
+    # Source roles identify field names after whitespace normalization.
+    (["고유번호", "분    류"], {"고유번호": "QUR-003", "분    류": "품질 요구사항"}, "invalid_comparison"),
+    # Source-declared detail entities stay comparable with numeric or textual values.
+    (["실명 인증", "로그인"], {"실명 인증": "3초", "로그인": "1초"}, None),
+    (["실명 인증", "로그인"], {"실명 인증": "휴대폰", "로그인": "아이디"}, None),
+    (["요구사항 A", "요구사항 B"], {"요구사항 A": "3초", "요구사항 B": "5초"}, None),
+    (["목표경영", "과제관리"], {"목표경영": "42", "과제관리": "103"}, None),
+])
+def test_a_comparison_between_fields_of_one_requirement_is_ruled_out(evidence_run, make_item, entities, values, code):
+    record = "고유번호 | {} | 분    류 | {}\n요구사항 분류 | {} | 응낙수준 | {}"
+    roles = {"fields": ["고유번호", "분류", "요구사항분류", "응낙수준"],
+             "entities": ["실명인증", "로그인", "요구사항A", "요구사항B", "목표경영", "과제관리"]}
+    write_requirements(evidence_run, "1" * 64, {
+        "QUR-003": record.format("QUR-003", "품질 요구사항", "품질 요구사항", "필수") + "\n" + DETAILS,
+        "SER-001": record.format("SER-001", "보안 요구사항", "보안 요구사항", "선택"),
+    }, {"QUR-003": roles})
+    item = make_item(primary_topic="comparison", candidate_id="comparison-A-r1-0001", secondary_tags=[],
+                     question="어느 쪽이 더 큰가?", structure={"entities": entities, "values": values, "choice": entities[1]})
+    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": "c-QUR-003", "requirement_ids": ["QUR-003"]}]
+    text = record.format("QUR-003", "품질 요구사항", "품질 요구사항", "필수") + "\n" + DETAILS
+    storage.write_run("comparison", "A", "r1", [item], info=planned_item(item, text, roles))
+    reason = rule_reason(item, [{"text": text, "ref": item["evidence"][0], "roles": roles}])
+    assert (reason and improvement.failure_code(reason)) == code
 
 
 @pytest.mark.parametrize("topic, question, code", [
@@ -267,9 +315,20 @@ def test_rounds_stop_at_the_configured_bound_and_record_why(loop_config, limits,
     ("config", ["config"]),
     ("plan", ["plan_id", "plan_sha256"]),
     ("validator_prompt", ["thresholds"]),
+    ("validator_version_7", ["thresholds"]),
+    ("validator_version_8", ["thresholds"]),
+    ("validator_version_9", ["thresholds"]),
+    ("validator_version_10", ["thresholds"]),
+    ("validator_version_11", ["thresholds"]),
+    ("validator_version_12", ["thresholds"]),
+    ("validator_version_13", ["thresholds"]),
+    ("validator_version_14", ["thresholds"]),
 ])
-def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, change, changed):
+def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config, evidence_run, monkeypatch, change, changed):
     # 이어 돌면서 한도 · 계획 · 검증 기준이 바뀌면 한 loop 의 round 들이 서로 다른 조건으로 돌고 report 가 그것을 숨긴다.
+    current = validation.VALIDATOR_VERSION
+    if change.startswith("validator_version_"):
+        monkeypatch.setattr(validation, "VALIDATOR_VERSION", f"validation-{change.rsplit('_', 1)[1]}")
     with pytest.raises(ConnectionError):
         improve("numeric", "p3", "l1", loop_config(), Generator(), Validator(crash_on=3))
     config, plan_id = loop_config(), "p3"
@@ -278,6 +337,8 @@ def test_resume_refuses_a_loop_whose_config_plan_or_criteria_changed(loop_config
     elif change == "plan":
         make_plan("p1", "ev1", {"numeric": 1}, 2000, package=evidence_run)
         plan_id = "p1"
+    elif change.startswith("validator_version_"):
+        monkeypatch.setattr(validation, "VALIDATOR_VERSION", current)
     else:
         prompt = storage.PROMPTS / "validator.txt"
         prompt.write_text(prompt.read_text(encoding="utf-8") + "\n바뀐 기준", encoding="utf-8")
@@ -487,18 +548,54 @@ def test_a_rename_reissues_releases_under_current_names_without_screening(looped
     [after] = read_jsonl(renamed / "golden.jsonl")
     assert after == {**before, "question": with_document(BOND["question"], {"agency": "새기관", "title": "나사업 운영"})}
     manifest = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["release"] == {"renamed_from": {"v1": storage._sha256(first / "golden.jsonl")}}
+    assert manifest["release"] == {"renamed_from": {"v1": storage._sha256(first / "golden.jsonl")}, "dropped": []}
     assert manifest["runs"] == ["A/l1-r1"]
 
 
-def released_under(version, agency, run_id, make_item):
-    """가기관 문서의 같은 예산 질문을 run 마다 다른 근거 묶음으로 등록하고, agency 이름을 붙여 출시한다."""
-    item = make_item(candidate_id=f"numeric-A-{run_id}-0001", run_id=run_id, bundle_id=f"b-{run_id}",
-                     question=with_document("사업 예산은 얼마인가?", {"agency": agency, "title": "가사업 구축"}))
-    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": f"c-{run_id}"}]
+def planned_item(item, text, roles=None):
+    """규칙 검사가 읽을 고정 계획을 쓰고 run 의 생성 정보를 돌려준다."""
+    plan_path = storage.OUTPUTS / "plans" / f"p-{item['run_id']}.json"
+    plan_path.parent.mkdir(exist_ok=True)
+    pinned = storage._read_json(storage.OUTPUTS / "evidence/ev1/manifest.json")["pinned_sha256"]
+    plan_path.write_text(json.dumps({"evidence_run": "ev1", "package_manifest_sha256": pinned["manifest.json"],
+                                   "pinned_sha256": pinned,
+                                   "bundles": [{"bundle_id": item["bundle_id"],
+                                       "units": [{"ref": item["evidence"][0], "text": text, "roles": roles}]}]}), encoding="utf-8")
+    return {"plan_id": f"p-{item['run_id']}", "plan_sha256": storage._sha256(plan_path)}
+
+
+def released_under(version, agency, run_id, make_item, text="사업 예산은 1억 3천만원이다", roles=None, chunk_id=None, **overrides):
+    """가기관 문서의 같은 예산 질문을 run 마다 다른 근거 묶음 · 계획으로 등록하고, agency 이름을 붙여 출시한다.
+
+    계획의 근거 단위 본문은 text 다. 다시 낼 때 규칙 검사가 이 본문을 읽는다.
+    """
+    item = make_item(**{"candidate_id": f"numeric-A-{run_id}-0001", "run_id": run_id, "bundle_id": f"b-{run_id}",
+                        "question": with_document("사업 예산은 얼마인가?", {"agency": agency, "title": "가사업 구축"}),
+                        **overrides})
+    item["evidence"] = [{**item["evidence"][0], "doc_sha": "1" * 64, "chunk_id": chunk_id or f"c-{run_id}"}]
+    topic = item["primary_topic"]
     accepted = transition(item, "auto_validated", "통과", validator_version="val-0.1", difficulty="easy")
-    storage.write_run("numeric", "A", run_id, [accepted])
-    return storage.write_release("numeric", version, [transition(accepted, "released", "출시")], [("A", run_id)])
+    storage.write_run(topic, "A", run_id, [accepted], info=planned_item(item, text, roles))
+    return storage.write_release(topic, version, [transition(accepted, "released", "출시")], [("A", run_id)])
+
+
+def test_a_rename_drops_what_a_newer_rule_rules_out_and_records_it_as_a_failure(evidence_run, make_item):
+    # 칸 비교 규칙은 비교 문항을 출시한 뒤에 생겼다. 판정 없이 다시 낸 출시본에 그 문항이 남으면 규칙이 없는 것과 같다.
+    roles = {"fields": ["요구사항분류", "응낙수준"], "entities": []}
+    write_requirements(evidence_run, "1" * 64, {rid: f"요구사항 분류 | {kind} | 응낙수준 | 필수"
+                                                for rid, kind in (("SFR-001", "품질 요구사항"), ("SER-001", "보안 요구사항"))},
+                       {"SFR-001": roles})
+    released_under("v1", "가기관", "r1", make_item, text="요구사항 분류 | 품질 요구사항 | 응낙수준 | 필수",
+                   candidate_id="comparison-A-r1-0001", primary_topic="comparison", secondary_tags=[], roles=roles, chunk_id="c-SFR-001",
+                   structure={"entities": ["요구사항 분류", "응낙수준"],
+                              "values": {"요구사항 분류": "품질 요구사항", "응낙수준": "필수"}, "choice": "응낙수준"})
+
+    renamed = rename("comparison", "v2", ["v1"])
+
+    manifest = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["count"] == 0 and manifest["runs"] == ["A/r1"]
+    assert [row["candidate_id"] for row in manifest["release"]["dropped"]] == ["comparison-A-r1-0001"]
+    assert read_jsonl(improvement.record_screen("comparison", "v2"))[0]["failure_code"] == "invalid_comparison"
 
 
 def test_a_rename_refuses_questions_that_only_become_the_same_under_current_names(evidence_run, make_item):

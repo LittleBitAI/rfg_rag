@@ -264,12 +264,13 @@ def test_bounds_are_not_document_values(index, comparison, space):
                                       "한국정보공사 사업기간 6개월 이내인 사업", "「문서명」 사업에서 사업기간 6개월까지인 사업"])
 def test_agency_and_document_prefix_keep_current_route(index, question):
     index.router.org_docs = {"한국정보공사": {"a"}}
+    index.router.focus = lambda query, org, doc_ids: query
     index._rank.side_effect = None
     index._rank.return_value = [{"index": 0, "score": 1}]
-    index._pack = MagicMock(return_value=[{"existing": True}])
+    index._pack = MagicMock(return_value=[{"chunk_id": "x", "existing": True}])
     index._candidate_snapshot = MagicMock(return_value=())
     hits, _ = index.search_with_candidates("다른 원본", query=question)
-    assert hits == [{"existing": True}]
+    assert hits == [{"chunk_id": "x", "existing": True}]
     assert index._rank.call_args.args[0] == question
 
 
