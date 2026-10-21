@@ -4,7 +4,7 @@ import json
 import pytest
 
 from rag.evaluation.evaluation import _key_fact_ratio
-from rag.validation.validation import load_eval_items
+from rag.validation.validation import check_eval_items, load_eval_items
 
 
 def _release_row(topic: str, answer: str, structure: dict, context: str = "[E1]\n합성 근거") -> dict:
@@ -73,3 +73,12 @@ def test_synthetic_multi_hop_facts_preserve_scoring_regressions(tmp_path, contex
         assert _key_fact_ratio(expected, answer) == _key_fact_ratio(expected, context) == 1
         if len(expected) == 5:
             assert _key_fact_ratio(expected, "합성 보고문") == 0.2
+
+
+def test_multi_hop_without_key_facts_stays_in_eval_set(tmp_path):
+    """핵심 사실이 없으면 Generation 점수만 비고, 검색 · 심판 평가에는 남는다."""
+    row = _release_row("multi_hop", "가상 사업에 매우 특수한 새로운 방식을 적용하여 안정성을 보장한다", {}, "[E1]\n가상 | 합성 저장")
+    path = tmp_path / "dev.jsonl"
+    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    kept, report = check_eval_items(load_eval_items([str(path)]))
+    assert [i["key_facts"] for i in kept] == [[]] and report["점검"].tolist() == ["통과"]

@@ -109,7 +109,7 @@ def _asked_value_in_question(row: dict, field_names: set[str], answer: str, ques
 def _multi_hop_key_facts(row: dict, field_names: set[str]) -> list[str]:
     """정답 글이 언급한 근거 표 칸 값 · 칸 속 글머리 항목 — 05 평가는 사실을 이어진 글자로 찾으므로, 근거 단위마다
     따로 찾을 수 있는 값이어야 근거를 모두 검색했을 때 만점이 된다. 항목 이름과 질문에 이미 있는 값은 뺀다.
-    정답을 바꿔 말해 사실이 정답의 60% 를 못 덮으면 [] — 답의 일부만으로 만점이 나지 않게 점검에서 뺀다.
+    정답을 바꿔 말해 사실이 정답의 60% 를 못 덮으면 [] — 답의 일부만으로 만점이 나지 않게 핵심 사실 점수에서만 뺀다.
     적용 근거와 데이터셋별 관측은 무시된 로컬 보고서에만 보관한다."""
     answer, question = _squash(row["answer"]), _squash(row["question"])
     if _asked_value_in_question(row, field_names, answer, question):
@@ -180,8 +180,6 @@ def _problem(item: dict, questions: set, convs: set) -> str:
         return "후속 질문 — 04 생성은 질문마다 새 대화라 앞 질문의 맥락이 없음"
     if not item["reference"]:
         return "정답(reference) 없음"
-    if not item["key_facts"]:
-        return "핵심 사실(key_facts) 없음"
     return ""
 
 
