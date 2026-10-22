@@ -56,7 +56,7 @@
 | --- | --- | --- | --- |
 | 전처리 | 황세희 | [RFP EDA · 전처리 보고서](docs/reports/RFP_EDA_Processing_보고서.pdf) | 원본 EDA부터 표 · 이미지 · 문자 정제, 청킹 비교, v12 원문 보존 확인까지 |
 | 전처리 | 황세희 | [EDA 최종 발표 · 회고](docs/reports/EDA_최종발표본_회고.pptx) | 중복 문서 확인, 본문 · 표 중복, 이미지 추출, 요구사항 번호 처리, 회고 |
-| 검색 | 이재웅 | docs/reports/Retrieval_이재웅.pdf| 검색 다섯 단계, 하이브리드 검색, 임베딩 모델 선택, 재작성 추론 강도 비교 |
+| 검색 | 이재웅 | [Retrieval 발표](docs/reports/Retrieval_이재웅.pdf)| 검색 다섯 단계, 하이브리드 검색, 임베딩 모델 선택, 재작성 추론 강도 비교 |
 | 생성 | 서정철 | [Generation 발표](docs/reports/generation_발표자료.pptx) | 답변 생성의 입력 · 처리 흐름 · 모델 설정 |
 | 평가 | 김민기 | [보고서 1 · 평가 방법](docs/reports/rfg_rag_보고서1_평가방법.pdf) | 네 가지 평가와 지표를 정한 방법 |
 | 평가 | 김민기 | [보고서 2 · 평가 데이터셋](docs/reports/rfg_rag_보고서2_평가데이터셋.pdf) | dev · test 평가 데이터셋을 만들고 검증한 과정 |
