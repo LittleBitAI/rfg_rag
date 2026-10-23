@@ -1,150 +1,150 @@
-# Review research — F4, cycle 2
+# 리뷰 조사 · F4, 2회차
 
-집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
+집계 결과와 측정 조건은 Git에 보관하고, 실제 질문·정답·근거·OCR 텍스트와 레코드별 내보내기는 Git에서 제외된 로컬 `artifacts/`에 보관합니다.
 
-편집 주의: 실제 자료에서 복사한 질문·답·근거 문구는 제거했다. 아래 합성 예제는 이번 문서 수정을 위해 독립적으로 작성했으며 실제 릴리스의 대체 기록이 아니다. 기존 집계 수치·실험 조건·한계는 당시 기록을 유지한다.
+편집 주의: 실제 자료에서 복사한 질문·답·근거 문구는 지웠습니다. 아래 합성 예제는 이번 문서 수정을 위해 따로 쓴 것이며, 실제 릴리스를 대신하는 기록이 아닙니다. 기존 집계 수치·실험 조건·한계는 당시 기록을 그대로 둡니다.
 
-복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행의 역사적 관측이며 이번 작업에서 재측정한 결과가 아니다.
+복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행에서 관측한 과거 기록이며, 이번 작업에서 다시 측정한 결과가 아닙니다.
 
-Draft research before the fix of review round 4 of PR #48, written 2026-10-15. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #48 리뷰 4회차의 수정 전에 2026-10-15에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-F4(2~4라운드)는 질문이 요구하는 분류 값이 질문의 다른 구절에도 나타난다는 이유로 핵심 사실에서 빠지는 문제다. 당시 379행에서는 필요한 4개 요소 중 3개만 남아 불완전한 답이 1을 받았다. 실제 질문·답·근거 문구와 식별자는 제거하고 S4의 독립 합성 예제로 같은 부분 문자열 문제를 설명한다.
+F4(2~4회차)는 질문이 요구하는 분류 값이 질문의 다른 구절에도 나온다는 이유로 핵심 사실에서 빠지는 문제입니다. 당시 379행에서는 필요한 요소 4개 중 3개만 남아, 불완전한 답이 1을 받았습니다. 실제 질문·답·근거 문구와 식별자는 지우고, S4의 따로 만든 합성 예제로 같은 부분 문자열 문제를 설명합니다.
 
-Trigger: repeat, rounds 3, 4.
+발생: 반복, 3·4회차.
 
-- [P1] [P1] rag/validation/validation.py:89 — Question-word exclusion still removes a requested classification
+- [P1] [P1] rag/validation/validation.py:89 — 질문 단어 제외가 여전히 요청한 분류를 지웁니다
 
-## Failed fixes
+## 실패한 수정
 
-- d763d41 (round 1 fix): 첫 칸을 전부 필드명으로 제외하면서 그 칸에 있던 실제 답 값까지 잃었다. 해당 답 문자열은 게시하지 않는다.
-- 617bc3b (round 2 fix): a first cell counts as a label only if it recurs in 3 or more documents (_field_names). Fixed rows 333/336, but the fact unit was still a whole cell, so a cell the answer quoted only in part was dropped (row 393).
-- 33aeb18 (round 3 fix): 줄·글머리표 분리와 답 커버리지 60% 하한으로 393행을 고쳤다. 하지만 질문 필터(89행)와 긴 값 포함 필터(90행)가 남았고, 커버리지 계산(72~74행)도 필드명·질문 단어를 빼므로 379행의 요청 값 누락을 발견하지 못했다.
-- Pattern across all three: each fix replaced only the filter the reviewer named, and tests/test_eval_items.py pinned only the named rows (270, 333, 335, 336, 362, 379, 393, 348, 387), plus a precision check that every surviving fact is found in its context. Nothing checks across all rows that asked-for values survive. Row 64 of the test even pins the faulty output for row 379 as expected.
+- d763d41(1회차 수정): 첫 칸을 모두 필드명으로 빼면서, 그 칸에 있던 실제 답 값까지 잃었습니다. 해당 답 문자열은 싣지 않습니다.
+- 617bc3b(2회차 수정): 첫 칸이 문서 3개 이상에서 반복될 때만 라벨로 봅니다(_field_names). 333/336행은 고쳤지만 사실의 단위는 여전히 칸 전체여서, 답이 일부만 인용한 칸은 빠졌습니다(393행).
+- 33aeb18(3회차 수정): 줄·글머리표 나누기와 답 덮는 정도 60% 하한으로 393행을 고쳤습니다. 하지만 질문 거르기(89행)와 긴 값 포함 거르기(90행)가 남았고, 덮는 정도 계산(72~74행)도 필드명·질문 단어를 빼므로 379행의 요청 값 누락을 찾지 못했습니다.
+- 세 수정에 공통된 모양: 수정마다 리뷰어가 짚은 거르기만 바꿨고, tests/test_eval_items.py는 짚은 행(270, 333, 335, 336, 362, 379, 393, 348, 387)만 고정했습니다. 여기에 남은 사실이 모두 문맥에 있는지 보는 정밀도 확인만 더했습니다. 요청한 값이 모든 행에서 살아남는지는 아무것도 확인하지 않습니다. 테스트 64행은 379행의 잘못된 출력을 기대값으로 고정하기까지 했습니다.
 
-## Sources
+## 출처
 
-### S1 — WikiSQL (topic summary, Emergent Mind)
+### S1 — WikiSQL (주제 요약, Emergent Mind)
 
 - URL: https://www.emergentmind.com/topics/wikisql
-- Retrieved: 2026-10-15
-- Locator: query structure paragraph
-- Fragment: Target form: 'SELECT agg_op agg_col from table WHERE cond1_col cond1_op cond1 and cond2_col cond2_op cond2' — 'a single-table SELECT–FROM–WHERE structure, no joins, no subqueries, and conjunctive conditions only'; 'condition values are drawn from actual cells or sampled from numeric ranges.' The page does not say whether values come from the question text.
-- Applicability: A multi_hop golden question has the same two roles: values it supplies to pick the requirement (WHERE) and fields it asks for (SELECT). Line 89 confuses the roles by testing only whether the text appears in the question.
-- Counterevidence: Secondary summary of a different task (text-to-SQL over Wikipedia tables). It describes the query form, not how to tell roles apart from Korean free text; the original papers could not be fetched as text.
-- Validation: Experiment step 2: the occurrence rule must sort the dropped values into supplied (WHERE) and asked-for (SELECT) exactly as the hand marks do.
+- 확인일: 2026-10-15
+- 위치: 질의 구조 문단
+- 인용: 목표 형태: 'SELECT agg_op agg_col from table WHERE cond1_col cond1_op cond1 and cond2_col cond2_op cond2' — 'a single-table SELECT–FROM–WHERE structure, no joins, no subqueries, and conjunctive conditions only'; 'condition values are drawn from actual cells or sampled from numeric ranges.' 이 페이지는 값이 질문 글에서 나오는지는 말하지 않습니다.
+- 적용: multi_hop 골든 질문에도 같은 두 역할이 있습니다. 요구사항을 고르려고 질문이 주는 값(WHERE)과 질문이 묻는 필드(SELECT)입니다. 89행은 글이 질문에 나오는지만 보므로 두 역할을 헷갈립니다.
+- 반대 근거: 다른 과제(위키백과 표에 대한 text-to-SQL)의 2차 요약입니다. 질의 형태를 설명할 뿐, 한국어 자유 글에서 역할을 구분하는 법은 말하지 않습니다. 원 논문은 글로 받아 오지 못했습니다.
+- 검증: 실험 2단계에서 발생 위치 규칙이 버려진 값을 손으로 표시한 것과 똑같이 '주어진 값(WHERE)'과 '요청한 값(SELECT)'으로 나눠야 합니다.
 
 ### S2 — Evaluating Open-Domain Question Answering in the Era of Large Language Models (Kamalloo, Dziri, Clarke, Rafiei, ACL 2023)
 
 - URL: https://aclanthology.org/2023.acl-long.307
-- Retrieved: 2026-10-15
-- Locator: Abstract
-- Fragment: 'Lexical matching remains the de facto evaluation method for open-domain question answering (QA).' It 'fails completely when a plausible candidate answer does not appear in the list of gold answers', 'which is increasingly the case as we shift from extractive to generative models.' Automated evaluators are 'a reasonable surrogate for lexical matching in some circumstances' 'but not for long-form answers generated by LLMs.' 'At this time, there appears to be no substitute for human evaluation.'
-- Applicability: 기존 평가기는 문자열 일치다. 짧은 분류 값이 질문이나 다른 사실에도 나타나면 그것만으로 독립적인 의미 확인이 되지 않는다. S4는 실제 자료에서 복사하지 않은 합성 단어를 쓴다.
-- Counterevidence: The paper's failure is missed answers that are worded differently, not credit given for copying the question; it supports only the general weakness of exact-text checks.
-- Validation: 합성 예제에서 사실 `우주`를 `우주 공방의 상자 두 개`라는 질문 복사 답과 대조하면 문자열 비율은 1이다. 이는 의미적 정답 확인이 아니다.
+- 확인일: 2026-10-15
+- 위치: 초록
+- 인용: 'Lexical matching remains the de facto evaluation method for open-domain question answering (QA).' 이 방식은 'fails completely when a plausible candidate answer does not appear in the list of gold answers', 'which is increasingly the case as we shift from extractive to generative models.' 자동 평가기는 'a reasonable surrogate for lexical matching in some circumstances' 'but not for long-form answers generated by LLMs.' 'At this time, there appears to be no substitute for human evaluation.'
+- 적용: 기존 평가기는 문자열 일치입니다. 짧은 분류 값이 질문이나 다른 사실에도 나타나면, 그것만으로는 따로 뜻을 확인한 것이 되지 않습니다. S4는 실제 자료에서 복사하지 않은 합성 단어를 씁니다.
+- 반대 근거: 논문이 말하는 실패는 표현이 다른 정답을 놓치는 것이지, 질문을 베낀 답에 점수를 주는 것이 아닙니다. 글자 그대로 확인하는 방식의 일반적인 약점만 뒷받침합니다.
+- 검증: 합성 예제에서 사실 `우주`를 `우주 공방의 상자 두 개`라는 질문 복사 답과 대조하면 문자열 비율은 1입니다. 이것은 뜻으로 정답을 확인한 것이 아닙니다.
 
-### S3 — rag/validation/validation.py at 1aa729a
+### S3 — 1aa729a 시점의 rag/validation/validation.py
 
 - URL: rag/validation/validation.py
-- Retrieved: 2026-10-15
-- Locator: _coverage lines 65-77; _multi_hop_key_facts lines 80-92
-- Fragment: Line 89: found = [v for v in values if (len(v) > 1 or v.isdigit()) and v in answer and v not in question]. Line 90: facts = [v for v in found if not any(v != other and v in other for other in found)]. _coverage lines 72-74 remove field_names and every word of the question from the not-yet-covered answer text before counting what is left; line 92 keeps facts only if coverage >= 0.6.
-- Applicability: 89·90행의 필터가 379·377·343행에서 요청 값을 제거했고 72~74행의 계산이 그 누락을 보지 못했다. 원래 값의 문자열은 제거했다.
-- Counterevidence: The question filter correctly drops supplied values that the answer repeats, and the containment filter removes fragments; both must keep doing that for copied text.
-- Validation: Experiment steps 1, 2 and 4.
+- 확인일: 2026-10-15
+- 위치: _coverage 65-77행; _multi_hop_key_facts 80-92행
+- 인용: 89행: found = [v for v in values if (len(v) > 1 or v.isdigit()) and v in answer and v not in question]. 90행: facts = [v for v in found if not any(v != other and v in other for other in found)]. _coverage 72-74행은 아직 덮이지 않은 답 글에서 field_names와 질문의 모든 단어를 지운 뒤 남은 것을 셉니다. 92행은 덮는 정도가 0.6 이상일 때만 사실을 남깁니다.
+- 적용: 89·90행의 거르기가 379·377·343행에서 요청 값을 지웠고, 72~74행의 계산은 그 누락을 보지 못했습니다. 원래 값의 문자열은 지웠습니다.
+- 반대 근거: 질문 거르기는 답이 되풀이한 '주어진 값'을 올바르게 빼고, 포함 거르기는 조각을 지웁니다. 베낀 글에 대해서는 둘 다 계속 그렇게 해야 합니다.
+- 검증: 실험 1·2·4단계.
 
-### S4 — eval/golden/dev.jsonl rows 379, 377, 343, 352
+### S4 — eval/golden/dev.jsonl 379, 377, 343, 352행
 
 - URL: eval/golden/dev.jsonl
-- Retrieved: 2026-10-15
-- Locator: lines 379, 377, 343, 352; fields question, answer, context
-- Fragment: 실제 4개 행의 질문·답·근거 인용은 제거했다. 독립 합성 예제 A: 질문 `우주 공방 물품의 분류와 상자 이름 두 개는?`, 근거 `분류 | 우주`, 합성 답 `분류: 우주; 상자: 분홍상자, 남색상자`. 예제 B: 질문 `별빛 공방의 분류와 담당자는?`, 근거 `분류 | 별빛`, 답 `분류: 별빛; 담당자: 모모`. 예제 C: 답 `분류: 별빛; 명칭: 별빛 꾸러미`는 짧은 값이 긴 값 바깥에도 존재한다. 예제 D: 질문이 이미 지정한 `금빛 주머니`는 답에서 반복해도 새로 요청한 사실이 아니다. 예제들은 실제 행의 대체 레코드가 아니다.
-- Applicability: 379 is the reported row. 377 (question filter) and 343 (containment filter) are siblings not yet reported. 352 shows a value the question supplies, which must stay excluded.
-- Counterevidence: Four rows; the full number of asked-for values lost across the 71 multi_hop rows has not been measured.
-- Validation: Experiment steps 1 and 3.
+- 확인일: 2026-10-15
+- 위치: 379, 377, 343, 352행; question·answer·context 필드
+- 인용: 실제 4개 행의 질문·답·근거 인용은 지웠습니다. 따로 만든 합성 예제 A: 질문 `우주 공방 물품의 분류와 상자 이름 두 개는?`, 근거 `분류 | 우주`, 합성 답 `분류: 우주; 상자: 분홍상자, 남색상자`. 예제 B: 질문 `별빛 공방의 분류와 담당자는?`, 근거 `분류 | 별빛`, 답 `분류: 별빛; 담당자: 모모`. 예제 C: 답 `분류: 별빛; 명칭: 별빛 꾸러미`에서 짧은 값이 긴 값 바깥에도 있습니다. 예제 D: 질문이 이미 지정한 `금빛 주머니`는 답에서 되풀이해도 새로 요청한 사실이 아닙니다. 예제들은 실제 행을 대신하는 기록이 아닙니다.
+- 적용: 379는 보고된 행입니다. 377(질문 거르기)과 343(포함 거르기)은 아직 보고되지 않은 같은 종류의 행입니다. 352는 질문이 주는 값을 보여 주며, 계속 빼야 합니다.
+- 반대 근거: 네 행뿐입니다. multi_hop 71행 전체에서 잃은 요청 값의 수는 재지 않았습니다.
+- 검증: 실험 1·3단계.
 
-### S5 — tests/test_eval_items.py at 1aa729a
+### S5 — 1aa729a 시점의 tests/test_eval_items.py
 
 - URL: tests/test_eval_items.py
-- Retrieved: 2026-10-15
-- Locator: test_bundled_dev_key_facts_score_the_requested_answer, lines 40-66
-- Fragment: 당시 테스트는 각 사실이 자체 context에서 1인지 확인하고 특정 행만 고정했다. 64행은 379행의 불완전한 3개 사실 목록까지 정답으로 고정했다. 실제 목록 인용은 제거했으며 S4의 합성 예제로 누락 구조만 설명한다.
-- Applicability: Shows why each fix passed the gate: no check across all rows that asked-for values survive.
-- Counterevidence: The pins did catch regressions on the rows they name.
-- Validation: Experiment step 3 replaces the pin with a check over all of dev.
+- 확인일: 2026-10-15
+- 위치: test_bundled_dev_key_facts_score_the_requested_answer, 40-66행
+- 인용: 당시 테스트는 각 사실이 자체 context에서 1인지 확인하고 특정 행만 고정했습니다. 64행은 379행의 불완전한 사실 3개 목록까지 정답으로 고정했습니다. 실제 목록 인용은 지웠으며, S4의 합성 예제로 누락 구조만 설명합니다.
+- 적용: 수정마다 게이트를 통과한 이유를 보여 줍니다. 요청한 값이 모든 행에서 살아남는지 보는 확인이 없습니다.
+- 반대 근거: 고정 확인은 짚은 행의 회귀를 실제로 잡았습니다.
+- 검증: 실험 3단계에서 고정 확인을 dev 전체 확인으로 바꿉니다.
 
-### S6 — rag/evaluation/evaluation.py key-fact matcher
+### S6 — rag/evaluation/evaluation.py의 핵심 사실 대조
 
 - URL: rag/evaluation/evaluation.py
-- Retrieved: 2026-10-15
-- Locator: _fact_matches lines 154-161; _key_fact_ratio lines 164-168
-- Fragment: A fact without digits is searched as a contiguous pattern in the text (_plain_text); a fact counts unless the match is negated (preceded by 미/불/비 or followed by 않/제외/별도/없 within six characters).
-- Applicability: S4의 합성 사실 `우주`는 그 단어가 들어 있는 질문 복사 답만으로도 일치한다. 이는 정답의 의미를 확인한 결과가 아니다.
-- Counterevidence: Removing whitespace makes matching lenient, which helps verbatim facts.
-- Validation: Experiment step 5 records the limit.
+- 확인일: 2026-10-15
+- 위치: _fact_matches 154-161행; _key_fact_ratio 164-168행
+- 인용: 숫자가 없는 사실은 글(_plain_text) 안에서 연속된 패턴으로 찾습니다. 부정문(앞에 미/불/비, 또는 여섯 글자 안에 뒤따르는 않/제외/별도/없)이 아니면 맞다고 셉니다.
+- 적용: S4의 합성 사실 `우주`는 그 단어가 든 질문 복사 답만으로도 맞습니다. 이것은 정답의 뜻을 확인한 결과가 아닙니다.
+- 반대 근거: 공백을 지우므로 대조가 너그럽고, 그대로 인용한 사실에 도움이 됩니다.
+- 검증: 실험 5단계에서 이 한계를 기록합니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): In table QA queries, the selected column (asked for) and the WHERE condition values (supplied to select rows) are separate roles in the query form.
-- C2 (interpretation; S2, S6): Exact-text matching judges text, not meaning, so a short asked-for value whose text also appears in the question or in another fact cannot be checked on its own.
-- C3 (source; S3): Lines 89-90 decide 'supplied by the question' and 'redundant' by substring tests against the whole question and the other found values, and _coverage ignores field names and question words before counting what is missing.
-- C4 (interpretation; S3, S4): 377행은 질문 필터, 343행은 긴 값 포함 필터 때문에 요청한 분류를 잃었다. 379행과 같은 종류의 문제이며 원래 값·질문·답은 이 문서에서 제거했다.
-- C5 (interpretation; S3, S5): The fixes failed because each changed only the filter the reviewer named, while the coverage guard ignores the same text the remaining filters drop and the test pins only named rows; a check over all of dev on labelled answer values plus a per-occurrence supplied/asked-for test addresses the cause.
+- C1 (출처; S1): 표 QA 질의에서 고르는 열(요청한 것)과 WHERE 조건 값(행을 고르려고 주는 것)은 질의 형태에서 서로 다른 역할입니다.
+- C2 (해석; S2, S6): 글자 그대로 대조는 뜻이 아니라 글을 판정하므로, 질문이나 다른 사실에도 같은 글자가 있는 짧은 요청 값은 따로 확인할 수 없습니다.
+- C3 (출처; S3): 89-90행은 '질문이 준 값'과 '중복'을 질문 전체와 다른 찾은 값에 대한 부분 문자열 검사로 정하고, _coverage는 빠진 것을 세기 전에 필드명과 질문 단어를 무시합니다.
+- C4 (해석; S3, S4): 377행은 질문 거르기, 343행은 긴 값 포함 거르기 때문에 요청한 분류를 잃었습니다. 379행과 같은 종류의 문제이며, 원래 값·질문·답은 이 문서에서 지웠습니다.
+- C5 (해석; S3, S5): 수정이 실패한 이유는 수정마다 리뷰어가 짚은 거르기만 바꿨고, 덮는 정도 확인은 남은 거르기가 버리는 바로 그 글을 무시하며, 테스트는 짚은 행만 고정했기 때문입니다. 라벨이 붙은 답 값을 dev 전체에서 확인하고, 발생 위치마다 '주어진 값/요청한 값'을 가리는 검사를 더하면 원인을 다룹니다.
 
-## Core theory
+## 핵심 원리
 
-In table question answering, a query has two roles that a value can play. The selected column holds what is asked for. The WHERE conditions (column, op, value) hold what the question supplies to pick the row (WikiSQL form: 'SELECT agg_op agg_col from table WHERE cond1_col cond1_op cond1 ...'). A value's role comes from its place in the question's structure, not from whether its words occur in the question. Separately, lexical matching is a weak test of meaning (Kamalloo et al. 2023): it judges by exact text, so a short value shared with the question text cannot be told apart from a copy of the question by text alone.
+표 질의응답에서 값은 질의 안에서 두 역할 중 하나를 맡습니다. 고르는 열은 요청한 것을 담고, WHERE 조건(열, 연산, 값)은 행을 고르려고 질문이 주는 것을 담습니다(WikiSQL 형태: 'SELECT agg_op agg_col from table WHERE cond1_col cond1_op cond1 ...'). 값의 역할은 그 단어가 질문에 나오는지가 아니라 질문 구조 안의 자리에서 정해집니다. 이와 따로, 글자 대조는 뜻을 재는 데 약한 방법입니다(Kamalloo 외 2023). 글자 그대로 판정하므로, 질문 글과 겹치는 짧은 값은 글만으로는 질문을 베낀 것과 구별할 수 없습니다.
 
-## Applicability
+## 적용
 
-`rag/validation/validation.py:85-92`는 답에 있고 질문에 없는 값만 고르고 더 긴 값에 포함된 값도 제거한 뒤 커버리지 0.6 하한을 적용했다. 값이 어디에서 쓰였는지 대신 전체 문자열 포함 여부만 비교한 것이 원인이다. S4 합성 예제 C에서 `별빛`은 긴 명칭 내부와 독립 분류 값으로 각각 나오므로 무조건 버릴 수 없다. 제안한 발생 위치별 검사는 실제 379·377·343행의 결과를 로컬에서 대조해야 했고, 질문 단어이면서 답에 쓰인 context 값을 커버리지에서 무조건 빼는 문제도 함께 점검해야 했다.
+`rag/validation/validation.py:85-92`는 답에 있고 질문에 없는 값만 고르고, 더 긴 값에 포함된 값도 지운 뒤 덮는 정도 0.6 하한을 적용했습니다. 값이 어디에서 쓰였는지 대신 전체 문자열 포함 여부만 비교한 것이 원인입니다. S4 합성 예제 C에서 `별빛`은 긴 명칭 안과 독립 분류 값으로 각각 나오므로 무조건 버릴 수 없습니다. 제안한 발생 위치별 검사는 실제 379·377·343행의 결과를 로컬에서 대조해야 했고, 질문 단어이면서 답에 쓰인 context 값을 덮는 정도에서 무조건 빼는 문제도 함께 점검해야 했습니다.
 
-## Hypothesis
+## 가설
 
-추출기는 요청한 값을 직접 식별하지 않고 첫 칸·질문 부분 문자열·더 긴 값의 부분 문자열·길이·수량 형식으로 제외했다. 과도한 제외를 막아야 할 `_coverage`도 같은 필드명·질문 단어를 무시하여 해당 손실을 발견하지 못했다. 당시 377행은 질문 필터, 343행은 포함 관계 필터의 영향을 받았다. 실제 질문·답의 문구는 제거했다. S4의 합성 예제처럼 값이 질문에 등장하는지와 그 값이 행 선택 조건인지 여부는 서로 다르다.
+추출기는 요청한 값을 직접 알아보지 않고 첫 칸·질문 부분 문자열·더 긴 값의 부분 문자열·길이·수량 형식으로 뺐습니다. 지나친 제외를 막아야 할 `_coverage`도 같은 필드명·질문 단어를 무시해 그 손실을 찾지 못했습니다. 당시 377행은 질문 거르기, 343행은 포함 관계 거르기의 영향을 받았습니다. 실제 질문·답의 문구는 지웠습니다. S4의 합성 예제처럼, 값이 질문에 나오는지와 그 값이 행을 고르는 조건인지는 서로 다릅니다.
 
-## Counterevidence
+## 반대 근거
 
-- Only 21 of 71 multi_hop dev answers use the 'label: value' form (count from a regex over dev.jsonl). For prose answers the occurrence test is the only signal, and it has not been run on the data.
-- 합성 한계 예: 질문이 `SYN-X인 항목`이고 답이 `SYN-X은`이라고 조사를 바꾸면, 양옆 한 글자 확장만으로는 복사한 값을 가려내지 못할 수 있다. 실제 식별자 문자열은 사용하지 않는다.
-- S4의 짧은 합성 값은 질문을 그대로 복사한 답이나 더 긴 명칭만 있는 답에도 일치한다. 추출 사실로 유지한다고 독립적인 의미 판정이 가능해지는 것은 아니다.
-- Kamalloo et al. report lexical matching failing in the other direction (missing correct answers that are worded differently), not crediting copies of the question; the source supports only the general weakness of exact-text matching.
+- dev multi_hop 답 71개 중 '라벨: 값' 형태를 쓰는 것은 21개뿐입니다(dev.jsonl 정규식 집계). 서술형 답에서는 발생 위치 검사가 유일한 신호이며, 아직 데이터에 돌려 보지 않았습니다.
+- 합성 한계 예: 질문이 `SYN-X인 항목`이고 답이 `SYN-X은`처럼 조사를 바꾸면, 양옆 한 글자 확장만으로는 베낀 값을 가려내지 못할 수 있습니다. 실제 식별자 문자열은 쓰지 않습니다.
+- S4의 짧은 합성 값은 질문을 그대로 베낀 답이나 더 긴 명칭만 있는 답에도 맞습니다. 추출 사실로 남긴다고 따로 뜻을 판정할 수 있게 되는 것은 아닙니다.
+- Kamalloo 외는 글자 대조가 반대 방향(표현이 다른 정답을 놓침)으로 실패한다고 보고하며, 질문 복사에 점수를 주는 경우는 다루지 않습니다. 이 출처는 글자 대조의 일반적인 약점만 뒷받침합니다.
 
-## Alternatives
+## 다른 방법
 
-- 질문의 필드명으로 요청 값을 추정하는 대안은 조건으로 지정한 필드명도 같을 수 있어 먼저 택하지 않았다. 실제 353행도 검토 대상이었지만 원래 질문·조건 식별자는 게시하지 않는다. 합성 질문 `항목코드가 SYN-X인 꾸러미의 분류는?`에서도 필드명 등장만으로 역할을 나눌 수 없다.
-- Positive answer signal: a value the answer states as 'label: value' is asked for. Precise where it applies, but only 21 of 71 multi_hop answers have that form. Use it as the cross-dev test, not as the rule.
-- Drop any row where an answer value shared with the question (or contained in another value) would be dropped. Honest and cheap, and matches the round-3 decision to drop under-covered rows, but it shrinks dev further and does not preserve values as the reviewer asked. Keep it as the fallback if the occurrence test misclassifies values on dev.
-- LLM decomposition of answers into asked-for parts: paid on the shared OpenAI key (cost estimate and approval needed first) and nondeterministic. Not for this cycle.
-- Per-hop structure emitted by golden_pipeline for multi_hop rows (structure is {} today): the cleanest long-term source of asked-for values, but it needs a paid regeneration and belongs to another module.
+- 질문의 필드명으로 요청 값을 추정하는 방법은, 조건으로 지정한 필드명도 같을 수 있어 먼저 고르지 않았습니다. 실제 353행도 검토 대상이었지만 원래 질문·조건 식별자는 싣지 않습니다. 합성 질문 `항목코드가 SYN-X인 꾸러미의 분류는?`에서도 필드명이 나온다는 것만으로는 역할을 나눌 수 없습니다.
+- 답 쪽의 긍정 신호: 답이 '라벨: 값'으로 말한 값은 요청한 값입니다. 적용되는 곳에서는 정확하지만, multi_hop 답 71개 중 21개만 그 형태입니다. 규칙이 아니라 dev 전체 확인에 씁니다.
+- 질문과 겹치는(또는 다른 값에 포함된) 답 값이 버려질 행은 통째로 빼기: 정직하고 싸며, 덜 덮인 행을 빼기로 한 3회차 결정과도 맞습니다. 하지만 dev가 더 줄고, 리뷰어가 요청한 대로 값을 지키지는 못합니다. 발생 위치 검사가 dev에서 값을 잘못 나누면 쓰는 대비책으로 둡니다.
+- LLM으로 답을 요청 부분으로 쪼개기: 함께 쓰는 OpenAI 키로 돈이 들고(먼저 비용 견적과 승인이 필요), 결과가 매번 달라질 수 있습니다. 이번 회차에는 하지 않습니다.
+- golden_pipeline이 multi_hop 행에 단계별 structure를 내게 하기(지금 structure는 {}): 요청 값을 얻는 가장 깔끔한 장기 출처지만, 유료로 다시 만들어야 하고 다른 모듈의 일입니다.
 
-## Experiment
+## 실험
 
-1) 1aa729a의 71개 다중 근거 행에서 각 필터가 제거한 값을 로컬에서 감사한다. 예상 영향은 379·377·343행이다. 2) 89·90행에 발생 위치 규칙을 적용하여 수동 분류와 모두 같을 때만 채택하고, 분리하지 못하면 모호한 행을 제외한다. 3) 379행 고정 기대 대신 모든 유지 행의 요청 값을 점검한다. 1aa729a에서 실패하고 수정 후 통과해야 한다. 4) 커버리지에서 질문과 겹친 요청 값을 빼지 않을 때 누락을 발견하는지 대조한다. 5) 자체 context 점수 1, 기존 270·333·335·336·362·393·348·387행 회귀 및 유지 수 374 대비 변화를 보고한다. 실제 내용은 S4의 합성 예제로만 설명한다.
+1) 1aa729a의 다중 근거 71행에서 각 거르기가 지운 값을 로컬에서 점검합니다. 예상 영향은 379·377·343행입니다. 2) 89·90행에 발생 위치 규칙을 적용해 손으로 나눈 것과 모두 같을 때만 채택하고, 나누지 못하면 모호한 행을 뺍니다. 3) 379행 고정 기대 대신 남긴 모든 행의 요청 값을 점검합니다. 1aa729a에서 실패하고 수정 뒤 통과해야 합니다. 4) 덮는 정도에서 질문과 겹친 요청 값을 빼지 않을 때 누락을 찾는지 대조합니다. 5) 자체 context 점수 1, 기존 270·333·335·336·362·393·348·387행 회귀, 남긴 수 374와 비교한 변화를 보고합니다. 실제 내용은 S4의 합성 예제로만 설명합니다.
 
-## Result
+## 결과
 
-Observed, still a draft: these are measurements on eval/golden/dev.jsonl, not a verified rule. The fix is the commit right after 3be41ab on feature/eval-golden-input; it changes rag/validation/validation.py, rag/evaluation/evaluation.py, tests/test_eval_items.py, tests/test_key_fact_matching.py and README.md.
+관측했지만 아직 초안입니다. eval/golden/dev.jsonl에서 잰 값이며 검증된 규칙이 아닙니다. 수정은 feature/eval-golden-input 브랜치의 3be41ab 바로 다음 커밋이며, rag/validation/validation.py, rag/evaluation/evaluation.py, tests/test_eval_items.py, tests/test_key_fact_matching.py, README.md를 바꿉니다.
 
-- Reproduced at 3be41ab: 379행의 불완전한 3개 사실만으로 답에 1.0을 주었다. 370행(F6)은 자체 참조 답에 0.5였다. 실제 사실 목록·답은 게시하지 않는다.
-- Step 1 (audit). Every multi_hop value that appears in the answer but is dropped by a filter was listed and hand-marked. Asked-for values lost:
-  - question filter: 379·377행의 요청 분류 값 누락.
-  - containment filter: 343·366·389행의 요청 분류 값 누락.
+- 3be41ab에서 재현: 379행의 불완전한 사실 3개만으로 답에 1.0을 주었습니다. 370행(F6)은 자체 참조 답에 0.5였습니다. 실제 사실 목록·답은 싣지 않습니다.
+- 1단계(점검): 답에는 나오지만 거르기로 버려진 multi_hop 값을 모두 나열하고 손으로 표시했습니다. 잃은 요청 값은 다음과 같습니다.
+  - 질문 거르기: 379·377행의 요청 분류 값 누락.
+  - 포함 거르기: 343·366·389행의 요청 분류 값 누락.
 
-  그 밖의 제외는 질문이 제공한 값이나 필드명이었다. 해당 행은 327·351·367·374·380·388·394 등이며 원래 값·식별자·필드명 목록은 제거했다. 366·389행은 문서의 사전 예측에 없었다.
-- Step 2 (occurrence rule):
-  - 포함 관계 필터(90행)는 수동 분류와 같았다. 343·366·389행의 요청 값을 유지하고 352행에서 긴 칸의 일부인 글머리 항목은 중복으로 남겼다. `_inside_longer`를 채택했다.
-  - 질문 필터(89행)는 구분에 실패했다. 379·377행의 요청 값 외에 질문이 제공한 값·필드명 9개도 잘못 유지했다. 해당 행은 335·337/365·348·351·363·366·367·371·388이었다. 원래 값 목록은 제거했다.
-  - The label alternative (keep a question-shared value when the question names its field) also misfired, on 351, 367, 388 and 395.
-  - So, as the protocol says, the ambiguous rows are dropped instead (_asked_value_in_question). A row is dropped when a value of a field the question names (field name's last word in the question) appears in both question and answer and its answer occurrence is not copied from the question. Newly dropped: 379 and 367; 351, 377 and 388 were already out.
-- Step 3: 당시 테스트는 유지한 모든 다중 근거 행의 요청 값을 검사하도록 바꿨다. 3be41ab에서는 343행 누락으로 실패하고 수정 후 통과했다. 379행은 제외되어 빈 목록을 기대했고 330행의 한 줄 글머리표 회귀도 유지했다. 실제 사실 문자열은 제거했다.
-- Step 4: 질문과 겹친 context 값을 커버리지에 포함해도 추출 결과는 같았다. 343·366·389행에서 요청한 짧은 값을 제거해도 커버리지는 각각 0.75·0.84·0.93이어서 이 누락을 발견하지 못했다. 이 변경은 채택하지 않았다.
-- Step 5: every kept multi_hop fact scores 1 against its own context. The pins 270, 333, 335, 336, 362, 393, 348 and 387 hold. Kept dev questions are 372, against 374 at 3be41ab (379 and 367 dropped).
-- F6, 같은 커밋: 식별자 뒤 숫자를 수량으로 읽는 평가기 문제를 고쳤다. 370행의 원래 식별자 끝 숫자가 9분으로 해석됐으나 실제 식별자·답 인용은 제거했다. 문자가 붙은 식별자의 숫자나 이어지는 추가 숫자를 독립 수량으로 읽지 않아야 한다. `test_identifier_digits_are_not_quantities`는 이전 코드에서 실패하고 수정 후 통과했고, 유지한 모든 주제의 자체 참조 답 점수 1 검사도 추가했다.
-- 남은 한계: 짧은 요청 값은 그 문자열만 포함한 답으로도 일치할 수 있다(S2, S6). 추출만으로 문자열 평가기의 의미 판정 한계를 해결하지 못한다.
+  그 밖의 제외는 질문이 준 값이나 필드명이었습니다. 해당 행은 327·351·367·374·380·388·394 등이며, 원래 값·식별자·필드명 목록은 지웠습니다. 366·389행은 문서의 사전 예측에 없었습니다.
+- 2단계(발생 위치 규칙):
+  - 포함 관계 거르기(90행)는 손으로 나눈 것과 같았습니다. 343·366·389행의 요청 값을 남기고, 352행에서 긴 칸의 일부인 글머리 항목은 중복으로 남겼습니다. `_inside_longer`를 채택했습니다.
+  - 질문 거르기(89행)는 구분에 실패했습니다. 379·377행의 요청 값 말고도 질문이 준 값·필드명 9개를 잘못 남겼습니다. 해당 행은 335·337/365·348·351·363·366·367·371·388이었습니다. 원래 값 목록은 지웠습니다.
+  - 라벨 방법(질문이 필드 이름을 대면 질문과 겹치는 값을 남김)도 351, 367, 388, 395에서 잘못 작동했습니다.
+  - 그래서 절차대로 모호한 행을 대신 뺐습니다(_asked_value_in_question). 질문이 이름을 댄 필드(필드명의 마지막 단어가 질문에 있음)의 값이 질문과 답 모두에 나오고, 답에서의 등장이 질문을 베낀 것이 아니면 그 행을 뺍니다. 새로 빠진 행은 379와 367이고, 351, 377, 388은 이미 빠져 있었습니다.
+- 3단계: 당시 테스트는 남긴 모든 다중 근거 행의 요청 값을 검사하도록 바꿨습니다. 3be41ab에서는 343행 누락으로 실패하고 수정 뒤 통과했습니다. 379행은 빠져서 빈 목록을 기대했고, 330행의 한 줄 글머리표 회귀도 유지했습니다. 실제 사실 문자열은 지웠습니다.
+- 4단계: 질문과 겹친 context 값을 덮는 정도에 넣어도 추출 결과는 같았습니다. 343·366·389행에서 요청한 짧은 값을 지워도 덮는 정도는 각각 0.75·0.84·0.93이어서 이 누락을 찾지 못했습니다. 이 변경은 채택하지 않았습니다.
+- 5단계: 남긴 multi_hop 사실은 모두 자체 context에 대해 1점입니다. 270, 333, 335, 336, 362, 393, 348, 387 고정 확인도 유지됩니다. 남긴 dev 질문은 372개입니다(3be41ab에서는 374, 379와 367이 빠짐).
+- 같은 커밋의 F6: 식별자 뒤 숫자를 수량으로 읽는 평가기 문제를 고쳤습니다. 370행의 원래 식별자 끝 숫자가 9분으로 해석됐으나, 실제 식별자·답 인용은 지웠습니다. 문자가 붙은 식별자의 숫자나 이어지는 추가 숫자를 독립 수량으로 읽지 않아야 합니다. `test_identifier_digits_are_not_quantities`는 이전 코드에서 실패하고 수정 뒤 통과했으며, 남긴 모든 주제의 자체 참조 답 점수 1 검사도 더했습니다.
+- 남은 한계: 짧은 요청 값은 그 문자열만 담은 답으로도 맞을 수 있습니다(S2, S6). 추출만으로는 문자열 평가기가 뜻을 판정하지 못하는 한계를 풀 수 없습니다.
 
-## Unresolved limits
+## 남은 한계
 
-No shell was available: the drop lists, the 21/71 count and the occurrence-rule outcomes for rows 379/377/343 come from reading the code and data, not from running them. Whether 377 is currently excluded by the coverage guard is not confirmed. The occurrence rule is a heuristic tuned on three rows; how often answers restate a supplied value with a different particle is unknown. Short asked-for values stay weakly checkable under the literal matcher whatever the extraction does. The WikiSQL source is a secondary summary page, and the original Seq2SQL/SQLNet text could not be retrieved. This is cycle 2 of 2, so if step 2 does not separate cleanly, the honest fallback is dropping the affected rows.
+셸을 쓸 수 없었습니다. 버려진 값 목록, 21/71 집계, 379/377/343행의 발생 위치 규칙 결과는 코드와 데이터를 읽어서 얻은 것이지 돌려서 얻은 것이 아닙니다. 377이 지금 덮는 정도 확인으로 빠져 있는지는 확인하지 않았습니다. 발생 위치 규칙은 세 행에 맞춘 어림 규칙이며, 답이 주어진 값을 다른 조사로 되풀이하는 일이 얼마나 잦은지는 모릅니다. 짧은 요청 값은 추출을 어떻게 하든 글자 대조로는 약하게만 확인됩니다. WikiSQL 출처는 2차 요약 페이지이며, 원래 Seq2SQL/SQLNet 글은 받아 오지 못했습니다. 이번이 두 회차 중 2회차이므로, 2단계에서 깔끔하게 나뉘지 않으면 정직한 대비책은 영향받는 행을 빼는 것입니다.

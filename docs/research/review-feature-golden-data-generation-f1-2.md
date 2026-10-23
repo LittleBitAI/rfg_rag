@@ -1,153 +1,153 @@
-# Review research — F1, cycle 2
+# 리뷰 조사 · F1, 2회차
 
-집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
+집계 결과와 측정 조건은 Git에 보관하고, 실제 질문·정답·근거·OCR 텍스트와 레코드별 내보내기는 Git에서 제외된 로컬 `artifacts/`에 보관합니다.
 
-복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행의 역사적 관측이며 이번 작업에서 재측정한 결과가 아니다.
+복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행에서 관측한 과거 기록이며, 이번 작업에서 다시 측정한 결과가 아닙니다.
 
-Draft research before the fix of review round 3 of PR #24, written 2026-10-14. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #24 리뷰 3회차의 수정 전에 2026-10-14에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-F1: a numeric candidate's (value, unit) must appear in the answer and in a cited evidence text as one complete numeric expression: the whole signed number and the whole unit, with nothing that changes its meaning on either side. golden_pipeline/generation.py `_numeric` checks this through `_pairs`, which runs `re.finditer(spec['pattern'], _norm(text))`. At a82bdb0 the match starts at the first digit, so a sign in front of it (`-130,000,000원`) is dropped. It ends at the first listed unit, so a continuation after the unit (`5%p`) is dropped. The answer `-130,000,000원` passes against the positive E1 amount, and `5%` gets evidence from `5%p`.
+F1: 수치 후보의 (값, 단위)는 답과 인용 근거 글에 하나의 완전한 수치 표현으로 나와야 합니다. 부호를 포함한 수 전체와 단위 전체이며, 양옆에 뜻을 바꾸는 것이 없어야 합니다. golden_pipeline/generation.py의 `_numeric`은 `re.finditer(spec['pattern'], _norm(text))`를 돌리는 `_pairs`로 이를 확인합니다. a82bdb0에서는 일치가 첫 숫자에서 시작하므로 그 앞의 부호(`-130,000,000원`)가 버려집니다. 일치는 목록의 첫 단위에서 끝나므로 단위 뒤의 이어짐(`5%p`)도 버려집니다. 답 `-130,000,000원`이 양수인 E1 금액에 맞아 통과하고, `5%`는 `5%p`에서 근거를 얻습니다.
 
-Trigger: repeat, rounds 2, 3.
+발생: 반복, 2·3회차.
 
-- [P1] [P1] golden_pipeline/generation.py:129 — Pair extraction still accepts incomplete numeric expressions
+- [P1] [P1] golden_pipeline/generation.py:129 — 쌍 뽑기가 여전히 불완전한 수치 표현을 받아들입니다
 
-## Failed fixes
+## 실패한 수정
 
-- a1c573b (original): `_numeric` checked `_norm(value+unit)` as a plain substring. Removing commas made a shorter number a substring of a longer one (30000000원 inside 130000000원, 2개월 inside 12개월).
-- 18ce4bd (review 1): `_contains` got a digit lookbehind and lookahead. It closed the left digit edge, but the right-edge check only runs when the quote ends in a digit, and a value+unit quote ends in a unit. `12개` therefore still matched inside `12개월`.
-- a82bdb0 (review 2, from the cycle 1 research): `_pairs` extracts (number, unit) pairs with the numeric spec `pattern`, longest unit first, and requires exact pair equality. That closed unit-prefix cases among listed units (`12개` vs `12개월`) and wrong splits (`12개`/`월`). The pattern is a selection predicate built for `.search` (plan.py:114-120). It has no left anchor, so a sign or range mark outside `\d` is silently dropped, and no right anchor, so whatever follows the unit is ignored. Cycle 1's own counterevidence predicted the `5%p → %` and `3개년 → 개` mis-reads, but the fix added tests only for the review's reproductions, so the predicted case shipped. A third gap is unreported: `_pairs` runs on `_norm(text)`, which deletes spaces and commas first, so token boundaries are gone before extraction (`1, 2, 3개월` → `123개월` → pair (123, 개월)).
+- a1c573b(처음): `_numeric`은 `_norm(value+unit)`을 단순 부분 문자열로 확인했습니다. 쉼표를 지우면 짧은 수가 긴 수의 부분 문자열이 되었습니다(130000000원 안의 30000000원, 12개월 안의 2개월).
+- 18ce4bd(리뷰 1): `_contains`에 숫자 뒤보기와 미리보기를 넣었습니다. 왼쪽 숫자 가장자리는 막았지만, 오른쪽 확인은 인용이 숫자로 끝날 때만 돌고 값+단위 인용은 단위로 끝납니다. 그래서 `12개`가 여전히 `12개월` 안에서 맞았습니다.
+- a82bdb0(리뷰 2, 1회차 조사 반영): `_pairs`가 수치 명세 `pattern`으로 가장 긴 단위부터 (수, 단위) 쌍을 뽑고, 쌍이 정확히 같아야 합니다. 목록 안 단위의 앞부분 경우(`12개` 대 `12개월`)와 잘못된 나누기(`12개`/`월`)는 막았습니다. 그런데 이 패턴은 `.search`용으로 만든 고르기 조건입니다(plan.py:114-120). 왼쪽 고정이 없어 `\d` 밖의 부호나 범위 표시가 조용히 버려지고, 오른쪽 고정도 없어 단위 뒤에 오는 것은 무시됩니다. 1회차 조사의 반대 근거가 `5%p → %`와 `3개년 → 개` 오독을 예측했지만, 수정은 리뷰의 재현에만 테스트를 더해 예측한 경우가 그대로 나갔습니다. 보고되지 않은 세 번째 빈틈도 있습니다. `_pairs`는 공백과 쉼표를 먼저 지우는 `_norm(text)`에서 돌므로, 뽑기 전에 토큰 경계가 사라집니다(`1, 2, 3개월` → `123개월` → 쌍 (123, 개월)).
 
-## Sources
+## 출처
 
-### S1 — re — Regular expression operations (Python 3 documentation)
+### S1 — re — Regular expression operations (Python 3 문서)
 
 - URL: https://docs.python.org/3/library/re.html
-- Retrieved: 2026-10-14
-- Locator: (?<!...) and re.finditer
-- Fragment: (?<!...) Matches if the current position in the string is not preceded by a match for .... This is called a negative lookbehind assertion. Similar to positive lookbehind assertions, the contained pattern must only match strings of some fixed length. Patterns which start with negative lookbehind assertions may match at the beginning of the string being searched. / re.finditer: Return an iterator yielding Match objects over all non-overlapping matches for the RE pattern in string. The string is scanned left-to-right, and matches are returned in the order found. Empty matches are included in the result.
-- Applicability: `_pairs` uses finditer with no assertions, so a match starts at whatever digit can start one, and the sign before it is outside the match. Single-character sign and range classes satisfy the fixed-width lookbehind rule.
-- Counterevidence: Lookbehind alone cannot see multi-character Hangul prefixes of variable length; those need fixed-length alternatives or another approach.
-- Validation: With the lookbehind and sign capture, `-130,000,000원` yields (-130000000, 원) and no (130000000, 원); `10-12개월` yields no 12/개월 pair.
+- 확인일: 2026-10-14
+- 위치: (?<!...)와 re.finditer
+- 인용: (?<!...) Matches if the current position in the string is not preceded by a match for .... This is called a negative lookbehind assertion. Similar to positive lookbehind assertions, the contained pattern must only match strings of some fixed length. Patterns which start with negative lookbehind assertions may match at the beginning of the string being searched. / re.finditer: Return an iterator yielding Match objects over all non-overlapping matches for the RE pattern in string. The string is scanned left-to-right, and matches are returned in the order found. Empty matches are included in the result.
+- 적용: `_pairs`는 조건 없이 finditer를 쓰므로, 일치는 시작할 수 있는 아무 숫자에서나 시작하고 그 앞의 부호는 일치 밖에 남습니다. 한 글자짜리 부호·범위 글자 묶음은 고정 폭 뒤보기 규칙을 만족합니다.
+- 반대 근거: 뒤보기만으로는 길이가 바뀌는 여러 글자 한글 앞말을 볼 수 없습니다. 그런 경우는 고정 길이 후보를 나열하거나 다른 방법이 필요합니다.
+- 검증: 뒤보기와 부호 잡기를 넣으면 `-130,000,000원`에서 (-130000000, 원)이 나오고 (130000000, 원)은 나오지 않습니다. `10-12개월`에서는 12/개월 쌍이 나오지 않습니다.
 
-### S2 — Maximal munch (Wikipedia)
+### S2 — Maximal munch (위키백과)
 
 - URL: https://en.wikipedia.org/wiki/Maximal_munch
-- Retrieved: 2026-10-14
-- Locator: lead and C++ section
-- Fragment: "maximal munch" or "longest match" is the principle that when creating some construct, as much of the available input as possible should be consumed. ... [pre-C++11] two consecutive > characters are interpreted as the right-shift operator >> ... An exception to the maximal munch rule had to be added anyway [for <::]: unless the sequence is followed by : or >, the < is treated as its own token.
-- Applicability: A numeric expression is a token: sign + number + unit, consumed as far as it goes on both ends. Particles after a unit are the exception that needs an explicit rule, as `<::` did in C++.
-- Counterevidence: The principle comes from programming-language lexers with closed token sets. Korean unit extensions are not a closed set, so longest match is only as complete as the unit list.
-- Validation: `5%p`, `5%포인트` and `3개년` are consumed or blocked as longer tokens, so they never supply a shorter-unit pair.
+- 확인일: 2026-10-14
+- 위치: 첫머리와 C++ 절
+- 인용: "maximal munch" or "longest match" is the principle that when creating some construct, as much of the available input as possible should be consumed. ... [pre-C++11] two consecutive > characters are interpreted as the right-shift operator >> ... An exception to the maximal munch rule had to be added anyway [for <::]: unless the sequence is followed by : or >, the < is treated as its own token.
+- 적용: 수치 표현은 토큰 하나입니다. 부호 + 수 + 단위이며, 양쪽 끝에서 갈 수 있는 데까지 먹습니다. 단위 뒤의 조사는 C++의 `<::`처럼 명시적 규칙이 필요한 예외입니다.
+- 반대 근거: 이 원리는 토큰 집합이 닫힌 프로그래밍 언어 어휘 분석기에서 왔습니다. 한국어 단위 확장은 닫힌 집합이 아니므로, 가장 긴 일치는 단위 목록만큼만 완전합니다.
+- 검증: `5%p`, `5%포인트`, `3개년`은 더 긴 토큰으로 먹히거나 막히므로, 더 짧은 단위 쌍을 내주지 않습니다.
 
 ### S3 — 퍼센트와 퍼센트포인트 (한국경제 생글생글)
 
 - URL: https://sgsg.hankyung.com/article/2006032963621
-- Retrieved: 2026-10-14
-- Locator: 퍼센트포인트 definition and the 0.75%P example
-- Fragment: 그 관심의 대상이 되는 숫자가 퍼센트로 표시된 것(실업률,시장점유율,이자율 등)일 때에는 퍼센트의 변화를 퍼센트포인트로 표현한다. 이 때 두 개의 퍼센트의 차이(혹은 변화)를 퍼센트포인트(혹은 %P)라고 한다. ... '0.75%P'는 0.75%포인트를 줄여 쓴 것이다 ... 0.75%포인트(혹은 0.75%P)를 그냥 0.75%라고 혼동해 쓰고 있다. Condition: 퍼센트끼리의 산술적 연산을 할 수 있는 유일한 경우는 퍼센트를 계산한 기준이 같을 때다.
-- Applicability: Shows that the round-3 case `5%` vs `5%p` is a real change of meaning, and that the same unit is also written in Hangul (`%포인트`) and uppercase (`%P`). The right-edge rule must cover all three.
-- Counterevidence: A newspaper column, not a 국립국어원 norm; it does not list every way %p is written.
-- Validation: check_structure rejects 5/% against `5%p` and against `5%포인트`.
+- 확인일: 2026-10-14
+- 위치: 퍼센트포인트 정의와 0.75%P 예시
+- 인용: 그 관심의 대상이 되는 숫자가 퍼센트로 표시된 것(실업률,시장점유율,이자율 등)일 때에는 퍼센트의 변화를 퍼센트포인트로 표현한다. 이 때 두 개의 퍼센트의 차이(혹은 변화)를 퍼센트포인트(혹은 %P)라고 한다. ... '0.75%P'는 0.75%포인트를 줄여 쓴 것이다 ... 0.75%포인트(혹은 0.75%P)를 그냥 0.75%라고 혼동해 쓰고 있다. 조건: 퍼센트끼리의 산술적 연산을 할 수 있는 유일한 경우는 퍼센트를 계산한 기준이 같을 때다.
+- 적용: 3회차의 `5%` 대 `5%p`가 실제로 뜻이 바뀌는 경우이며, 같은 단위를 한글(`%포인트`)과 대문자(`%P`)로도 쓴다는 것을 보여 줍니다. 오른쪽 가장자리 규칙은 셋 모두를 다뤄야 합니다.
+- 반대 근거: 국립국어원 규범이 아닌 신문 칼럼이며, %p를 쓰는 모든 방식을 나열하지는 않습니다.
+- 검증: check_structure가 `5%p`와 `5%포인트`에 대해 5/%를 거부합니다.
 
 ### S4 — Why Financial Statements Lose Units, Signs and Subtotals (imagetotable.ai)
 
 - URL: https://imagetotable.ai/ko/blog/financial-statement-extraction-validation
-- Retrieved: 2026-10-14
-- Locator: negative amounts section
-- Fragment: 마이너스 금액은 마이너스 부호 대신 괄호로 표기됩니다. ... 괄호 쌍은 값 주변의 구두점이기 때문이다. ... 괄호를 제거하면 적자는 이익잉여금이 되고, 손실은 이익이 되며... Condition: rows labeled as a deficit, loss or 'Less:' item should be extracted as negative; if a sign looks wrong, check the source page.
-- Applicability: Dropping the sign mark around a number flips its meaning, which is the reviewer's `-130,000,000원` case. Signs must be part of the extracted value.
-- Counterevidence: A vendor blog about financial statements, not RFPs. It does not mention △/▲. The △ convention is my reading and unsourced; the search result itself said so.
-- Validation: `-130,000,000원` and `△130,000,000원` answers are rejected against E1.
+- 확인일: 2026-10-14
+- 위치: 마이너스 금액 절
+- 인용: 마이너스 금액은 마이너스 부호 대신 괄호로 표기됩니다. ... 괄호 쌍은 값 주변의 구두점이기 때문이다. ... 괄호를 제거하면 적자는 이익잉여금이 되고, 손실은 이익이 되며... 조건: 적자, 손실, 'Less:' 항목으로 표시된 행은 음수로 뽑아야 하며, 부호가 이상해 보이면 원본 쪽을 확인합니다.
+- 적용: 수 주변의 부호 표시를 버리면 뜻이 뒤집히며, 리뷰어의 `-130,000,000원` 경우가 이것입니다. 부호는 뽑은 값의 일부여야 합니다.
+- 반대 근거: RFP가 아닌 재무제표에 대한 업체 블로그입니다. △/▲는 언급하지 않습니다. △ 관례는 제 해석이며 출처가 없고, 검색 결과도 그렇다고 말했습니다.
+- 검증: `-130,000,000원`과 `△130,000,000원` 답은 E1에 대해 거부됩니다.
 
-### S5 — golden_pipeline/generation.py at a82bdb0
+### S5 — a82bdb0 시점의 golden_pipeline/generation.py
 
 - URL: golden_pipeline/generation.py
-- Retrieved: 2026-10-14
-- Locator: _numeric lines 111-120; _pairs lines 123-129; _norm line 315-316
-- Fragment: pair = (_norm(value), _norm(unit)); if pair not in _pairs(spec, _norm(answer)) ... return {(match[0][:match.start(1) - match.start()], match[1]) for match in re.finditer(spec["pattern"], text)} ... def _norm(text): return re.sub(r"[\s,]", "", unicodedata.normalize("NFC", text))
-- Applicability: Extraction runs on whitespace- and comma-stripped text, with no assertion before the first digit or after the unit.
-- Counterevidence: none given
-- Validation: After the fix, `_pairs` receives NFC text with boundaries intact and returns signed values; the new red cases turn green.
+- 확인일: 2026-10-14
+- 위치: _numeric 111-120행; _pairs 123-129행; _norm 315-316행
+- 인용: pair = (_norm(value), _norm(unit)); if pair not in _pairs(spec, _norm(answer)) ... return {(match[0][:match.start(1) - match.start()], match[1]) for match in re.finditer(spec["pattern"], text)} ... def _norm(text): return re.sub(r"[\s,]", "", unicodedata.normalize("NFC", text))
+- 적용: 뽑기는 공백과 쉼표를 지운 글에서 돌고, 첫 숫자 앞이나 단위 뒤에는 아무 조건이 없습니다.
+- 반대 근거: 없음
+- 검증: 수정 뒤 `_pairs`는 경계가 살아 있는 NFC 글을 받고 부호가 있는 값을 돌려주며, 새로 넣은 실패 사례가 통과로 바뀝니다.
 
-### S6 — golden_pipeline/configs/topics/numeric.json and plan.py selection
+### S6 — golden_pipeline/configs/topics/numeric.json과 plan.py의 고르기
 
 - URL: golden_pipeline/configs/topics/numeric.json
-- Retrieved: 2026-10-14
-- Locator: "pattern"; plan.py:114-120
-- Fragment: "pattern": "\\d[\\d,.]*\\s*(원|천원|만원|억원|%|개월|년|일|시간|명|건|개|회|식|MB|GB|TB)" / plan.py: pattern = re.compile(spec["pattern"]) ... if pattern is None or pattern.search(unit["text"]):
-- Applicability: The pattern was written as a presence test for bundle selection, not as a token definition. Its SHA is pinned by plans (`_plan_for`), so editing it invalidates plans.
-- Counterevidence: Reusing it does keep selection and validation on the same unit list, which is why cycle 1 chose it.
-- Validation: The fix leaves numeric.json unchanged; topic_spec_sha256 in existing plans still matches.
+- 확인일: 2026-10-14
+- 위치: "pattern"; plan.py:114-120
+- 인용: "pattern": "\\d[\\d,.]*\\s*(원|천원|만원|억원|%|개월|년|일|시간|명|건|개|회|식|MB|GB|TB)" / plan.py: pattern = re.compile(spec["pattern"]) ... if pattern is None or pattern.search(unit["text"]):
+- 적용: 이 패턴은 토큰 정의가 아니라 근거 묶음 고르기를 위한 '있음' 검사로 쓰였습니다. SHA가 plan에 고정되므로(`_plan_for`), 고치면 plan이 무효가 됩니다.
+- 반대 근거: 다시 쓰면 고르기와 검증이 같은 단위 목록을 쓰게 되며, 1회차가 이를 고른 이유입니다.
+- 검증: 수정은 numeric.json을 그대로 두며, 기존 plan의 topic_spec_sha256도 계속 맞습니다.
 
-### S7 — Cycle 1 research page
+### S7 — 1회차 조사 문서
 
 - URL: docs/research/review-feature-golden-data-generation-f1-1.md
-- Retrieved: 2026-10-14
-- Locator: Counterevidence, first bullet
-- Fragment: Units outside it (개년, 년간, 일간, %p, 천만원 written as 3천만원) would either be read with a shorter unit (3개년 read as 3 + 개, 5%p read as 5 + %) or yield no pair ... the mis-read cases (3개년 → 개, 5%p → %) would accept a wrong unit, the same class of bug.
-- Applicability: Round 3's `5%p` case was predicted before the a82bdb0 fix and left untested.
-- Counterevidence: none given
-- Validation: This cycle's experiment adds tests for every predicted mis-read, not only for the reviewer's reproductions.
+- 확인일: 2026-10-14
+- 위치: 반대 근거, 첫 항목
+- 인용: Units outside it (개년, 년간, 일간, %p, 천만원 written as 3천만원) would either be read with a shorter unit (3개년 read as 3 + 개, 5%p read as 5 + %) or yield no pair ... the mis-read cases (3개년 → 개, 5%p → %) would accept a wrong unit, the same class of bug.
+- 적용: 3회차의 `5%p` 경우는 a82bdb0 수정 전에 예측됐고, 시험하지 않은 채 남았습니다.
+- 반대 근거: 없음
+- 검증: 이번 회차의 실험은 리뷰어의 재현뿐 아니라 예측한 모든 오독에 테스트를 더합니다.
 
-### S8 — tests/golden/test_generation.py at a82bdb0
+### S8 — a82bdb0 시점의 tests/golden/test_generation.py
 
 - URL: tests/golden/test_generation.py
-- Retrieved: 2026-10-14
-- Locator: lines 84-111 and 119-131
-- Fragment: ("기간은 12개이다", {"value": "12", "unit": "개"}), ("기간은 12개월이다", {"value": "12개", "unit": "월"}) ... test_numeric_unit_followed_by_a_particle_is_accepted ... ("numeric", {"value": "5"}, [unit("5%")], False)
-- Applicability: No test covers a signed value, a %p, 개년 or range continuation, or text joined by `_norm`.
-- Counterevidence: none given
-- Validation: The new parametrized cases sit next to these, and the particle control stays.
+- 확인일: 2026-10-14
+- 위치: 84-111행과 119-131행
+- 인용: ("기간은 12개이다", {"value": "12", "unit": "개"}), ("기간은 12개월이다", {"value": "12개", "unit": "월"}) ... test_numeric_unit_followed_by_a_particle_is_accepted ... ("numeric", {"value": "5"}, [unit("5%")], False)
+- 적용: 부호 있는 값, %p, 개년, 범위 이어짐, `_norm`이 이어 붙인 글을 다루는 테스트가 없습니다.
+- 반대 근거: 없음
+- 검증: 새 매개변수 사례를 이 옆에 두고, 조사 대조군은 남깁니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1, S5): `_pairs` starts a match at the first digit that can start one and checks nothing after the unit, so a leading sign and a trailing unit continuation are both discarded.
-- C2 (source; S6): The numeric spec pattern is a selection predicate used with `.search` in plan.py.
-- C3 (interpretation; S5, S6, S7): All three fixes reused presence tests (substring, then a search pattern) as an equality test for a token, and each closed only the edge the review had just shown.
-- C4 (source; S7, S8): The cycle 1 research predicted the `5%p → %` and `3개년 → 개` mis-reads, and the following fix added no test for them.
-- C5 (source; S2): Longest match defines a token by consuming as much input as possible, and its known failures are handled with explicit exception rules.
-- C6 (source; S3): %포인트/%P means something different from %, and Korean text writes it both as %p/%P and as %포인트.
-- C7 (interpretation; S1, S4): Dropping a number's sign mark flips its meaning, so the sign must stay in the extracted value; Python lookbehind with single-character sign and range classes can enforce the left edge.
-- C8 (interpretation; S5): Running `_norm` before extraction deletes the spaces and commas that separate tokens, so `1, 2, 3개월` produces a pair (123, 개월) that the text does not hold. Extraction should run on NFC text, and normalization should apply only to the captured value.
+- C1 (출처; S1, S5): `_pairs`는 일치를 시작할 수 있는 첫 숫자에서 시작하고 단위 뒤는 아무것도 확인하지 않으므로, 앞의 부호와 뒤의 단위 이어짐이 모두 버려집니다.
+- C2 (출처; S6): 수치 명세 패턴은 plan.py에서 `.search`와 함께 쓰는 고르기 조건입니다.
+- C3 (해석; S5, S6, S7): 세 수정 모두 '있음' 검사(부분 문자열, 그다음 검색 패턴)를 토큰이 같은지 보는 검사로 다시 썼고, 각각 리뷰가 방금 보인 가장자리만 막았습니다.
+- C4 (출처; S7, S8): 1회차 조사는 `5%p → %`와 `3개년 → 개` 오독을 예측했지만, 다음 수정은 이에 대한 테스트를 더하지 않았습니다.
+- C5 (출처; S2): 가장 긴 일치는 입력을 될 수 있는 대로 많이 먹어 토큰을 정하며, 알려진 실패는 명시적 예외 규칙으로 다룹니다.
+- C6 (출처; S3): %포인트/%P는 %와 뜻이 다르며, 한국어 글은 이를 %p/%P와 %포인트 두 방식으로 씁니다.
+- C7 (해석; S1, S4): 수의 부호 표시를 버리면 뜻이 뒤집히므로 부호는 뽑은 값에 남아야 하며, 한 글자짜리 부호·범위 글자 묶음을 쓴 파이썬 뒤보기로 왼쪽 가장자리를 지킬 수 있습니다.
+- C8 (해석; S5): 뽑기 전에 `_norm`을 돌리면 토큰을 가르는 공백과 쉼표가 지워져, `1, 2, 3개월`에서 글에 없는 쌍 (123, 개월)이 나옵니다. 뽑기는 NFC 글에서 하고, 정규화는 잡은 값에만 적용해야 합니다.
 
-## Core theory
+## 핵심 원리
 
-Maximal munch / longest match: 'when creating some construct, as much of the available input as possible should be consumed.' The token is defined by both of its ends, and where longest match gives the wrong split, an explicit exception rule is added; Wikipedia gives C++'s `<::` as an example. Python `re.finditer` returns non-overlapping matches scanned left to right, starting wherever the pattern can match. Without assertions, nothing forces a match to begin at a token start or end at a token end. A negative lookbehind must be fixed width, so the sign and range marks fit as one-character classes. Domain: Korean writing gives %포인트/%P a meaning distinct from % ('두 개의 퍼센트의 차이...를 퍼센트포인트(혹은 %P)라고 한다', with a headline that confused 0.75%포인트 with 0.75%). Dropping a sign or the parentheses turns a loss into a profit.
+가장 긴 일치(maximal munch / longest match): '무언가를 만들 때, 쓸 수 있는 입력을 될 수 있는 대로 많이 먹어야 한다.' 토큰은 양쪽 끝으로 정해지며, 가장 긴 일치가 틀린 나누기를 낼 때는 명시적 예외 규칙을 더합니다. 위키백과는 C++의 `<::`를 예로 듭니다. 파이썬 `re.finditer`는 왼쪽에서 오른쪽으로 훑은, 겹치지 않는 일치를 패턴이 맞을 수 있는 곳 어디서든 돌려줍니다. 조건이 없으면 일치가 토큰 시작에서 시작하고 토큰 끝에서 끝나도록 강제하는 것이 없습니다. 부정 뒤보기는 고정 폭이어야 하므로, 부호와 범위 표시는 한 글자 묶음으로 넣을 수 있습니다. 영역 지식: 한국어 글에서 %포인트/%P는 %와 다른 뜻입니다('두 개의 퍼센트의 차이...를 퍼센트포인트(혹은 %P)라고 한다', 0.75%포인트를 0.75%로 헷갈린 제목 예). 부호나 괄호를 버리면 손실이 이익이 됩니다.
 
-## Applicability
+## 적용
 
-golden_pipeline/generation.py:111-129 (`_numeric`, `_pairs`) only. Both the answer check (line 116) and the evidence check (line 118) go through `_pairs`, so one change covers both. `_contains`/`_quoted` (table, condition, comparison) have no unit concept and stay as they are. RFP evidence holds the affected forms: amounts possibly signed or △-marked, rates in % and %p, periods in 개월 and 개년, and ranges with ~ or -. The fixture u1 (`사업 예산은 130,000,000원(부가세 포함)이며 계약 기간은 12개월이다.`) provides the reviewer's sign case and the particle controls. golden_pipeline/README.md:218 describes the numeric rule and should change with it.
+golden_pipeline/generation.py:111-129(`_numeric`, `_pairs`)에만 해당합니다. 답 확인(116행)과 근거 확인(118행) 모두 `_pairs`를 거치므로 한 번 바꾸면 둘 다 덮습니다. `_contains`/`_quoted`(표, 조건, 비교)에는 단위 개념이 없으니 그대로 둡니다. RFP 근거에는 영향받는 형태가 있습니다. 부호나 △가 붙을 수 있는 금액, %와 %p로 쓴 비율, 개월과 개년으로 쓴 기간, ~나 -로 쓴 범위입니다. 테스트 데이터 u1(`사업 예산은 130,000,000원(부가세 포함)이며 계약 기간은 12개월이다.`)이 리뷰어의 부호 경우와 조사 대조군을 줍니다. golden_pipeline/README.md:218이 수치 규칙을 설명하므로 함께 바꿔야 합니다.
 
-## Hypothesis
+## 가설
 
-The fixes keep failing for one reason: a search predicate is being used as a tokenizer. Each round adds a guard for one edge of one character class, the one the reviewer just reproduced: digit-left, then unit-prefix-right, now sign-left and continuation-right. The invariant needs both token boundaries defined at once, by the longest-match rule, on text whose boundaries are still intact. What would hold: (1) Extract from NFC text before `_norm` and apply `_norm` only to the captured value, so spaces and commas still separate tokens. (2) Left edge: capture an optional sign `[+\-−±△▲]` as part of the value, and refuse to start a match right after `[\d.,~∼〜+\-−±△▲]`. A sign after a digit is then a range dash, not a sign, and neither `-12개월` nor `12개월` is extracted from `10-12개월`. (3) Right edge: after the longest listed unit, refuse a following Latin letter or `/` (closes `%p`, `MB/s`, `원/월`), plus a short list of Hangul unit extensions that no particle begins with (`포인트`, `년`, `간`), so `5%포인트` and `3개년` give no pair. Particles still pass: `12개월이다`, `130,000,000원(부가세`. (4) Exact equality of (`_norm(value)`, `_norm(unit)`) in the answer and in a cited text, as now. Build the extractor in generation.py around the spec pattern. Do not edit numeric.json: that changes the spec SHA every plan pins and changes plan selection.
+수정이 계속 실패하는 이유는 하나입니다. 검색 조건을 토큰 나누기로 쓰고 있습니다. 회차마다 한 글자 종류의 한쪽 가장자리, 즉 리뷰어가 방금 재현한 곳에만 막이를 더합니다. 숫자 왼쪽, 그다음 단위 앞부분 오른쪽, 이번에는 부호 왼쪽과 이어짐 오른쪽입니다. 규칙을 지키려면 토큰의 두 경계를 가장 긴 일치 규칙으로, 경계가 아직 살아 있는 글에서 한꺼번에 정해야 합니다. 지켜질 방법: (1) `_norm` 전에 NFC 글에서 뽑고, `_norm`은 잡은 값에만 적용해 공백과 쉼표가 여전히 토큰을 가르게 합니다. (2) 왼쪽 가장자리: 선택적 부호 `[+\-−±△▲]`를 값의 일부로 잡고, `[\d.,~∼〜+\-−±△▲]` 바로 뒤에서는 일치를 시작하지 않습니다. 그러면 숫자 뒤의 부호는 부호가 아니라 범위 줄표가 되고, `10-12개월`에서 `-12개월`도 `12개월`도 뽑히지 않습니다. (3) 오른쪽 가장자리: 목록의 가장 긴 단위 뒤에 로마자나 `/`가 오면 거부하고(`%p`, `MB/s`, `원/월`을 막음), 조사가 시작되지 않는 짧은 한글 단위 확장 목록(`포인트`, `년`, `간`)도 거부해, `5%포인트`와 `3개년`에서는 쌍이 나오지 않게 합니다. 조사는 계속 통과합니다: `12개월이다`, `130,000,000원(부가세`. (4) 지금처럼 답과 인용 글에서 (`_norm(value)`, `_norm(unit)`)이 정확히 같아야 합니다. 뽑는 함수는 명세 패턴을 감싸 generation.py에 만듭니다. numeric.json은 고치지 않습니다. 고치면 모든 plan이 고정한 명세 SHA가 바뀌고 plan의 고르기도 바뀝니다.
 
-## Counterevidence
+## 반대 근거
 
-- The Hangul continuation list (`포인트`, `년`, `간`) is an enumeration, the same shape that failed before. A later review can find another Hangul extension (개소, 회차, 년차, 년도), or a Hangul prefix that changes meaning on the left (`제3회` vs `3회`). The non-Hangul rule (Latin letter, `/`) is a class rule and complete for its class; the Hangul side is not.
-- Cycle 1 showed that a broad Hangul lookahead breaks particles (`12개월이다`). Any Hangul continuation entry must not begin a particle, which keeps `도` out of the list (`2025년도` vs particle 도), so some extensions stay readable as the shorter unit.
-- Refusing a match after a range mark or a sign-after-unit (`2024년-2025년` → (-2025, 년)) rejects some candidates that are literally fine. That costs recall but is the safe direction.
-- The sign and range-mark sets (−, △, ▲, ±, ~, ∼, 〜) come from my reading and one secondary source on sign loss. No source lists every negative or range notation in Korean RFP text.
+- 한글 이어짐 목록(`포인트`, `년`, `간`)은 나열이며, 전에 실패한 것과 같은 모양입니다. 나중 리뷰가 다른 한글 확장(개소, 회차, 년차, 년도)이나 왼쪽에서 뜻을 바꾸는 한글 앞말(`제3회` 대 `3회`)을 찾을 수 있습니다. 한글이 아닌 쪽 규칙(로마자, `/`)은 글자 종류 규칙이라 그 종류 안에서는 완전하지만, 한글 쪽은 그렇지 않습니다.
+- 1회차는 넓은 한글 미리보기가 조사(`12개월이다`)를 깨뜨린다는 것을 보였습니다. 한글 이어짐 항목은 조사의 시작이 되면 안 되므로 `도`는 목록에 넣지 않으며(`2025년도` 대 조사 도), 일부 확장은 더 짧은 단위로 읽힐 수 있습니다.
+- 범위 표시나 단위 뒤 부호(`2024년-2025년` → (-2025, 년)) 뒤에서 일치를 거부하면, 글자 그대로는 괜찮은 후보 일부도 거부합니다. 재현율을 잃지만 안전한 쪽입니다.
+- 부호와 범위 표시 집합(−, △, ▲, ±, ~, ∼, 〜)은 제 해석과 부호 손실에 대한 2차 출처 하나에서 왔습니다. 한국어 RFP 글의 모든 음수·범위 표기를 나열한 출처는 없습니다.
 
-## Alternatives
+## 다른 방법
 
-- Patch only the two reproductions: a sign lookbehind, plus `(?!p)` after `%`. It is the smallest diff, but this is the pattern that failed three times, and `5%포인트`, `3개년`, `MB/s` and the `_norm` merge stay open.
-- Edit numeric.json `pattern` to the tokenizer form. This would keep selection and validation identical, but it changes the pinned topic_spec SHA, so `_plan_for` refuses existing plans, and it changes which units plan.py selects. Not first.
-- Kiwi morphology (kiwipiepy is already in requirements.txt and golden_pipeline may import it): require SN + unit morpheme(s) equal to the unit, followed by a particle, ending or punctuation, not a noun or SL. In principle it closes the Hangul side as a class rule. Not first: Kiwi's tags for %, %p, 개년 and MB are unverified, and it adds a model load to a pure-regex check. This is the fallback if a fourth review lands on another Hangul extension.
-- Normalize signs to '-' and compare by meaning: rejected. Numeric goldens want the value as written, and matching by meaning is the rag/evaluation approach golden_pipeline must not import.
-- Changing `_contains`: rejected. `_numeric` no longer uses it, and the condition, table and comparison topics depend on its behavior.
+- 재현 두 개만 고치기: 부호 뒤보기와 `%` 뒤의 `(?!p)`. 바뀌는 코드는 가장 적지만 세 번 실패한 바로 그 방식이며, `5%포인트`, `3개년`, `MB/s`, `_norm` 이어 붙이기는 그대로 남습니다.
+- numeric.json의 `pattern`을 토큰 나누기 형태로 고치기: 고르기와 검증을 똑같이 유지하지만, 고정된 topic_spec SHA가 바뀌어 `_plan_for`가 기존 plan을 거부하고, plan.py가 고르는 단위도 바뀝니다. 먼저 하지 않습니다.
+- Kiwi 형태소 분석(kiwipiepy는 이미 requirements.txt에 있고 golden_pipeline은 쓸 수 있음): SN + 단위와 같은 형태소 뒤에 명사나 SL이 아닌 조사·어미·문장 부호가 오도록 요구합니다. 원리상 한글 쪽을 글자 종류 규칙으로 막습니다. 먼저 하지 않는 이유: Kiwi가 %, %p, 개년, MB에 붙이는 품사를 확인하지 않았고, 순수 정규식 확인에 모델 읽기를 더합니다. 네 번째 리뷰가 다른 한글 확장을 찾으면 쓰는 대비책입니다.
+- 부호를 '-'로 정규화하고 뜻으로 비교: 거부합니다. 골든 수치는 적힌 그대로의 값을 원하고, 뜻으로 맞추는 것은 golden_pipeline이 가져오면 안 되는 rag/evaluation의 방식입니다.
+- `_contains` 바꾸기: 거부합니다. `_numeric`은 이제 이를 쓰지 않고, 조건·표·비교 주제가 그 동작에 기댑니다.
 
-## Experiment
+## 실험
 
-Before the fix (red): add cases to `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch` with evidence E1: answer `-130,000,000원` with structure 130,000,000/원 (the reviewer's case), and answer `△130,000,000원`. Add `check_structure` numeric cases: 5/% against `5%p` → mismatch, 5/% against `5%포인트` → mismatch, 3/개 against `3개년` → mismatch, 12/개월 against `10~12개월` → mismatch, 123/개월 against `1, 2, 3개월` → mismatch. Controls that must stay accepted: 5/% against `5%이다`, 6/개월 against `6 개월`, plus the existing `12개월이다` and `130,000,000원(부가세 포함)` tests. Confirm the new mismatch cases fail at a82bdb0, then pass after the change with every existing review-1 and review-2 case unchanged. Then run `ruff check .` (C901 ≤ 8) and the full gate. The hypothesis is refuted if any control fails, or if a mismatch case can only be closed by touching `_contains` or numeric.json.
+수정 전(실패 확인): 근거 E1로 `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch`에 사례를 더합니다. 구조 130,000,000/원과 답 `-130,000,000원`(리뷰어의 경우), 그리고 답 `△130,000,000원`입니다. `check_structure` 수치 사례도 더합니다. `5%p`에 대한 5/% → 불일치, `5%포인트`에 대한 5/% → 불일치, `3개년`에 대한 3/개 → 불일치, `10~12개월`에 대한 12/개월 → 불일치, `1, 2, 3개월`에 대한 123/개월 → 불일치. 계속 받아들여야 할 대조군은 `5%이다`에 대한 5/%, `6 개월`에 대한 6/개월, 기존 `12개월이다`와 `130,000,000원(부가세 포함)` 테스트입니다. 새 불일치 사례가 a82bdb0에서 실패하고, 바꾼 뒤에는 기존 리뷰 1·2 사례를 그대로 둔 채 통과하는지 확인합니다. 그다음 `ruff check .`(C901 ≤ 8)와 전체 게이트를 돌립니다. 대조군이 하나라도 실패하거나, 불일치 사례를 `_contains`나 numeric.json을 건드려야만 막을 수 있으면 가설이 반박됩니다.
 
-## Result
+## 결과
 
-Observed in the commit that adds this Result (parent `4cf4036`, code as of `a82bdb0`). Before the fix, all seven mismatch cases failed: `-130,000,000원` and `△130,000,000원` in `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch` landed in `candidates.jsonl`, and `test_numeric_pair_must_be_the_whole_expression_in_evidence` returned no mismatch for 5/% against `5%p` and `5%포인트`, 3/개 against `3개년`, 12/개월 against `10~12개월`, and 123/개월 against `1, 2, 3개월`. The controls 5/% against `5%이다` and 6/개월 against `6 개월` passed before and after. The fix follows the hypothesis without touching `_contains` or numeric.json: `_pairs` wraps the spec pattern with `NUMBER_START` (an optional sign `[+\-−±△▲]` kept in the value, and no match right after `[\d.,~∼〜+\-−±△▲]`) and `UNIT_END` (no following Latin letter or `/`, `포인트`, `년` or `간`). It reads NFC text and applies `_norm` only to the captured value. The answer check and the evidence check both go through it. After the fix all seven cases are rejected, and the review-1 and review-2 cases, `test_numeric_unit_followed_by_a_particle_is_accepted` and the `130,000,000원(부가세 포함)` test pass unchanged. `ruff check .` is clean, and the full gate `.venv\Scripts\python -m pytest -q tests` gave 340 passed. The hypothesis was not refuted by these cases. The Hangul continuation list is still an enumeration, as Counterevidence says, and left-side Hangul prefixes (제3회) were not tested.
+이 결과를 더한 커밋(부모 `4cf4036`, 코드는 `a82bdb0` 기준)에서 관측했습니다. 수정 전에는 불일치 사례 일곱 개가 모두 실패했습니다. `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch`의 `-130,000,000원`과 `△130,000,000원`이 `candidates.jsonl`에 들어갔고, `test_numeric_pair_must_be_the_whole_expression_in_evidence`는 `5%p`와 `5%포인트`에 대한 5/%, `3개년`에 대한 3/개, `10~12개월`에 대한 12/개월, `1, 2, 3개월`에 대한 123/개월에서 불일치를 내지 않았습니다. 대조군 `5%이다`에 대한 5/%와 `6 개월`에 대한 6/개월은 수정 전후 모두 통과했습니다. 수정은 `_contains`나 numeric.json을 건드리지 않고 가설을 따릅니다. `_pairs`는 명세 패턴을 `NUMBER_START`(값에 남기는 선택적 부호 `[+\-−±△▲]`, `[\d.,~∼〜+\-−±△▲]` 바로 뒤에서는 일치 없음)와 `UNIT_END`(뒤에 로마자나 `/`, `포인트`, `년`, `간`이 오지 않음)로 감쌉니다. NFC 글을 읽고 `_norm`은 잡은 값에만 적용합니다. 답 확인과 근거 확인 모두 이를 거칩니다. 수정 뒤 일곱 사례가 모두 거부되고, 리뷰 1·2 사례, `test_numeric_unit_followed_by_a_particle_is_accepted`, `130,000,000원(부가세 포함)` 테스트는 그대로 통과합니다. `ruff check .`는 깨끗하고, 전체 게이트 `.venv\Scripts\python -m pytest -q tests`는 340 passed였습니다. 이 사례들로 가설이 반박되지는 않았습니다. 반대 근거 절의 말대로 한글 이어짐 목록은 여전히 나열이며, 왼쪽의 한글 앞말(제3회)은 시험하지 않았습니다.
 
-## Unresolved limits
+## 남은 한계
 
-The Hangul right edge stays an enumeration, and Hangul prefixes on the left (제N회) are not covered. A complete answer needs morphological analysis, which is untested here. I ran no code: predicted outcomes, including the `1, 2, 3개월` merge, are from reading `_pairs` and `_norm`, not from execution. The Korean sources are secondary (a newspaper column and a vendor blog). The maximal-munch source is Wikipedia, because the EPFL PDF could not be read as text.
+한글 오른쪽 가장자리는 나열로 남고, 왼쪽의 한글 앞말(제N회)은 다루지 않습니다. 완전한 답에는 형태소 분석이 필요하며 여기서는 시험하지 않았습니다. 조사 단계에서는 코드를 돌리지 않았습니다. `1, 2, 3개월` 이어 붙이기를 포함한 예측 결과는 실행이 아니라 `_pairs`와 `_norm`을 읽어서 얻었습니다. 한국어 출처는 2차 자료(신문 칼럼과 업체 블로그)입니다. EPFL PDF를 글로 읽지 못해 가장 긴 일치 출처는 위키백과입니다.

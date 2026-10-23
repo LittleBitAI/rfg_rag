@@ -1,112 +1,112 @@
-# Review research — F1, cycle 1
+# 리뷰 조사 · F1, 1회차
 
-Draft research before the fix of review round 2 of PR #76, written 2026-10-20. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #76 리뷰 2회차의 수정 전에 2026-10-20에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-A golden comparison item is supposed to weigh two or more things of the same kind on one shared property and pick one. Some generated items instead compare different fields of a single requirement record (for example '요구사항 분류' vs '응낙수준': which one is '필수'?). Their values match the evidence, so the independent validator passes them, yet an RFP reader would never ask them. The invariant: a comparison item that reaches release must not have the fields (attributes) of one requirement record as its entities. `_comparison_rule` / `_field_comparison` in golden_pipeline/validation.py:657-685 is the only deterministic guard, and it must reject every such item at validation and again at release, while still admitting legitimate comparisons, including detail-table rows inside a requirement chunk ('실명 인증 | 3초' vs '로그인 | 1초').
+골든 비교 항목은 같은 종류의 대상 둘 이상을 같은 성질 하나로 견주어 하나를 골라야 합니다. 그런데 생성된 항목 중 일부는 요구사항 기록 하나의 서로 다른 칸을 견줍니다(예: '요구사항 분류'와 '응낙수준' 중 어느 쪽이 '필수'인가?). 값이 근거와 맞으므로 독립 검증기는 통과시키지만, 제안요청서를 읽는 사람이라면 이런 질문을 하지 않습니다. 지켜야 할 규칙: 공개에 이르는 비교 항목은 요구사항 기록 하나의 칸(속성)을 대상으로 삼으면 안 됩니다. golden_pipeline/validation.py:657-685의 `_comparison_rule` / `_field_comparison`이 유일한 결정적 막이이며, 이런 항목을 검증 때와 공개 때 모두 거부해야 합니다. 동시에 요구사항 청크 안의 세부 표 행('실명 인증 | 3초'와 '로그인 | 1초')을 포함한 정상 비교는 받아들여야 합니다.
 
-Trigger: repeat, rounds 1, 2.
+발생: 반복, 1·2회차.
 
 - [P1] [P1] golden_pipeline/validation.py:47 — 정상적인 요구사항 이름도 칸 이름으로 분류해 요구사항끼리의 비교를 오거절합니다
 
-## Failed fixes
+## 실패한 수정
 
-- fbf9c96 pulled the same-requirement field comparison out into a rule keyed on structure: every evidence ref carries requirement_ids and each entity sits next to its value as neighbouring cells ('대상 | 값'). That held for the observed item but is too broad. Detail tables inside a requirement chunk have exactly the same 'name | value' adjacency, so legitimate comparisons of two functions' response times were rejected as well. Adjacency describes the key-value layout of requirement chunks; it does not tell an attribute name apart from an entity name.
-- f0b918d narrowed the rule by also requiring every entity to fully match a hand-written vocabulary, REQUIREMENT_FIELD = r'요구사항\S*|산出정보|응낙수준|정의' (validation.py:47). That brought detail tables back but turned the rule into a closed list. The list covers neither bare '분류', '명칭' and '고유번호' (named in the rule's own rejection message at validation.py:662) nor '세부 내용' (named in the generator prompt at prompts/A/comparison.txt:10). The same goes for labels other RFPs use ('요구사항명', '상세설명', '제약사항', '수용여부', '비고'). Any field comparison whose labels fall outside the list passes again, which is why the finding comes back. Both fixes guessed at 'is this a field name' from surface features of the one observed bad item, rather than checking the property that makes a comparison valid.
+- fbf9c96은 같은 요구사항의 칸 비교를 구조 기준 규칙으로 뽑아냈습니다. 근거 참조마다 requirement_ids가 있고, 대상마다 값 바로 옆 칸에 있으면('대상 | 값') 거부합니다. 관측한 항목에는 맞았지만 너무 넓었습니다. 요구사항 청크 안의 세부 표도 똑같이 '이름 | 값'으로 붙어 있으므로, 두 기능의 응답 시간을 견주는 정상 비교도 거부됐습니다. 붙어 있다는 것은 요구사항 청크의 키-값 배치를 나타낼 뿐, 속성 이름과 대상 이름을 구별하지 못합니다.
+- f0b918d는 모든 대상이 손으로 쓴 어휘 REQUIREMENT_FIELD = r'요구사항\S*|산出정보|응낙수준|정의'(validation.py:47)와 완전히 일치해야 한다는 조건을 더해 규칙을 좁혔습니다. 세부 표는 되살렸지만 규칙이 닫힌 목록이 됐습니다. 목록에는 규칙 자신의 거부 문구(validation.py:662)에 나오는 '분류', '명칭', '고유번호' 단독형도, 생성기 프롬프트(prompts/A/comparison.txt:10)에 나오는 '세부 내용'도 없습니다. 다른 제안요청서가 쓰는 이름('요구사항명', '상세설명', '제약사항', '수용여부', '비고')도 마찬가지입니다. 목록 밖 이름을 쓰는 칸 비교는 다시 통과하므로, 지적이 돌아옵니다. 두 수정 모두 비교를 올바르게 만드는 성질을 확인하지 않고, 관측한 잘못된 항목 하나의 겉모습으로 '이것이 칸 이름인가'를 짐작했습니다.
 
-## Sources
+## 출처
 
-### S1 — HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering (Yang et al., 2018)
+### S1 — HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering (Yang 외, 2018)
 
 - URL: https://arxiv.org/html/1809.09600
-- Retrieved: 2026-10-20
-- Locator: Section 2 'Comparison Questions'; Section 4 'Multi-hop Reasoning Types'
-- Fragment: "comparing two entities from the same category usually results in interesting multi-hop questions"; "we manually curate 42 lists of similar entities"; "we randomly sample two paragraphs from the same list"; comparison questions "require the system to understand the properties in question about the two entities"; "answering these questions usually requires arithmetic comparison" ("usually", so not always arithmetic).
-- Applicability: Defines a valid comparison as same-category entities weighed on one property. A field comparison breaks this because its entities are attributes of one record, not same-category entities. That supports testing 'shared property', not 'label in a list'.
-- Counterevidence: HotpotQA is Wikipedia QA, not RFP tables, and says 'usually' arithmetic. Same-kind text-valued comparisons exist (e.g. nationality), so a quantity-only criterion is stricter than the source.
-- Validation: The fix holds if the existing same-kind cases (3초/1초, 42/103) stay admitted and the newly added field-label cases outside REQUIREMENT_FIELD are rejected, in the test at tests/golden/test_improvement.py:232 and in the offline re-run over local outputs.
+- 확인일: 2026-10-20
+- 위치: 2절 'Comparison Questions'; 4절 'Multi-hop Reasoning Types'
+- 인용: "comparing two entities from the same category usually results in interesting multi-hop questions"; "we manually curate 42 lists of similar entities"; "we randomly sample two paragraphs from the same list"; comparison questions "require the system to understand the properties in question about the two entities"; "answering these questions usually requires arithmetic comparison" ("usually"이므로 언제나 산술 비교는 아님).
+- 적용: 올바른 비교를 같은 범주의 대상을 성질 하나로 견주는 것으로 정의합니다. 칸 비교는 대상이 같은 범주의 대상이 아니라 기록 하나의 속성이므로 이를 어깁니다. '목록에 있는 이름'이 아니라 '같은 성질'을 시험하라는 근거가 됩니다.
+- 반대 근거: HotpotQA는 제안요청서 표가 아니라 위키백과 질의응답이며, '보통' 산술이라고 말합니다. 글 값인 같은 종류 비교(예: 국적)도 있으므로, 수량만 보는 기준은 출처보다 엄격합니다.
+- 검증: tests/golden/test_improvement.py:232의 테스트와 로컬 출력에 대한 오프라인 재실행에서, 기존 같은 종류 경우(3초/1초, 42/103)가 계속 받아들여지고 REQUIREMENT_FIELD 밖의 새 칸 이름 경우가 거부되면 수정이 버팁니다.
 
-### S2 — Web Table Extraction, Retrieval and Augmentation: A Survey (Zhang & Balog), summarising Crestan & Pantel 2011
+### S2 — Web Table Extraction, Retrieval and Augmentation: A Survey (Zhang & Balog), Crestan & Pantel 2011 요약
 
 - URL: https://arxiv.org/html/2002.00207
-- Retrieved: 2026-10-20
-- Locator: Section 2.2 'Types of Tables'
-- Fragment: "Listings refer to tables consisting a series of entities with a single attribute." "In terms of layout direction, these are further classified as vertical listings or horizontal listings." "Attribute/value tables describe a certain entity along with its attributes."
-- Applicability: A v12 requirement chunk is an attribute/value table (one requirement, its fields). A detail table inside it is a vertical listing. Both use 'name | value' rows, which explains why adjacency alone (fix 1) could not separate them.
-- Counterevidence: This is a secondary summary of the taxonomy, and real RFP chunks can mix both types in one chunk with no marker between them.
-- Validation: In the offline re-run, check that every item the new rule rejects cites a requirement-record attribute/value block and every item it admits compares rows of a listing. A counterexample in either direction refutes the mapping.
+- 확인일: 2026-10-20
+- 위치: 2.2절 'Types of Tables'
+- 인용: "Listings refer to tables consisting a series of entities with a single attribute." "In terms of layout direction, these are further classified as vertical listings or horizontal listings." "Attribute/value tables describe a certain entity along with its attributes."
+- 적용: v12 요구사항 청크는 속성/값 표(요구사항 하나와 그 칸들)입니다. 그 안의 세부 표는 세로 목록입니다. 둘 다 '이름 | 값' 행을 쓰므로, 붙어 있는지만 보는 것(수정 1)으로는 둘을 나눌 수 없었습니다.
+- 반대 근거: 분류 체계를 요약한 2차 자료이며, 실제 제안요청서 청크는 표시 없이 한 청크에 두 형식을 섞을 수 있습니다.
+- 검증: 오프라인 재실행에서 새 규칙이 거부하는 항목은 모두 요구사항 기록의 속성/값 블록을 인용하고, 받아들이는 항목은 모두 목록의 행을 견주는지 확인합니다. 어느 쪽이든 반례가 있으면 이 대응이 틀린 것입니다.
 
-### S3 — golden_pipeline/validation.py: _comparison_rule and _field_comparison
+### S3 — golden_pipeline/validation.py: _comparison_rule과 _field_comparison
 
 - URL: golden_pipeline/validation.py
-- Retrieved: 2026-10-20
-- Locator: lines 47, 657-685
-- Fragment: REQUIREMENT_FIELD = re.compile(r"요구사항\S*|산출정보|응낙수준|정의"); the rejection message reads "칸 비교: 요구사항 표의 서로 다른 칸 이름(고유번호 · 명칭 · 분류 등)을 대상으로 견줍니다"; _field_comparison returns False unless all evidence refs have requirement_ids AND every entity fullmatches REQUIREMENT_FIELD AND each (entity, value) pair is a pair of neighbouring cells.
-- Applicability: This is the code both fixes changed. The list does not match bare 고유번호/명칭/분류, even though its own message names them, so any field comparison with those labels passes.
-- Counterevidence: If generated entities always carry the '요구사항' prefix ('요구사항 분류'), the gap would be mostly theoretical. That needs checking against local outputs.
-- Validation: Call rule_reason with entities ['분류', '명칭'] on requirement evidence with adjacent values. It returns None now and must return the 칸 비교 reason after the fix.
+- 확인일: 2026-10-20
+- 위치: 47행, 657-685행
+- 인용: REQUIREMENT_FIELD = re.compile(r"요구사항\S*|산출정보|응낙수준|정의"); the rejection message reads "칸 비교: 요구사항 표의 서로 다른 칸 이름(고유번호 · 명칭 · 분류 등)을 대상으로 견줍니다"; _field_comparison returns False unless all evidence refs have requirement_ids AND every entity fullmatches REQUIREMENT_FIELD AND each (entity, value) pair is a pair of neighbouring cells.
+- 적용: 두 수정이 바꾼 코드입니다. 목록은 자기 문구가 이름을 대는데도 고유번호/명칭/분류 단독형과 맞지 않으므로, 그 이름을 쓰는 칸 비교는 모두 통과합니다.
+- 반대 근거: 생성된 대상에 언제나 '요구사항' 접두어가 붙는다면('요구사항 분류') 이 빈틈은 대부분 이론상의 것입니다. 로컬 출력으로 확인해야 합니다.
+- 검증: 값이 붙어 있는 요구사항 근거에 대해 entities ['분류', '명칭']으로 rule_reason을 부릅니다. 지금은 None을 돌려주며, 수정 뒤에는 칸 비교 이유를 돌려줘야 합니다.
 
 ### S4 — golden_pipeline/prompts/A/comparison.txt
 
 - URL: golden_pipeline/prompts/A/comparison.txt
-- Retrieved: 2026-10-20
-- Locator: lines 9-12
-- Fragment: "견주는 대상은 같은 종류의 것들이다 … 대상마다 같은 성질의 값을 견준다. 한 대상의 서로 다른 칸 · 항목 이름(요구사항 고유번호 · 명칭 · 분류 · 정의 · 세부 내용 같은 것)을 대상으로 삼지 않는다." and, as the fallback, "그 요구사항의 세부 내용에 나오는 대상 둘 (예: 두 기능의 처리 시간)을 견준다."
-- Applicability: The generator's own contract is 'same kind, same property', which is the criterion proposed for the rule. Its list includes 세부 내용, which REQUIREMENT_FIELD lacks. The prompt also steers generation toward detail-table comparisons, which the rule must admit.
-- Counterevidence: The prompt is guidance to an LLM, not proof of what items actually contain.
-- Validation: After the fix, the rule's criterion and the prompt's wording should state the same test (same-property values), with no separate label list to keep in sync. Check by reading both side by side in the diff.
+- 확인일: 2026-10-20
+- 위치: 9-12행
+- 인용: "견주는 대상은 같은 종류의 것들이다 … 대상마다 같은 성질의 값을 견준다. 한 대상의 서로 다른 칸 · 항목 이름(요구사항 고유번호 · 명칭 · 분류 · 정의 · 세부 내용 같은 것)을 대상으로 삼지 않는다." 그리고 대안으로 "그 요구사항의 세부 내용에 나오는 대상 둘 (예: 두 기능의 처리 시간)을 견준다."
+- 적용: 생성기 자신의 약속이 '같은 종류, 같은 성질'이며, 규칙에 제안하는 기준과 같습니다. 그 목록에는 REQUIREMENT_FIELD에 없는 세부 내용이 있습니다. 프롬프트는 규칙이 받아들여야 하는 세부 표 비교 쪽으로 생성을 이끌기도 합니다.
+- 반대 근거: 프롬프트는 LLM에 대한 안내이지, 항목에 실제로 무엇이 들었는지의 증거가 아닙니다.
+- 검증: 수정 뒤 규칙의 기준과 프롬프트의 문구는 같은 시험(같은 성질의 값)을 말해야 하고, 맞춰 둘 별도의 이름 목록이 없어야 합니다. diff에서 둘을 나란히 읽어 확인합니다.
 
 ### S5 — tests/golden/test_improvement.py: test_a_comparison_between_fields_of_one_requirement_is_ruled_out
 
 - URL: tests/golden/test_improvement.py
-- Retrieved: 2026-10-20
-- Locator: lines 232-246
-- Fragment: Three cases: (['QUR-003'], ['요구사항 분류', '응낙수준'], …) -> 'invalid_comparison'; (['QUR-003'], ['실명 인증', '로그인'], {'3초', '1초'}) -> None; ([], ['목표경영', '과제관리'], {'42', '103'}) -> None.
-- Applicability: Covers only labels inside the current list, so it cannot detect the closed-list gap. The two admitted cases both have same-unit quantity values, consistent with the proposed criterion.
-- Counterevidence: There is no case with same-kind text values inside requirement evidence, so the proposed rule's over-rejection risk is untested.
-- Validation: Add one out-of-list field-label case (expected invalid_comparison) next to the existing three. All four must pass with the new rule.
+- 확인일: 2026-10-20
+- 위치: 232-246행
+- 인용: Three cases: (['QUR-003'], ['요구사항 분류', '응낙수준'], …) -> 'invalid_comparison'; (['QUR-003'], ['실명 인증', '로그인'], {'3초', '1초'}) -> None; ([], ['목표경영', '과제관리'], {'42', '103'}) -> None.
+- 적용: 지금 목록 안의 이름만 다루므로 닫힌 목록의 빈틈을 잡을 수 없습니다. 받아들이는 두 경우 모두 같은 단위의 수량 값이며, 제안하는 기준과 맞습니다.
+- 반대 근거: 요구사항 근거 안에서 같은 종류의 글 값을 쓰는 경우가 없으므로, 제안하는 규칙의 지나친 거부 위험은 시험되지 않았습니다.
+- 검증: 기존 세 경우 옆에 목록 밖 칸 이름 경우 하나(invalid_comparison 기대)를 더합니다. 넷 모두 새 규칙에서 통과해야 합니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): A valid comparison question pairs entities of the same category and compares them on one property, usually by arithmetic comparison.
-- C2 (source; S2): Attribute/value tables describe one entity with its attributes, while listings hold many entities with a single attribute, and both can be laid out as name-value rows.
-- C3 (interpretation; S1, S2): Fields of one requirement record are attributes of a single entity, so comparing them breaks the same-category, same-property condition; detail-table rows with same-unit values satisfy it.
-- C4 (interpretation; S3, S4, S5): The current REQUIREMENT_FIELD list omits field labels that the rule's own message and the generator prompt name (bare 고유번호, 명칭, 분류, and 세부 내용), so field comparisons using them pass the guard; the existing test cannot detect this.
-- C5 (interpretation; S4, S5): Replacing the label list with a same-property test on the values (shared quantity unit, via validation.quantities), behind fix 1's structural precondition, matches the prompt's contract and keeps the existing admitted cases admitted.
+- C1 (출처; S1): 올바른 비교 질문은 같은 범주의 대상을 짝지어 성질 하나로, 보통 산술 비교로 견줍니다.
+- C2 (출처; S2): 속성/값 표는 대상 하나를 그 속성과 함께 나타내고, 목록은 여러 대상을 속성 하나로 담으며, 둘 다 이름-값 행으로 배치될 수 있습니다.
+- C3 (해석; S1, S2): 요구사항 기록 하나의 칸은 한 대상의 속성이므로, 이를 견주면 같은 범주·같은 성질 조건을 어깁니다. 같은 단위 값을 가진 세부 표 행은 조건을 만족합니다.
+- C4 (해석; S3, S4, S5): 지금 REQUIREMENT_FIELD 목록은 규칙 자신의 문구와 생성기 프롬프트가 대는 칸 이름(고유번호, 명칭, 분류 단독형과 세부 내용)을 빠뜨리므로, 그 이름을 쓰는 칸 비교가 막이를 통과합니다. 기존 테스트는 이를 잡지 못합니다.
+- C5 (해석; S4, S5): 수정 1의 구조 전제 뒤에서, 이름 목록을 값에 대한 같은 성질 시험(validation.quantities로 본 공통 수량 단위)으로 바꾸면 프롬프트의 약속과 맞고, 기존에 받아들이던 경우도 계속 받아들입니다.
 
-## Core theory
+## 핵심 원리
 
-HotpotQA's comparison questions are built by pairing entities 'from the same category', sampled from curated 'lists of similar entities', and answering them requires understanding 'the properties in question about the two entities', often by 'arithmetic comparison'. Web-table taxonomies (Crestan & Pantel 2011, as summarised in the survey) separate 'Attribute/value tables', which 'describe a certain entity along with its attributes', from 'Listings', which are 'a series of entities with a single attribute'. A valid comparison draws from the listing reading (many entities, one attribute). A field comparison reads an attribute/value table as if it were a listing, treating one entity's attribute names as entities.
+HotpotQA의 비교 질문은 엄선한 'lists of similar entities'에서 뽑은 'from the same category' 대상을 짝지어 만들며, 답하려면 'the properties in question about the two entities'를, 흔히 'arithmetic comparison'으로 이해해야 합니다. 웹 표 분류 체계(조사 논문이 요약한 Crestan & Pantel 2011)는 'describe a certain entity along with its attributes'인 'Attribute/value tables'와, 'a series of entities with a single attribute'인 'Listings'를 나눕니다. 올바른 비교는 목록으로 읽은 데서(여러 대상, 속성 하나) 나옵니다. 칸 비교는 속성/값 표를 목록처럼 읽어, 한 대상의 속성 이름을 대상으로 다룹니다.
 
-## Applicability
+## 적용
 
-A v12 requirement chunk is an attribute/value table: one requirement (requirement_ids non-empty) with rows like '요구사항 고유번호 | SFR-001', '요구사항 분류 | 품질 요구사항', '응낙수준 | 필수'. A detail table inside it ('실명 인증 | 3초', '로그인 | 1초') is a vertical listing: several entities, one attribute (time). Both have the same 'name | value' adjacency, which is why fix 1 could not tell them apart. They differ in whether the values share one attribute, which shows up here as values with the same unit. This applies in validation.py `_field_comparison` (called from `_comparison_rule` -> `_topic_rule` -> `rule_reason`, at validation.py:244, :312 and :605, i.e. screening, release and verdict). It also needs the comparison prompt (prompts/A/comparison.txt:9-12) to stay consistent with whatever list or criterion the rule uses.
+v12 요구사항 청크는 속성/값 표입니다. 요구사항 하나(requirement_ids가 비어 있지 않음)에 '요구사항 고유번호 | SFR-001', '요구사항 분류 | 품질 요구사항', '응낙수준 | 필수' 같은 행이 있습니다. 그 안의 세부 표('실명 인증 | 3초', '로그인 | 1초')는 세로 목록입니다. 대상 여럿에 속성(시간) 하나입니다. 둘 다 '이름 | 값'으로 붙어 있으므로 수정 1은 둘을 구별할 수 없었습니다. 둘의 차이는 값들이 속성 하나를 함께 갖는지이며, 여기서는 같은 단위의 값으로 드러납니다. 이는 validation.py `_field_comparison`(`_comparison_rule` -> `_topic_rule` -> `rule_reason`에서 불림, validation.py:244, :312, :605, 곧 선별, 공개, 판정)에 적용됩니다. 비교 프롬프트(prompts/A/comparison.txt:9-12)도 규칙이 쓰는 목록이나 기준과 맞아야 합니다.
 
-## Hypothesis
+## 가설
 
-The root cause is that the rule tries to decide 'is this entity a field name' with a lexical or layout heuristic. Neither layout nor a name list separates attributes of one record from instances of one type. What separates them is whether the compared values share a property. Fields of one record have heterogeneous values (a category label vs a compliance level vs an ID). Legitimate comparisons, including detail-table rows, have values of the same kind (both durations, both counts, both amounts, both dates). A rule that keeps fix 1's structural precondition (requirement evidence + 'name | value' adjacency) and replaces the REQUIREMENT_FIELD list with 'the values do not share a comparable quantity/unit (via the existing validation.quantities)' would reject field comparisons whatever their labels, and admit '3초 vs 1초' and '42 vs 103'.
+근본 원인은 규칙이 '이 대상이 칸 이름인가'를 어휘나 배치 휴리스틱으로 정하려 한다는 것입니다. 배치도 이름 목록도 한 기록의 속성과 한 종류의 여러 사례를 나누지 못합니다. 둘을 나누는 것은 견주는 값들이 성질을 함께 갖는지입니다. 한 기록의 칸들은 값의 종류가 서로 다릅니다(분류 이름, 응낙 수준, ID). 세부 표 행을 포함한 정상 비교는 값의 종류가 같습니다(둘 다 시간, 둘 다 개수, 둘 다 금액, 둘 다 날짜). 수정 1의 구조 전제(요구사항 근거 + '이름 | 값'으로 붙어 있음)는 유지하고, REQUIREMENT_FIELD 목록을 '값들이 견줄 수 있는 수량/단위를 함께 갖지 않음(기존 validation.quantities로 봄)'으로 바꾸면, 이름이 무엇이든 칸 비교는 거부하고 '3초 대 1초'와 '42 대 103'은 받아들입니다.
 
-## Counterevidence
+## 반대 근거
 
-- Some legitimate comparisons have non-quantity values of the same kind, such as two requirements' 응낙수준 ('필수' vs '선택') or two items' 기준 text. A 'no shared unit' test inside requirement evidence could reject them. Mitigation: the structural precondition (adjacency within requirement evidence) still applies, and comparisons across two requirements normally use requirement IDs or names as entities, not field labels, so this may be rare. It has to be measured, not assumed.
-- Detail tables with text values ('실명 인증 | 공인인증서' vs '로그인 | 비밀번호') would also be rejected. Arguably they are not comparisons in HotpotQA's sense anyway, since nothing orders them, but that is a judgment call the reviewer may not share.
-- The review text for this round was not available to me. The refused finding might instead concern the other half of f0b918d (replacement split keeping the new release's records, split.py:60-93). If so, this page is about the wrong finding.
+- 어떤 정상 비교는 수량이 아닌 같은 종류의 값을 씁니다. 두 요구사항의 응낙수준('필수'와 '선택')이나 두 항목의 기준 글 같은 것입니다. 요구사항 근거 안의 '공통 단위 없음' 시험은 이를 거부할 수 있습니다. 완화: 구조 전제(요구사항 근거 안에서 붙어 있음)는 여전히 적용되고, 두 요구사항을 견주는 비교는 보통 칸 이름이 아니라 요구사항 ID나 이름을 대상으로 쓰므로 드물 수 있습니다. 가정하지 말고 재야 합니다.
+- 글 값의 세부 표('실명 인증 | 공인인증서'와 '로그인 | 비밀번호')도 거부됩니다. 순서를 매길 것이 없으므로 HotpotQA의 뜻으로는 애초에 비교가 아니라고 볼 수도 있지만, 리뷰어가 동의하지 않을 수 있는 판단입니다.
+- 이번 회차의 리뷰 글은 볼 수 없었습니다. 거부된 지적이 f0b918d의 다른 절반(새 공개의 기록을 유지하는 대체 분할, split.py:60-93)에 관한 것일 수도 있습니다. 그렇다면 이 문서는 엉뚱한 지적을 다룹니다.
 
-## Alternatives
+## 다른 방법
 
-- Extend REQUIREMENT_FIELD with the missing labels (분류, 명칭, 고유번호, 세부내용, …). That is the smallest diff, but it repeats fix 2's failure mode: a closed list that drifts from the prompt, the message and new documents. Not first.
-- Learn field labels from the corpus: a key cell that recurs as a left-hand label across chunks of two or more distinct requirement_ids in the v12 package is a schema field; detail-table entities appear under one requirement only. This fits the attribute/value theory better and handles text values, but rule_reason receives only the item's planned units, so it needs the corpus vocabulary loaded and passed in. More plumbing, so second choice if the value-type test over-rejects.
-- Rely on the generator prompt alone (comparison.txt:10 already forbids field-name entities). Generation still produced such items, and the guard exists precisely because the prompt is not enough. Rejected.
+- REQUIREMENT_FIELD에 빠진 이름(분류, 명칭, 고유번호, 세부내용, …)을 더하기. 변경이 가장 작지만, 수정 2의 실패 방식을 되풀이합니다. 프롬프트, 문구, 새 문서와 어긋나는 닫힌 목록입니다. 첫 선택이 아닙니다.
+- 코퍼스에서 칸 이름 배우기: v12 묶음에서 서로 다른 requirement_ids 둘 이상의 청크에 왼쪽 이름으로 되풀이되는 키 칸은 스키마 칸이고, 세부 표 대상은 요구사항 하나에만 나옵니다. 속성/값 이론에 더 잘 맞고 글 값도 다루지만, rule_reason은 항목의 계획 단위만 받으므로 코퍼스 어휘를 읽어 넘겨줘야 합니다. 연결할 것이 많아, 값 종류 시험이 지나치게 거부할 때의 두 번째 선택입니다.
+- 생성기 프롬프트에만 기대기(comparison.txt:10이 이미 칸 이름 대상을 금지함). 생성은 여전히 그런 항목을 만들었고, 막이는 바로 프롬프트만으로는 부족하기 때문에 있습니다. 택하지 않았습니다.
 
-## Experiment
+## 실험
 
-Offline, with no API calls: (1) add cases to tests/golden/test_improvement.py:232 where entities are field labels outside the current list ('세부 내용' vs '요구사항 명칭', bare '분류' vs '명칭') with heterogeneous text values. Under the current code rule_reason returns None, which confirms the gap. Under the proposed value-type rule they return invalid_comparison, while the existing '실명 인증 3초 / 로그인 1초' and '목표경영 42 / 과제관리 103' cases still return None. (2) Run rule_reason over every comparison item in the local golden_pipeline/outputs runs and releases with the old and the proposed rule. List the items whose verdict changes and read each one by hand. The hypothesis holds if every newly rejected item compares fields of one record and no legitimate same-kind comparison is newly rejected; any such loss refutes the value-type criterion and points to the corpus-vocabulary alternative.
+API 호출 없이 오프라인으로: (1) tests/golden/test_improvement.py:232에 대상이 지금 목록 밖 칸 이름('세부 내용'과 '요구사항 명칭', '분류'와 '명칭' 단독형)이고 값이 서로 다른 글인 경우를 더합니다. 지금 코드에서는 rule_reason이 None을 돌려주며, 빈틈이 확인됩니다. 제안하는 값 종류 규칙에서는 invalid_comparison을 돌려주고, 기존 '실명 인증 3초 / 로그인 1초'와 '목표경영 42 / 과제관리 103' 경우는 여전히 None을 돌려줍니다. (2) 로컬 golden_pipeline/outputs의 실행과 공개에 있는 모든 비교 항목에 옛 규칙과 제안 규칙으로 rule_reason을 돌립니다. 판정이 바뀌는 항목을 나열하고 하나씩 손으로 읽습니다. 새로 거부되는 항목이 모두 한 기록의 칸을 견주고 정상적인 같은 종류 비교가 새로 거부되지 않으면 가설이 맞습니다. 그런 손실이 하나라도 있으면 값 종류 기준이 틀린 것이고, 코퍼스 어휘 방법을 가리킵니다.
 
-## Result
+## 결과
 
-Draft observation, not verified beyond what is listed here. The fix is in the commit that carries this page, on top of 740f58b ("golden: 칸 비교는 값끼리 같은 단위가 없을 때만 거절한다"). It drops REQUIREMENT_FIELD; `_field_comparison` now returns true when the evidence is requirement evidence, every entity sits next to its value, and the values share no quantity unit (`validation.quantities`). (1) In tests/golden/test_improvement.py::test_a_comparison_between_fields_of_one_requirement_is_ruled_out, the old code failed two new cases: bare labels '고유번호' / '분    류' returned None instead of invalid_comparison (the gap this page predicted), and the reviewer's '요구사항 A | 3초' / '요구사항 B | 5초' was rejected. The new rule passes all five cases, including '실명 인증 3초 / 로그인 1초' and the non-requirement '목표경영 42 / 과제관리 103'. (2) Offline re-run over 856 unique local comparison items (all runs' accepted/candidates plus releases), with no API calls: the old rule rejected 211 and the new one 224. All 211 stay rejected. I read the 13 newly rejected by hand, and every one compares fields of one requirement record (13 of 13). No item with adjacent values of the same unit exists in the data, so the measured set loses nothing legitimate, but it also has no positive example of an admitted detail-table comparison. The release final2 still rejects the same 38 of 184. Gate: 1447 passed. Limits that remain: same-kind values that are text, or bare numbers without a unit, in requirement evidence with adjacent cells would be rejected; none occur in the local outputs.
+관측한 초안이며, 여기 적은 것 말고는 검증하지 않았습니다. 수정은 740f58b("golden: 칸 비교는 값끼리 같은 단위가 없을 때만 거절한다") 위의, 이 문서를 담은 커밋에 있습니다. REQUIREMENT_FIELD를 없앴고, 이제 `_field_comparison`은 근거가 요구사항 근거이고, 모든 대상이 자기 값 옆에 있으며, 값들이 수량 단위를 함께 갖지 않을 때(`validation.quantities`) 참을 돌려줍니다. (1) tests/golden/test_improvement.py::test_a_comparison_between_fields_of_one_requirement_is_ruled_out에서 옛 코드는 새 경우 두 개에 실패했습니다. 이름만 있는 '고유번호' / '분    류'는 invalid_comparison 대신 None을 돌려줬고(이 문서가 예측한 빈틈), 리뷰어의 '요구사항 A | 3초' / '요구사항 B | 5초'는 거부됐습니다. 새 규칙은 '실명 인증 3초 / 로그인 1초'와 요구사항이 아닌 '목표경영 42 / 과제관리 103'을 포함한 다섯 경우를 모두 통과합니다. (2) 로컬의 서로 다른 비교 항목 856개(모든 실행의 accepted/candidates와 공개)에 대한 오프라인 재실행, API 호출 없음: 옛 규칙은 211개, 새 규칙은 224개를 거부했습니다. 211개는 모두 계속 거부됩니다. 새로 거부된 13개를 손으로 읽었고, 모두 요구사항 기록 하나의 칸을 견줍니다(13개 중 13개). 같은 단위 값이 붙어 있는 항목은 데이터에 없으므로, 잰 집합에서 정상 항목을 잃지는 않지만, 받아들여지는 세부 표 비교의 긍정 사례도 없습니다. 공개 final2는 여전히 184개 중 같은 38개를 거부합니다. 검사: 1447 passed. 남은 한계: 칸이 붙어 있는 요구사항 근거에서 글이거나 단위 없는 맨 숫자인 같은 종류 값은 거부됩니다. 로컬 출력에는 그런 경우가 없습니다.
 
-## Unresolved limits
+## 남은 한계
 
-The exact wording of the refused finding was not visible to me in this turn. This rests on the branch's last two commits and the code they touched. I have not counted how often legitimate non-quantity comparisons occur inside requirement evidence. The web-table taxonomy quote comes from a secondary survey, not the Crestan & Pantel paper itself.
+이번 단계에서는 거부된 지적의 정확한 문구를 볼 수 없었습니다. 이 문서는 브랜치의 마지막 두 커밋과 그 커밋이 건드린 코드에 기댑니다. 요구사항 근거 안에서 수량이 아닌 정상 비교가 얼마나 자주 나오는지는 세지 않았습니다. 웹 표 분류 체계 인용은 Crestan & Pantel 논문 자체가 아니라 2차 조사 논문에서 왔습니다.

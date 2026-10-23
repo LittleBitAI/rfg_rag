@@ -1,164 +1,164 @@
-# Review research — F1, cycle 1
+# 리뷰 조사 · F1, 1회차
 
-집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
+집계 결과와 측정 조건은 Git에 보관하고, 실제 질문·정답·근거·OCR 텍스트와 레코드별 내보내기는 Git에서 제외된 로컬 `artifacts/`에 보관합니다.
 
-복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행의 역사적 관측이며 이번 작업에서 재측정한 결과가 아니다.
+복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행에서 관측한 과거 기록이며, 이번 작업에서 다시 측정한 결과가 아닙니다.
 
-Draft research before the fix of review round 2 of PR #64, written 2026-10-17. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #64 리뷰 2회차의 수정 전에 2026-10-17에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-F1 concerns compatibility between persisted BM25 tokens and the code querying them. The original change allowed new query tokenization against old corpus tokens. Its repair prevents that forward mismatch, but changes bm25_tokens.json from an array into an object that the rollback revision cannot consume correctly. A safe transition must preserve both the token representation and the tokenizer semantics, or require a coordinated rebuild before the selected application revision starts searching. [C1, C2, C3, C4]
+F1은 저장된 BM25 토큰과 그것을 조회하는 코드 사이의 호환성에 관한 문제입니다. 원래 변경은 새 질문 토큰화를 옛 말뭉치 토큰에 쓰게 허용했습니다. 그 수정은 이 앞쪽 불일치를 막지만, bm25_tokens.json을 배열에서 객체로 바꿔 되돌린 리비전이 제대로 읽지 못하게 합니다. 안전한 전환은 토큰 표현과 토크나이저 의미를 모두 지키거나, 고른 앱 리비전이 검색을 시작하기 전에 맞춰서 다시 만들기를 요구해야 합니다. [C1, C2, C3, C4]
 
-Trigger: repeat, rounds 1, 2.
+발생: 반복, 1·2회차.
 
-- [P1] [P1] rag/retrieval/indexing.py:156 — The new BM25 payload makes a code rollback fail
+- [P1] [P1] rag/retrieval/indexing.py:156 — 새 BM25 저장 형식 때문에 코드를 되돌리면 실패합니다
 
-## Failed fixes
+## 실패한 수정
 
-- Original implementation at 1f1b041: adopted dictionary expansion and noise removal without identifying the tokenizer generation in persisted tokens. Existing-index reuse could combine old corpus segmentation with new query segmentation. The recorded 개인정보처리시스템 probe demonstrates the resulting loss of overlap. This was the original defect, rather than an earlier repair. [C2]
-- Round-1 repair at 3ca3af0: stored {tokenizer, tokens}, rejected missing or mismatched fingerprints before loading FAISS or the embedding model, documented an upgrade rebuild, and tested rejection followed by successful current-generation searching. This repairs the forward transition. It does not prepare the existing rollback loader to read the new object or provide a verified downgrade procedure. [C3, C4, C6, C7]
-- The repair relied on the existing staged directory publication boundary. That boundary preserves the previous index when construction or publication raises an exception; after successful publication, TemporaryDirectory cleanup removes the previous directory. It therefore supplies no retained artifact for a later application rollback. [C5]
+- 1f1b041의 원래 구현: 저장된 토큰에 토크나이저 세대를 표시하지 않은 채 사전 확장과 잡음 제거를 채택했습니다. 기존 index를 다시 쓰면 옛 말뭉치 분절과 새 질문 분절이 섞일 수 있었습니다. 기록된 개인정보처리시스템 확인은 그 결과 겹침이 사라지는 것을 보여 줍니다. 이것은 앞선 수정이 아니라 원래 결함이었습니다. [C2]
+- 3ca3af0의 1회차 수정: {tokenizer, tokens}를 저장하고, FAISS나 임베딩 모델을 읽기 전에 지문이 없거나 다르면 거부하며, 업그레이드 시 다시 만들기를 문서로 적고, 거부 뒤 지금 세대 검색이 성공하는 것을 테스트했습니다. 이것은 앞쪽 전환을 고칩니다. 기존의 되돌린 로더가 새 객체를 읽게 하거나, 검증된 되돌리기 절차를 주지는 않습니다. [C3, C4, C6, C7]
+- 수정은 기존의 스테이징 폴더 공개 경계에 기댔습니다. 그 경계는 만들기나 공개가 예외를 내면 이전 index를 지키지만, 공개에 성공하면 TemporaryDirectory 정리가 이전 폴더를 지웁니다. 그래서 나중에 앱을 되돌릴 때 쓸 보존 산출물을 남기지 않습니다. [C5]
 
-## Sources
+## 출처
 
-### S1 — AWS Builders' Library — Ensuring rollback safety during deployments
+### S1 — AWS Builders' Library: 배포 중 되돌리기 안전 보장
 
 - URL: https://aws.amazon.com/builders-library/ensuring-rollback-safety-during-deployments/
-- Retrieved: 2026-10-17
-- Locator: Standalone vs. distributed software deployments; Verifying that a change is safe for rollback
-- Fragment: "If the standalone software maintains state, then the new version must read ... data written ... by the old version and vice versa."
-- Applicability: The index remains on disk across application revisions. The standalone persistent-state condition applies without assuming a distributed deployment.
-- Counterevidence: The article's distributed rollout machinery is unnecessary here. Restoring or rebuilding compatible derived state is an application-specific alternative to mutual readability.
-- Validation: Exercise actual old and new readers across the upgrade and downgrade, including the coordinated restoration or rebuild.
+- 확인일: 2026-10-17
+- 위치: Standalone vs. distributed software deployments; Verifying that a change is safe for rollback
+- 인용: "If the standalone software maintains state, then the new version must read ... data written ... by the old version and vice versa."
+- 적용: index는 앱 리비전이 바뀌어도 디스크에 남습니다. 분산 배포를 가정하지 않아도, 단독 소프트웨어의 영속 상태 조건이 적용됩니다.
+- 반대 근거: 글의 분산 배포 장치는 여기 필요 없습니다. 맞는 파생 상태를 되살리거나 다시 만드는 것은, 서로 읽을 수 있게 하는 것 대신 쓸 수 있는 앱별 방법입니다.
+- 검증: 실제 옛 로더와 새 로더로 업그레이드와 되돌리기를 모두 해 보며, 맞춰서 하는 복원이나 다시 만들기도 포함합니다.
 
-### S2 — Rank-BM25 — corpus and query preprocessing contract
+### S2 — Rank-BM25: 말뭉치와 질문 전처리 약속
 
 - URL: https://raw.githubusercontent.com/dorianbrown/rank_bm25/master/README.md
-- Retrieved: 2026-10-17
-- Locator: Usage — Initializing and Ranking of documents, lines 45–58
-- Fragment: "a list of lists of strings"; "apply the same preprocessing steps we did to the documents"
-- Applicability: Explains why both the original tokenizer mismatch and an array-only downgrade conversion can produce incorrect retrieval.
-- Counterevidence: Equivalent preprocessing need not require byte-identical implementation. Here the repository records an actual segmentation difference.
-- Validation: Compare corpus tokens and BM25-only search behavior with the corresponding revision's query tokenizer.
+- 확인일: 2026-10-17
+- 위치: Usage — Initializing and Ranking of documents, 45–58행
+- 인용: "a list of lists of strings"; "apply the same preprocessing steps we did to the documents"
+- 적용: 원래의 토크나이저 불일치와, 배열만 되돌리는 변환이 둘 다 틀린 검색을 낼 수 있는 이유를 설명합니다.
+- 반대 근거: 같은 전처리가 바이트까지 같은 구현을 뜻할 필요는 없습니다. 여기서는 저장소가 실제 분절 차이를 기록합니다.
+- 검증: 말뭉치 토큰과 BM25만 쓰는 검색 동작을 해당 리비전의 질문 토크나이저와 비교합니다.
 
-### S3 — Rank-BM25 — constructor iteration and score allocation
+### S3 — Rank-BM25: 생성자 반복과 점수 할당
 
 - URL: https://raw.githubusercontent.com/dorianbrown/rank_bm25/master/rank_bm25.py
-- Retrieved: 2026-10-17
-- Locator: BM25.__init__, BM25._initialize, BM25Okapi.get_scores
-- Fragment: "if tokenizer:\n            corpus = self._tokenize_corpus(corpus)"; "for document in corpus:"; "self.corpus_size += 1"; "score = np.zeros(self.corpus_size)"
-- Applicability: The old loader supplies no tokenizer callback. Passing the two-key object consequently creates two corpus entries and two scores.
-- Counterevidence: This is fetched upstream code, not verification of the installed package. Confirm its behavior in the actual rollback environment.
-- Validation: Measure corpus_size and get_scores(...).shape using the actual rollback loader and package.
+- 확인일: 2026-10-17
+- 위치: BM25.__init__, BM25._initialize, BM25Okapi.get_scores
+- 인용: "if tokenizer:\n            corpus = self._tokenize_corpus(corpus)"; "for document in corpus:"; "self.corpus_size += 1"; "score = np.zeros(self.corpus_size)"
+- 적용: 옛 로더는 tokenizer 콜백을 주지 않습니다. 그래서 키 두 개짜리 객체를 넘기면 말뭉치 항목 두 개와 점수 두 개가 생깁니다.
+- 반대 근거: 가져온 원본 코드이지, 설치된 패키지를 검증한 것이 아닙니다. 실제 되돌리기 환경에서 동작을 확인해야 합니다.
+- 검증: 실제 되돌린 로더와 패키지로 corpus_size와 get_scores(...).shape를 잽니다.
 
-### S4 — NumPy — general broadcasting rules
+### S4 — NumPy: 일반 브로드캐스팅 규칙
 
 - URL: https://numpy.org/doc/stable/user/basics.broadcasting.html
-- Retrieved: 2026-10-17
-- Locator: General broadcasting rules
-- Fragment: "Two dimensions are compatible when"; "they are equal, or"; "one of them is 1."
-- Applicability: A two-score vector cannot broadcast with the three-chunk regression mask or the recorded 18,989-chunk corpus mask.
-- Counterevidence: One- and two-chunk fixtures can avoid this exception, which is why successful construction or a tiny search is insufficient evidence.
-- Validation: Use at least three chunks and assert the score-vector length as well as successful search.
+- 확인일: 2026-10-17
+- 위치: General broadcasting rules
+- 인용: "Two dimensions are compatible when"; "they are equal, or"; "one of them is 1."
+- 적용: 점수 두 개짜리 벡터는 세 청크 회귀 마스크나 기록된 18,989청크 말뭉치 마스크와 브로드캐스팅할 수 없습니다.
+- 반대 근거: 청크가 하나나 둘인 테스트 데이터는 이 예외를 피할 수 있으므로, 만들기 성공이나 아주 작은 검색은 충분한 증거가 아닙니다.
+- 검증: 청크를 셋 이상 쓰고, 검색 성공과 함께 점수 벡터 길이도 단정합니다.
 
-### S5 — Index construction, tokenizer fingerprint and temporary publication
+### S5 — index 만들기, 토크나이저 지문, 임시 공개
 
 - URL: rag/retrieval/indexing.py
-- Retrieved: 2026-10-17
-- Locator: KiwiTokenizer.__init__, lines 91–103; build_index/_publish_index, lines 124–144; _build_index, lines 147–158; PR diff removed array writer
-- Fragment: self.fingerprint = {"source_sha256": sha256(source).hexdigest(), "dictionary_sha256": sha256(dictionary).hexdigest(), **{name: version(name) for name in ("kiwipiepy", "kiwipiepy_model", "hanja")}}; with TemporaryDirectory(prefix=f".{out_dir.name}-", dir=out_dir.parent) as folder: ... _publish_index(staged, out_dir, workspace / "previous"); except BaseException: if previous.exists(): previous.rename(out_dir); payload = {"tokenizer": tokenizer.fingerprint, "tokens": tokens}
-- Applicability: Shows the new artifact shape, the coupled directory publication, and why previous artifacts survive publication failure but are not retained after successful context cleanup.
-- Counterevidence: The existing exception restoration is useful and should remain. It makes no promise of a retained backup, process-crash recovery or concurrent-reader coordination.
-- Validation: Test successful upgrade followed by downgrade separately from injected build/publication failures; verify complete artifact generations.
+- 확인일: 2026-10-17
+- 위치: KiwiTokenizer.__init__, 91–103행; build_index/_publish_index, 124–144행; _build_index, 147–158행; PR diff에서 지운 배열 저장 코드
+- 인용: self.fingerprint = {"source_sha256": sha256(source).hexdigest(), "dictionary_sha256": sha256(dictionary).hexdigest(), **{name: version(name) for name in ("kiwipiepy", "kiwipiepy_model", "hanja")}}; with TemporaryDirectory(prefix=f".{out_dir.name}-", dir=out_dir.parent) as folder: ... _publish_index(staged, out_dir, workspace / "previous"); except BaseException: if previous.exists(): previous.rename(out_dir); payload = {"tokenizer": tokenizer.fingerprint, "tokens": tokens}
+- 적용: 새 산출물 형태, 함께 묶인 폴더 공개, 그리고 이전 산출물이 공개 실패에서는 살아남지만 컨텍스트 정리에 성공하면 남지 않는 이유를 보여 줍니다.
+- 반대 근거: 기존 예외 복원은 쓸모 있으므로 남겨야 합니다. 백업 보존, 프로세스 비정상 종료 복구, 동시 읽기 조율은 약속하지 않습니다.
+- 검증: 성공한 업그레이드 뒤 되돌리기를, 일부러 일으킨 만들기·공개 실패와 따로 시험하고, 산출물 세대가 온전한지 확인합니다.
 
-### S6 — HybridIndex — current guard, old loader and sparse ranking
+### S6 — HybridIndex: 지금 막이, 옛 로더, 희소 순위
 
 - URL: rag/retrieval/retrieval.py
-- Retrieved: 2026-10-17
-- Locator: Current lines 62–76, 158–188; PR diff lines 3503–3505 expose the base loader
-- Fragment: Current: if not isinstance(stored, dict) or stored.get("tokenizer") != self.tokenizer.fingerprint: raise ValueError(...); self.bm25 = BM25Okapi(stored["tokens"], ...). Removed base lines: tokens = json.loads((artifacts / "index" / "bm25_tokens.json").read_text(encoding="utf-8")); self.bm25 = BM25Okapi(tokens, ...). Ranking: sparse_raw = self._sparse(question, allowed) if w < 1 else {}; scores = np.where(allowed, self.bm25.get_scores(self.tokenizer(question)), 0.0).
-- Applicability: Direct evidence of the two reader contracts and the point where a wrong corpus length reaches the chunk mask.
-- Counterevidence: Dense-only ordinary ranking skips sparse scoring. Filter-route queries may also avoid that immediate failure.
-- Validation: Run the actual base constructor and an ordinary query at dense_weight=0 against candidate-built artifacts, then repeat after the downgrade procedure.
+- 확인일: 2026-10-17
+- 위치: 지금 62–76, 158–188행; PR diff 3503–3505행이 base 로더를 보여 줌
+- 인용: 지금: if not isinstance(stored, dict) or stored.get("tokenizer") != self.tokenizer.fingerprint: raise ValueError(...); self.bm25 = BM25Okapi(stored["tokens"], ...). 지운 base 행: tokens = json.loads((artifacts / "index" / "bm25_tokens.json").read_text(encoding="utf-8")); self.bm25 = BM25Okapi(tokens, ...). 순위: sparse_raw = self._sparse(question, allowed) if w < 1 else {}; scores = np.where(allowed, self.bm25.get_scores(self.tokenizer(question)), 0.0).
+- 적용: 두 로더의 약속과, 틀린 말뭉치 길이가 청크 마스크에 닿는 지점의 직접 증거입니다.
+- 반대 근거: 벡터 검색만 쓰는 보통 순위는 희소 점수를 건너뜁니다. 필터 경로 질문도 그 즉시 실패를 피할 수 있습니다.
+- 검증: 후보 코드로 만든 산출물에 실제 base 생성자와 dense_weight=0의 보통 질문을 돌리고, 되돌리기 절차 뒤 다시 돌립니다.
 
-### S7 — Index migration and publication regression coverage
+### S7 — index 이전과 공개 회귀 테스트 범위
 
 - URL: tests/test_indexing.py
-- Retrieved: 2026-10-17
-- Locator: setup_index and publication tests, lines 36–109; fingerprint and legacy migration tests, lines 112–160
-- Fragment: def test_failed_rebuild_preserves_complete_previous_index(...); def test_successful_rebuild_replaces_core_and_quantity_artifacts_together(...); def test_incompatible_bm25_index_is_rejected_before_loading_dense_model(...); def test_legacy_bm25_index_requires_rebuild_then_finds_dictionary_compound(...): ... indexing.build_index(rows, cfg, directory); loaded = retrieval.HybridIndex(directory.parent, cfg)
-- Applicability: The fixtures build with the current implementation and load with the current implementation. The legacy test exercises old data entering the new loader, not new data entering the old loader.
-- Counterevidence: These tests guard real forward and failed-publication behavior. Their scope is incomplete for downgrade compatibility rather than useless.
-- Validation: Add a cross-revision upgrade/downgrade check using actual target-revision code and a semantic search assertion.
+- 확인일: 2026-10-17
+- 위치: setup_index와 공개 테스트 36–109행; 지문과 예전 형식 이전 테스트 112–160행
+- 인용: def test_failed_rebuild_preserves_complete_previous_index(...); def test_successful_rebuild_replaces_core_and_quantity_artifacts_together(...); def test_incompatible_bm25_index_is_rejected_before_loading_dense_model(...); def test_legacy_bm25_index_requires_rebuild_then_finds_dictionary_compound(...): ... indexing.build_index(rows, cfg, directory); loaded = retrieval.HybridIndex(directory.parent, cfg)
+- 적용: 테스트 데이터는 지금 구현으로 만들고 지금 구현으로 읽습니다. 예전 형식 테스트는 옛 데이터가 새 로더로 들어가는 경우를 시험할 뿐, 새 데이터가 옛 로더로 들어가는 경우는 시험하지 않습니다.
+- 반대 근거: 이 테스트들은 실제 앞쪽 동작과 공개 실패 동작을 지킵니다. 쓸모없는 것이 아니라, 되돌리기 호환성까지는 범위가 닿지 않을 뿐입니다.
+- 검증: 실제 대상 리비전 코드와 의미 검색 단정으로 리비전 간 업그레이드·되돌리기 확인을 더합니다.
 
-### S8 — Recorded tokenizer measurements and round-1 repair
+### S8 — 기록된 토크나이저 측정과 1회차 수정
 
 - URL: docs/kiwi_bm25_review.md
-- Retrieved: 2026-10-17
-- Locator: Compound probe, lines 72–79; Review 1, lines 324–370
-- Fragment: 기준선: 개인, 정보, 처리, 시스템, 및, 데이터베이스, 구축. 사전 확장: 개인정보처리시스템, 및, 데이터베이스, 구축. "기존 질문 토크나이저는 청크 `0`을 반환했고" is recorded as "이전 질문 토크나이저는 청크 `0`을 반환했고," followed by "채택 토크나이저는 질문을 한 토큰으로 만들어 후보를 전혀 반환하지 않았다." The repair record states: "기존 디렉터리 단위 발행·실패 시 복원 경계 안에서 지문과 토큰을 함께 발행한다."
-- Applicability: Records the semantic mismatch, the repair's intended boundary, and its forward-only reproduction.
-- Counterevidence: The document reports earlier measurements and passing checks; this research session did not rerun them. The migration measurements do not establish downgrade compatibility.
-- Validation: Reproduce both directions on the same three-chunk corpus and compare each revision with its own pre-transition behavior.
+- 확인일: 2026-10-17
+- 위치: 복합어 확인 72–79행; 리뷰 1 324–370행
+- 인용: 기준선: 개인, 정보, 처리, 시스템, 및, 데이터베이스, 구축. 사전 확장: 개인정보처리시스템, 및, 데이터베이스, 구축. "기존 질문 토크나이저는 청크 `0`을 반환했고"는 "이전 질문 토크나이저는 청크 `0`을 반환했고,"로 적혀 있고, 이어서 "채택 토크나이저는 질문을 한 토큰으로 만들어 후보를 전혀 반환하지 않았다."가 옵니다. 수정 기록: "기존 디렉터리 단위 발행·실패 시 복원 경계 안에서 지문과 토큰을 함께 발행한다."
+- 적용: 의미 불일치, 수정이 의도한 경계, 앞쪽 방향만의 재현을 기록합니다.
+- 반대 근거: 문서는 앞선 측정과 통과한 확인을 보고할 뿐, 이번 조사 세션은 다시 돌리지 않았습니다. 이전 측정은 되돌리기 호환성을 세우지 않습니다.
+- 검증: 같은 세 청크 말뭉치로 두 방향을 모두 재현하고, 각 리비전을 전환 전 자기 동작과 비교합니다.
 
-### S9 — README — existing-index reuse and mandatory upgrade rebuild
+### S9 — README: 기존 index 재사용과 필수 업그레이드 다시 만들기
 
 - URL: README.md
-- Retrieved: 2026-10-17
-- Locator: Notebook settings and existing-index workflow, lines 198–199
-- Fragment: 이번 Kiwi 변경 전 색인은 재사용할 수 없으므로 02의 불러오기·설정 셀과 `1. 색인 만들기`의 `build_index` 셀을 실행한 뒤 04나 질문 화면을 실행하세요. 이 색인 재구축은 로컬 작업이며 유료 질문 재작성 예제 셀을 실행할 필요가 없습니다.
-- Applicability: Provides an upgrade procedure that can serve as the starting point for an explicit downgrade procedure.
-- Counterevidence: The inspected guidance explains upgrade rebuilding, but gives no corresponding downgrade ordering, restore procedure or verified rollback target.
-- Validation: Follow the documented downgrade literally in a fresh target-revision process and require search success before restarting consumers.
+- 확인일: 2026-10-17
+- 위치: 노트북 설정과 기존 index 작업 순서, 198–199행
+- 인용: 이번 Kiwi 변경 전 색인은 재사용할 수 없으므로 02의 불러오기·설정 셀과 `1. 색인 만들기`의 `build_index` 셀을 실행한 뒤 04나 질문 화면을 실행하세요. 이 색인 재구축은 로컬 작업이며 유료 질문 재작성 예제 셀을 실행할 필요가 없습니다.
+- 적용: 분명한 되돌리기 절차의 출발점이 될 수 있는 업그레이드 절차를 줍니다.
+- 반대 근거: 살펴본 안내는 업그레이드 다시 만들기를 설명하지만, 그에 맞는 되돌리기 순서, 복원 절차, 검증된 되돌리기 대상은 주지 않습니다.
+- 검증: 대상 리비전의 새 프로세스에서 문서로 적은 되돌리기를 그대로 따르고, 사용하는 쪽을 다시 시작하기 전에 검색 성공을 요구합니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): Persistent-state compatibility must be assessed across both deployment directions; current-version functionality alone does not establish rollback safety.
-- C2 (interpretation; S2, S8): This tokenizer update changes corpus/query segmentation, so preserving a parseable file shape alone cannot guarantee correct BM25 retrieval after rollback.
-- C3 (source; S5, S6, S8): The round-1 repair stores a fingerprint with tokens and makes the new loader reject legacy or mismatched artifacts before loading the dense model.
-- C4 (interpretation; S3, S4, S6): The base loader passes the new two-key object directly to BM25Okapi; under the fetched implementation this creates two corpus entries, causing a mask/score shape failure for ordinary BM25-enabled ranking with more than two chunks.
-- C5 (interpretation; S5): The current publication boundary restores the previous directory on publication failure but does not retain it after a successful build for a later code rollback.
-- C6 (interpretation; S7, S8): Existing regressions cover current-generation operation, fingerprint rejection, upgrade rebuilding and failed publication; they do not exercise the actual old reader after a successful new-generation build.
-- C7 (interpretation; S9): The inspected migration guidance requires an upgrade rebuild but does not specify a coordinated downgrade procedure.
-- C8 (interpretation; S1, S2, S5, S6, S9): A stopped-reader downgrade that restores a matching artifact bundle or rebuilds with the exact rollback revision can address both structural and tokenizer-semantic compatibility without teaching the immutable old loader a new format.
-- C9 (interpretation; S1, S3, S4, S6, S7): The decisive check uses actual revisions in fresh processes, at least three chunks, BM25-enabled semantic assertions, and an upgrade/downgrade sequence; constructor success or one- and two-chunk shape checks are insufficient.
+- C1 (출처; S1): 영속 상태 호환성은 배포의 두 방향 모두에서 따져야 합니다. 지금 버전이 잘 돈다는 것만으로 되돌리기 안전이 세워지지 않습니다.
+- C2 (해석; S2, S8): 이번 토크나이저 갱신은 말뭉치·질문 분절을 바꾸므로, 읽을 수 있는 파일 형태를 지키는 것만으로는 되돌린 뒤 BM25 검색이 올바르다고 보장할 수 없습니다.
+- C3 (출처; S5, S6, S8): 1회차 수정은 토큰과 함께 지문을 저장하고, 새 로더가 벡터 모델을 읽기 전에 예전 형식이나 맞지 않는 산출물을 거부하게 합니다.
+- C4 (해석; S3, S4, S6): base 로더는 키 두 개짜리 새 객체를 BM25Okapi에 바로 넘깁니다. 가져온 구현에서는 말뭉치 항목이 두 개 생기므로, 청크가 둘보다 많을 때 BM25를 쓰는 보통 순위에서 마스크·점수 모양 실패가 납니다.
+- C5 (해석; S5): 지금 공개 경계는 공개가 실패하면 이전 폴더를 되살리지만, 만들기가 성공하면 나중의 코드 되돌리기를 위해 남겨 두지 않습니다.
+- C6 (해석; S7, S8): 기존 회귀 테스트는 지금 세대 동작, 지문 거부, 업그레이드 다시 만들기, 공개 실패를 다루지만, 새 세대 만들기가 성공한 뒤의 실제 옛 로더는 시험하지 않습니다.
+- C7 (해석; S9): 살펴본 이전 안내는 업그레이드 다시 만들기를 요구하지만, 맞춰서 하는 되돌리기 절차는 정하지 않습니다.
+- C8 (해석; S1, S2, S5, S6, S9): 읽는 쪽을 멈춘 뒤 맞는 산출물 묶음을 되살리거나 정확한 되돌리기 리비전으로 다시 만드는 되돌리기는, 바꿀 수 없는 옛 로더에 새 형식을 가르치지 않고도 구조와 토크나이저 의미 호환성을 모두 다룰 수 있습니다.
+- C9 (해석; S1, S3, S4, S6, S7): 결정적인 확인은 새 프로세스에서 실제 리비전을 쓰고, 청크 셋 이상, BM25를 쓰는 의미 단정, 업그레이드·되돌리기 순서를 갖춰야 합니다. 생성자 성공이나 청크 하나·둘의 모양 확인으로는 모자랍니다.
 
-## Core theory
+## 핵심 원리
 
-AWS describes persistent-state upgrades as bidirectional compatibility problems even for standalone applications: both revisions must understand the other's persisted state, unless deployment also restores compatible state. Its recommended evidence includes upgrade-downgrade testing. Rank-BM25 separately requires tokenized document lists and equivalent query preprocessing. These are distinct requirements: an old-readable JSON shape does not establish matching tokenizer semantics. [C1, C2, C4]
+AWS는 단독 앱에서도 영속 상태 업그레이드를 양방향 호환성 문제로 설명합니다. 배포가 맞는 상태를 되살리지 않는 한, 두 리비전이 서로의 영속 상태를 이해해야 합니다. 권하는 증거에는 업그레이드·되돌리기 시험이 들어갑니다. Rank-BM25는 따로, 토큰으로 나눈 문서 목록과 같은 질문 전처리를 요구합니다. 둘은 별개의 요구입니다. 옛 로더가 읽을 수 있는 JSON 모양이라고 토크나이저 의미가 맞는다는 것은 아닙니다. [C1, C2, C4]
 
-## Applicability
+## 적용
 
-Keep the current forward rejection. The smallest corrective direction consistent with the repository's existing notebook workflow is a documented and tested coordinated downgrade rebuild, rather than another compatibility layer. Stop the frontend and all notebook consumers; select the exact rollback revision and its dependency environment; rebuild the complete index using that revision's build_index and the intended chunks; verify it with that revision's HybridIndex; restart consumers in fresh processes only after success. For verification before publication, build in an isolated artifacts tree containing the matching chunks/docs, then publish the complete index while readers remain stopped. If rebuilding or verification fails, do not start the rollback application against head artifacts. Preserve a coherent code/environment/artifact bundle when recovery without rebuilding is required. This procedure must explicitly cover the downgrade direction and retain the existing forward-migration checks. It does not promise live-reader or crash-safe switching. [C3, C5, C7, C8]
+지금의 앞쪽 거부는 유지합니다. 저장소의 기존 노트북 작업 순서에 맞는 가장 작은 정정 방향은, 호환 계층을 하나 더 두는 것이 아니라 문서로 적고 시험한, 맞춰서 하는 되돌리기 다시 만들기입니다. 프런트엔드와 모든 노트북 사용처를 멈춥니다. 정확한 되돌리기 리비전과 그 의존성 환경을 고릅니다. 그 리비전의 build_index와 의도한 청크로 index 전체를 다시 만듭니다. 그 리비전의 HybridIndex로 확인합니다. 성공한 뒤에만 새 프로세스로 사용처를 다시 시작합니다. 공개 전에 확인하려면 맞는 chunks/docs를 담은 격리된 artifacts 트리에서 만든 뒤, 읽는 쪽이 멈춰 있는 동안 index 전체를 공개합니다. 다시 만들기나 확인이 실패하면, 되돌린 앱을 head 산출물로 시작하지 않습니다. 다시 만들지 않고 복구해야 한다면, 코드·환경·산출물이 맞는 묶음을 보존합니다. 이 절차는 되돌리기 방향을 분명히 다루고, 기존 앞쪽 이전 확인도 유지해야 합니다. 읽는 중 전환이나 비정상 종료에 안전한 전환은 약속하지 않습니다. [C3, C5, C7, C8]
 
-## Hypothesis
+## 가설
 
-The repair treated compatibility as a property enforceable entirely by the new reader. Compatibility actually belongs to the reader/writer transition across revisions. The old reader remains unchanged: it passes the decoded object directly to BM25Okapi, which iterates the two object keys as documents and produces two scores. With a real corpus larger than two chunks, the first ordinary BM25-enabled ranking attempts to combine those scores with a differently sized chunk mask and fails. The fingerprint cannot protect execution after rolling back to code that does not inspect it. [C3, C4]
+수정은 호환성을 새 로더만으로 지킬 수 있는 성질로 다뤘습니다. 실제로 호환성은 리비전을 넘나드는 읽기·쓰기 전환에 속합니다. 옛 로더는 바뀌지 않으며, 해석한 객체를 BM25Okapi에 바로 넘깁니다. BM25Okapi는 객체의 키 두 개를 문서로 훑어 점수 두 개를 냅니다. 실제 말뭉치가 청크 둘보다 크면, BM25를 쓰는 첫 보통 순위가 그 점수를 크기가 다른 청크 마스크와 합치려다 실패합니다. 지문을 살피지 않는 코드로 되돌린 뒤의 실행은 지문이 지켜 줄 수 없습니다. [C3, C4]
 
-## Counterevidence
+## 반대 근거
 
-- The forward repair is effective within its tested scope: the current loader rejects legacy arrays and changed fingerprint inputs before loading the dense model. The hypothesis does not require removing that protection. [C3, C6]
-- The broadcasting exception is conditional. Dense-only ranking skips _sparse, and corpora with one or two chunks can conceal the shape failure through broadcasting or equal dimensions. Such cases still do not demonstrate correct corpus interpretation. [C4]
-- Existing publication failure tests demonstrate preservation during a failed build. They do not demonstrate recovery after a successful build followed by a code downgrade. [C5, C6]
-- A complete compatible artifact backup restored with the old code would avoid the reported failure. The inspected implementation and migration guidance do not provide that retained backup or restoration procedure. [C5, C7]
+- 앞쪽 수정은 시험한 범위 안에서 효과가 있습니다. 지금 로더는 벡터 모델을 읽기 전에 예전 배열과 바뀐 지문 입력을 거부합니다. 가설은 그 보호를 없애라고 요구하지 않습니다. [C3, C6]
+- 브로드캐스팅 예외는 조건부입니다. 벡터 검색만 쓰는 순위는 _sparse를 건너뛰고, 청크가 하나나 둘인 말뭉치는 브로드캐스팅이나 같은 차원으로 모양 실패를 가릴 수 있습니다. 그런 경우도 말뭉치를 올바르게 해석했다는 증거는 아닙니다. [C4]
+- 기존 공개 실패 테스트는 만들기가 실패할 때 보존을 보여 줍니다. 만들기가 성공한 뒤 코드를 되돌릴 때의 복구는 보여 주지 않습니다. [C5, C6]
+- 맞는 산출물 백업 전체를 옛 코드와 함께 되살리면 보고된 실패를 피할 수 있습니다. 살펴본 구현과 이전 안내는 그런 보존 백업이나 복원 절차를 주지 않습니다. [C5, C7]
 
-## Alternatives
+## 다른 방법
 
-- Restore the array format and put the fingerprint in a sidecar: this can make the JSON structurally readable by the old loader, but old queries would still be tokenized differently from the new corpus. It is insufficient without compatible old tokens or a mandatory downgrade rebuild. [C2, C4, C8]
-- Retain a complete pre-upgrade index bundle and restore it with its matching chunks, configuration and dependency environment: a sound alternative when fast rollback matters. It requires retention before the successful upgrade replaces the active directory; the current temporary previous directory is not such retention. [C5, C8]
-- Deploy a preparatory reader before changing the writer: appropriate when every rollback target can first be upgraded. It cannot repair an already existing dev revision, and structural support alone would still leave tokenizer-generation compatibility unresolved. [C1, C2, C8]
-- Catch the NumPy error, resize scores, or disable BM25: these hide or bypass invalid corpus interpretation and fail to restore the supported BM25-only behavior. [C2, C4]
-- Convert the new object to its tokens array during downgrade: insufficient because it preserves the new-generation tokens. Regenerate tokens using the rollback revision or restore an artifact actually produced by it. [C2, C8]
+- 배열 형식을 되살리고 지문은 옆 파일에 두기. 옛 로더가 JSON을 구조적으로 읽을 수 있게 되지만, 옛 질문은 여전히 새 말뭉치와 다르게 토큰화됩니다. 맞는 옛 토큰이나 필수 되돌리기 다시 만들기 없이는 모자랍니다. [C2, C4, C8]
+- 업그레이드 전 index 묶음 전체를 보존했다가, 맞는 청크, 설정, 의존성 환경과 함께 되살리기. 빠른 되돌리기가 중요할 때 건전한 방법입니다. 성공한 업그레이드가 사용 중 폴더를 바꾸기 전에 보존해야 하며, 지금의 임시 previous 폴더는 그런 보존이 아닙니다. [C5, C8]
+- 쓰는 쪽을 바꾸기 전에 준비용 로더를 먼저 배포하기. 모든 되돌리기 대상을 먼저 업그레이드할 수 있을 때 알맞습니다. 이미 있는 dev 리비전은 고칠 수 없고, 구조 지원만으로는 토크나이저 세대 호환성이 여전히 풀리지 않습니다. [C1, C2, C8]
+- NumPy 오류를 잡거나, 점수 크기를 맞추거나, BM25를 끄기. 잘못된 말뭉치 해석을 숨기거나 우회할 뿐, 지원하는 BM25 전용 동작을 되살리지 못합니다. [C2, C4]
+- 되돌릴 때 새 객체를 tokens 배열로 바꾸기. 새 세대 토큰을 그대로 두므로 모자랍니다. 되돌리기 리비전으로 토큰을 다시 만들거나, 그 리비전이 실제로 만든 산출물을 되살려야 합니다. [C2, C8]
 
-## Experiment
+## 실험
 
-In a later implementation session, use the actual base revision and candidate revision in separate fresh Python processes, with network/API calls blocked and a local embedding substitute. Use at least three chunks: 개인정보처리시스템, 네트워크 보안, 계약 기간. First build and search with the base revision at dense_weight=0, recording tokens, score-vector length and returned chunk IDs. Upgrade without rebuilding and verify that the candidate rejects the old artifact without modifying it. Rebuild with the candidate and verify its compound search. Then run the actual base HybridIndex directly against those new artifacts: expect corpus_size=2 and a shape failure on ordinary BM25-enabled search. This is the negative control. Finally perform the documented stopped-reader downgrade rebuild using the actual base builder; start a fresh base loader and require corpus_size and score length to equal three, corpus tokens and BM25-only results to match the initial base run, and all five index artifacts to belong to the rebuilt generation. Inject a downgrade-build failure and verify that startup remains blocked rather than exposing a mixed code/artifact state. Repeat a normal hybrid search to cover the usual configuration. Preserve the existing fingerprint rejection regressions. These are proposed checks, not executed results. [C3, C4, C5, C6, C8, C9]
+나중 구현 세션에서, 실제 base 리비전과 후보 리비전을 각각 새 Python 프로세스에서 쓰고, 네트워크·API 호출은 막고 로컬 임베딩 대체를 씁니다. 청크는 셋 이상 씁니다: 개인정보처리시스템, 네트워크 보안, 계약 기간. 먼저 base 리비전으로 dense_weight=0에서 만들고 검색해, 토큰, 점수 벡터 길이, 돌아온 청크 ID를 적습니다. 다시 만들지 않고 업그레이드해, 후보가 옛 산출물을 바꾸지 않고 거부하는지 확인합니다. 후보로 다시 만들어 복합어 검색을 확인합니다. 그다음 실제 base HybridIndex를 그 새 산출물에 바로 돌립니다. corpus_size=2와 BM25를 쓰는 보통 검색의 모양 실패를 기대하며, 이것이 부정 대조군입니다. 마지막으로 실제 base 만들기로, 문서로 적은 읽는 쪽 멈춤 되돌리기 다시 만들기를 합니다. 새 base 로더를 시작해, corpus_size와 점수 길이가 셋이고, 말뭉치 토큰과 BM25 전용 결과가 처음 base 실행과 같으며, index 산출물 다섯 개가 모두 다시 만든 세대에 속하는지 요구합니다. 되돌리기 만들기 실패를 일부러 일으켜, 코드·산출물이 섞인 상태를 드러내지 않고 시작이 막힌 채인지 확인합니다. 보통 설정을 다루도록 일반 하이브리드 검색도 되풀이합니다. 기존 지문 거부 회귀 테스트는 유지합니다. 이것은 제안한 확인이지, 돌린 결과가 아닙니다. [C3, C4, C5, C6, C8, C9]
 
-## Result
+## 결과
 
-Implementation observation, still a draft: `artifacts/kiwi_round2_experiment.py` ran before the correction on candidate code commit `5b2773f` against actual base `2f746f3` in fresh offline Python processes. Base build/search had three corpus entries/scores and BM25 IDs `[0]`; forward loading was rejected without changing any index file; the candidate rebuild searched successfully; the base reader of that new object produced two scores and `operands could not be broadcast together with shapes (3,) (2,) ()`. After quarantining the new index, an injected downgrade-build failure left the active path absent and a fresh base startup failed at `faiss.index`. A successful isolated base rebuild, fresh verification and directory publication restored all five artifact bytes, original tokens, BM25 IDs `[0]` and hybrid IDs `[0, 1, 2]`. The committed `tests/test_index_migration.py::test_stopped_reader_downgrade_restores_base_artifacts_and_search_after_upgrade` repeats the lifecycle; `.venv\Scripts\python -m pytest -q tests/test_index_migration.py tests/test_indexing.py tests/test_retrieval.py` reported `61 passed in 139.91s`. This Result and the correction are recorded together in the commit named `retrieval: document and rehearse atomic index downgrade`; the production writer/reader code remains the tested `5b2773f` generation.
+구현 관측이며 여전히 초안입니다. 정정 전에 `artifacts/kiwi_round2_experiment.py`를 후보 코드 커밋 `5b2773f`와 실제 base `2f746f3`으로, 새 오프라인 Python 프로세스에서 돌렸습니다. base 만들기·검색은 말뭉치 항목·점수가 셋이었고 BM25 ID는 `[0]`이었습니다. 앞쪽 읽기는 index 파일을 바꾸지 않고 거부되었고, 후보 다시 만들기는 검색에 성공했으며, 그 새 객체를 읽은 base 로더는 점수 둘과 `operands could not be broadcast together with shapes (3,) (2,) ()`를 냈습니다. 새 index를 격리한 뒤 되돌리기 만들기 실패를 일부러 일으키자, 사용 중 경로는 없는 채로 남았고 새 base 시작은 `faiss.index`에서 실패했습니다. 격리된 base 다시 만들기, 새 확인, 폴더 공개가 성공하자, 산출물 다섯 개의 바이트, 원래 토큰, BM25 ID `[0]`, 하이브리드 ID `[0, 1, 2]`가 모두 되살아났습니다. 커밋한 `tests/test_index_migration.py::test_stopped_reader_downgrade_restores_base_artifacts_and_search_after_upgrade`가 이 과정 전체를 되풀이합니다. `.venv\Scripts\python -m pytest -q tests/test_index_migration.py tests/test_indexing.py tests/test_retrieval.py`는 `61 passed in 139.91s`를 냈습니다. 이 결과와 정정은 `retrieval: document and rehearse atomic index downgrade`라는 커밋에 함께 기록되어 있으며, 제품의 쓰기·읽기 코드는 시험한 `5b2773f` 세대 그대로입니다.
 
-## Unresolved limits
+## 남은 한계
 
-The source claims above remain draft research. The implementation rehearsal recorded in Result uses actual historical/current source in one installed environment: Python 3.10.11, Kiwi/model 0.24.0, Hanja 0.15.1, rank-bm25 0.2.2, NumPy 2.2.6 and FAISS 1.15.1, with a local embedding substitute and blocked network connections. It does not recreate every historical package environment, migrate the active corpus or switch live application readers. The documented migration requires stopped readers and publishes into an absent active path with one same-filesystem directory rename; it does not establish crash recovery. The existing builder's two-rename exception-restoration boundary is retained, not generalized into a live deployment guarantee. [C5, C9]
+위 출처 주장은 여전히 조사 초안입니다. 결과 절에 적은 구현 연습은 설치된 환경 하나에서 실제 과거·지금 소스를 썼습니다. Python 3.10.11, Kiwi/model 0.24.0, Hanja 0.15.1, rank-bm25 0.2.2, NumPy 2.2.6, FAISS 1.15.1에, 로컬 임베딩 대체와 막힌 네트워크 연결을 썼습니다. 과거의 모든 패키지 환경을 다시 만들거나, 사용 중 말뭉치를 옮기거나, 실제 앱의 읽는 쪽을 전환하지는 않습니다. 문서로 적은 이전 절차는 읽는 쪽을 멈추고, 같은 파일 시스템 안의 폴더 이름 바꾸기 한 번으로 비어 있는 사용 경로에 공개합니다. 비정상 종료 복구는 세우지 않습니다. 기존 만들기의 이름 바꾸기 두 번짜리 예외 복원 경계는 유지할 뿐, 실제 운영 배포 보장으로 넓히지 않습니다. [C5, C9]

@@ -1,113 +1,113 @@
-# Review research — F4, cycle 1
+# 리뷰 조사 · F4, 1회차
 
-Draft research before the fix of review round 8 of PR #70, written 2026-10-19. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #70 리뷰 8회차의 수정 전에 2026-10-19에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-F4 (P1): .wiki/graph.json line 3 records the repository identity as "retrieval-port-requirement-links", the linked worktree's folder name, instead of the canonical "rfg_rag". Invariant: generated wiki metadata carries the canonical repository identity no matter which worktree or checkout regeneration runs in, and a committed generated file must not drift every time maintenance regenerates it.
+F4(P1): .wiki/graph.json 3행이 저장소 정체를 원래 이름 "rfg_rag"가 아니라, 연결된 worktree의 폴더 이름 "retrieval-port-requirement-links"로 적습니다. 불변 조건: 생성된 위키 메타데이터는 어느 worktree나 checkout에서 다시 만들든 원래 저장소 정체를 담아야 하고, 커밋된 생성 파일은 관리 작업이 다시 만들 때마다 바뀌면 안 됩니다.
 
-Trigger: backstop, rounds 8.
+발생: 최후 확인(backstop), 8회차.
 
-- [P1] [P1] .wiki/graph.json:3 — regenerated graph uses the worktree name as repository identity
+- [P1] [P1] .wiki/graph.json:3 — 다시 만든 그래프가 worktree 이름을 저장소 정체로 씁니다
 
-## Failed fixes
+## 실패한 수정
 
-- Commit 023c41b ('wiki: restore the rfg_rag graph keyed by the canonical repository') edited the generated .wiki/graph.json by hand to say rfg_rag and left the generator alone. Rounds 5-7 passed. Merge maintenance at 925bdf0 ('Refresh wiki and architecture before merge') regenerated the graph from inside the linked worktree and wrote the folder name back into line 3, so round 8 refused again. A hand edit to generated output cannot hold against the next regeneration.
+- 커밋 023c41b('wiki: restore the rfg_rag graph keyed by the canonical repository')는 생성된 .wiki/graph.json을 손으로 고쳐 rfg_rag로 적고, 생성기는 그대로 두었습니다. 5~7회차는 통과했습니다. 925bdf0의 병합 관리 작업('Refresh wiki and architecture before merge')이 연결된 worktree 안에서 그래프를 다시 만들어 3행에 폴더 이름을 도로 적었고, 8회차가 다시 거부했습니다. 생성 결과를 손으로 고치면 다음에 다시 만들 때 버티지 못합니다.
 
-## Sources
+## 출처
 
-### S1 — Git - git-worktree Documentation
+### S1 — Git: git-worktree 문서
 
 - URL: https://git-scm.com/docs/git-worktree
-- Retrieved: 2026-10-19
-- Locator: DESCRIPTION; DETAILS
-- Fragment: This new worktree is called a "linked worktree" as opposed to the "main worktree" prepared by git-init[1] or git-clone[1]. A repository has one main worktree (if it's not a bare repository) and zero or more linked worktrees. ... Within a linked worktree, $GIT_DIR is set to point to this private directory (e.g. /path/main/.git/worktrees/test-next in the example) and $GIT_COMMON_DIR is set to point back to the main worktree's $GIT_DIR (e.g. /path/main/.git). These settings are made in a .git file located at the top directory of the linked worktree. ... The rule of thumb is do not make any assumption about whether a path belongs to $GIT_DIR or $GIT_COMMON_DIR when you need to directly access something inside $GIT_DIR. Use git rev-parse --git-path to get the final path.
-- Applicability: This branch is a linked worktree. Its $GIT_COMMON_DIR is the main rfg_rag/.git, which names the shared repository whatever the worktree folder is called.
-- Counterevidence: Bare-repository exception: with no main worktree, the parent of the common dir is not a checkout name.
-- Validation: A generator run from the worktree yields the same identity as a run from the main checkout.
+- 확인일: 2026-10-19
+- 위치: DESCRIPTION; DETAILS
+- 인용: This new worktree is called a "linked worktree" as opposed to the "main worktree" prepared by git-init[1] or git-clone[1]. A repository has one main worktree (if it's not a bare repository) and zero or more linked worktrees. ... Within a linked worktree, $GIT_DIR is set to point to this private directory (e.g. /path/main/.git/worktrees/test-next in the example) and $GIT_COMMON_DIR is set to point back to the main worktree's $GIT_DIR (e.g. /path/main/.git). These settings are made in a .git file located at the top directory of the linked worktree. ... The rule of thumb is do not make any assumption about whether a path belongs to $GIT_DIR or $GIT_COMMON_DIR when you need to directly access something inside $GIT_DIR. Use git rev-parse --git-path to get the final path.
+- 적용: 이 브랜치는 연결된 worktree입니다. 그 $GIT_COMMON_DIR은 주 rfg_rag/.git이며, worktree 폴더 이름이 무엇이든 공유 저장소를 가리킵니다.
+- 반대 근거: bare 저장소 예외. 주 worktree가 없으면 common dir의 부모는 checkout 이름이 아닙니다.
+- 검증: worktree에서 돌린 생성기와 주 checkout에서 돌린 생성기가 같은 정체를 냅니다.
 
-### S2 — Git - git-rev-parse Documentation
+### S2 — Git: git-rev-parse 문서
 
 - URL: https://git-scm.com/docs/git-rev-parse
-- Retrieved: 2026-10-19
-- Locator: --git-common-dir; --show-toplevel; --path-format
-- Fragment: --git-common-dir: Show $GIT_COMMON_DIR if defined, else $GIT_DIR. --show-toplevel: Show the (by default, absolute) path of the top-level directory of the working tree. If there is no working tree, report an error. --path-format=(absolute|relative): Controls the behavior of certain other options. If specified as absolute, the paths printed by those options will be absolute and canonical. If specified as relative, the paths will be relative to the current working directory if that is possible. The default is option specific. This option may be specified multiple times and affects only the arguments that follow it on the command line.
-- Applicability: Gives the command the generator should use, and explains why the working-tree path names the worktree rather than the repository.
-- Counterevidence: The default format is option-specific: without --path-format=absolute the main worktree prints a relative '.git'. --path-format must come before --git-common-dir on the command line.
-- Validation: With --path-format=absolute, the parent folder's basename resolves to rfg_rag from both the worktree and the main checkout.
+- 확인일: 2026-10-19
+- 위치: --git-common-dir; --show-toplevel; --path-format
+- 인용: --git-common-dir: Show $GIT_COMMON_DIR if defined, else $GIT_DIR. --show-toplevel: Show the (by default, absolute) path of the top-level directory of the working tree. If there is no working tree, report an error. --path-format=(absolute|relative): Controls the behavior of certain other options. If specified as absolute, the paths printed by those options will be absolute and canonical. If specified as relative, the paths will be relative to the current working directory if that is possible. The default is option specific. This option may be specified multiple times and affects only the arguments that follow it on the command line.
+- 적용: 생성기가 써야 할 명령을 주고, 작업 트리 경로가 저장소가 아니라 worktree를 가리키는 이유를 설명합니다.
+- 반대 근거: 기본 형식은 옵션마다 다릅니다. --path-format=absolute가 없으면 주 worktree에서는 상대 경로 '.git'이 나옵니다. 명령줄에서 --path-format은 --git-common-dir 앞에 와야 합니다.
+- 검증: --path-format=absolute를 주면, worktree와 주 checkout 모두에서 부모 폴더 이름이 rfg_rag로 나옵니다.
 
-### S3 — Git - gitignore Documentation
+### S3 — Git: gitignore 문서
 
 - URL: https://git-scm.com/docs/gitignore
-- Retrieved: 2026-10-19
-- Locator: DESCRIPTION; NOTES
-- Fragment: Files already tracked by Git are not affected; see the NOTES below for details. ... To stop tracking a file that is currently tracked, use git rm --cached to remove the file from the index. The filename can then be added to the .gitignore file to stop the file from being reintroduced in later commits.
-- Applicability: .wiki/.gitignore lists /graph.json, yet the file is tracked and regenerations show up in the PR. Untracking it lets the existing ignore rule take effect.
-- Counterevidence: Untracking removes the file for everyone, including any reviewer or tool that reads it from the branch.
-- Validation: After `git rm --cached .wiki/graph.json`, `git ls-files .wiki/graph.json` prints nothing and a regeneration leaves `git status` clean.
+- 확인일: 2026-10-19
+- 위치: DESCRIPTION; NOTES
+- 인용: Files already tracked by Git are not affected; see the NOTES below for details. ... To stop tracking a file that is currently tracked, use git rm --cached to remove the file from the index. The filename can then be added to the .gitignore file to stop the file from being reintroduced in later commits.
+- 적용: .wiki/.gitignore에 /graph.json이 있는데도 이 파일은 추적되고, 다시 만들 때마다 PR에 나타납니다. 추적을 멈추면 기존 ignore 규칙이 효과를 냅니다.
+- 반대 근거: 추적을 멈추면 브랜치에서 이 파일을 읽는 리뷰어나 도구를 포함해 모두에게서 파일이 사라집니다.
+- 검증: `git rm --cached .wiki/graph.json` 뒤 `git ls-files .wiki/graph.json`은 아무것도 출력하지 않고, 다시 만들어도 `git status`가 깨끗합니다.
 
-### S4 — Committed wiki architecture graph
+### S4 — 커밋된 위키 구조 그래프
 
 - URL: .wiki/graph.json
-- Retrieved: 2026-10-19
-- Locator: line 3
-- Fragment: "ns": "repo", "repo": "retrieval-port-requirement-links", "nodes_from": ".wiki/corpus.json"
-- Applicability: Shows the output regenerated at head 925bdf0 carrying the worktree folder name, after the hand edit in 023c41b had set it to rfg_rag.
-- Counterevidence: none found
-- Validation: After the generator fix and a regeneration from this worktree, line 3 reads "repo": "rfg_rag" (or the file is no longer tracked).
+- 확인일: 2026-10-19
+- 위치: 3행
+- 인용: "ns": "repo", "repo": "retrieval-port-requirement-links", "nodes_from": ".wiki/corpus.json"
+- 적용: 023c41b에서 손으로 rfg_rag로 고친 뒤, head 925bdf0에서 다시 만든 출력이 worktree 폴더 이름을 담고 있음을 보여 줍니다.
+- 반대 근거: 찾지 못했습니다.
+- 검증: 생성기를 고치고 이 worktree에서 다시 만든 뒤 3행이 "repo": "rfg_rag"이거나, 파일이 더는 추적되지 않습니다.
 
-### S5 — Wiki directory ignore rules
+### S5 — 위키 폴더 ignore 규칙
 
 - URL: .wiki/.gitignore
-- Retrieved: 2026-10-19
-- Locator: lines 3-4
-- Fragment: /corpus.json
+- 확인일: 2026-10-19
+- 위치: 3-4행
+- 인용: /corpus.json
 /graph.json
-- Applicability: The repository already declares the generated corpus and graph as local, uncommitted state.
-- Counterevidence: Not checked: when this rule was added, and whether main also tracks graph.json despite it.
-- Validation: `git ls-files .wiki` no longer lists graph.json after the fix.
+- 적용: 저장소는 이미 생성된 corpus와 graph를 커밋하지 않는 로컬 상태로 선언합니다.
+- 반대 근거: 확인하지 않음: 이 규칙이 언제 더해졌는지, main에서도 규칙과 달리 graph.json을 추적하는지.
+- 검증: 수정 뒤 `git ls-files .wiki`에 graph.json이 더는 나오지 않습니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): A linked worktree's $GIT_COMMON_DIR points to the main worktree's $GIT_DIR, which all worktrees of the repository share. A bare repository has no main worktree.
-- C2 (source; S1, S2): `git rev-parse --path-format=absolute --git-common-dir` returns the same absolute path from any worktree of a repository, while --show-toplevel returns the current worktree's own folder.
-- C3 (interpretation; S2, S4): The value in graph.json line 3 is exactly the worktree folder's basename, so the generator's identity depends on where regeneration runs. Deriving it from the parent of the common dir removes that dependence.
-- C4 (interpretation; S4): The hand edit in 023c41b did not hold because merge maintenance regenerated .wiki/graph.json at 925bdf0 and wrote the worktree name back into line 3.
-- C5 (interpretation; S3, S5): The repository's own .wiki/.gitignore marks graph.json as ignored, but Git ignore rules do not affect tracked files. Untracking it with git rm --cached would stop regenerations from entering the PR diff.
+- C1 (출처; S1): 연결된 worktree의 $GIT_COMMON_DIR은 주 worktree의 $GIT_DIR을 가리키며, 저장소의 모든 worktree가 이를 공유합니다. bare 저장소에는 주 worktree가 없습니다.
+- C2 (출처; S1, S2): `git rev-parse --path-format=absolute --git-common-dir`는 저장소의 어느 worktree에서든 같은 절대 경로를 돌려주고, --show-toplevel은 지금 worktree 자기 폴더를 돌려줍니다.
+- C3 (해석; S2, S4): graph.json 3행의 값은 worktree 폴더 이름과 정확히 같으므로, 생성기의 정체는 어디서 다시 만드느냐에 달려 있습니다. common dir의 부모에서 이름을 얻으면 이 의존이 없어집니다.
+- C4 (해석; S4): 023c41b의 손 수정이 버티지 못한 것은, 병합 관리 작업이 925bdf0에서 .wiki/graph.json을 다시 만들어 3행에 worktree 이름을 도로 적었기 때문입니다.
+- C5 (해석; S3, S5): 저장소 자체의 .wiki/.gitignore는 graph.json을 무시 대상으로 적지만, Git ignore 규칙은 추적되는 파일에 영향을 주지 않습니다. git rm --cached로 추적을 멈추면 다시 만든 결과가 PR diff에 들어오지 않습니다.
 
-## Core theory
+## 핵심 원리
 
-Git separates one repository from its working trees. A repository has one main worktree and zero or more linked worktrees. In a linked worktree $GIT_DIR points to a private directory under the main .git/worktrees/, and $GIT_COMMON_DIR points back to the main worktree's $GIT_DIR. `rev-parse --git-common-dir` prints $GIT_COMMON_DIR (else $GIT_DIR), and `--path-format=absolute` makes it absolute and canonical. `--show-toplevel` prints the current working tree's top level, which is the worktree folder. The common dir is a location-independent anchor; the working-tree path is not. Separately, gitignore rules do not affect files already tracked; `git rm --cached` removes them from the index so the ignore rule takes effect.
+Git은 저장소 하나와 그 작업 트리들을 구별합니다. 저장소에는 주 worktree 하나와 연결된 worktree가 0개 이상 있습니다. 연결된 worktree에서 $GIT_DIR은 주 .git/worktrees/ 아래의 전용 폴더를 가리키고, $GIT_COMMON_DIR은 주 worktree의 $GIT_DIR을 가리킵니다. `rev-parse --git-common-dir`는 $GIT_COMMON_DIR(없으면 $GIT_DIR)을 출력하고, `--path-format=absolute`는 이를 정규화된 절대 경로로 만듭니다. `--show-toplevel`은 지금 작업 트리의 최상위, 곧 worktree 폴더를 출력합니다. common dir은 위치와 상관없는 기준점이지만, 작업 트리 경로는 그렇지 않습니다. 이와 별개로, gitignore 규칙은 이미 추적되는 파일에 영향을 주지 않으며, `git rm --cached`로 index에서 빼야 ignore 규칙이 효과를 냅니다.
 
-## Applicability
+## 적용
 
-This branch is a linked worktree at C:/Users/dasdk/PycharmProjects/rfg_rag-worktrees/retrieval-port-requirement-links. The value in graph.json line 3 equals that folder's basename exactly, which is what a working-tree-basename derivation produces. The common dir for this worktree is the main checkout's .git under C:/Users/dasdk/PycharmProjects/rfg_rag, whose parent basename is rfg_rag. The generator lives in the wiki-agent hub, outside this repository, so change (1) lands there; in this repository the change is the regenerated or untracked .wiki/graph.json. .wiki/.gitignore line 4 (/graph.json) shows the repository already treats the graph as local generated state, so change (2) only enforces existing intent and does not add a rule.
+이 브랜치는 C:/Users/dasdk/PycharmProjects/rfg_rag-worktrees/retrieval-port-requirement-links에 있는 연결된 worktree입니다. graph.json 3행의 값은 그 폴더 이름과 정확히 같으며, 작업 트리 폴더 이름에서 정체를 얻으면 바로 이렇게 나옵니다. 이 worktree의 common dir은 C:/Users/dasdk/PycharmProjects/rfg_rag 아래 주 checkout의 .git이고, 그 부모 폴더 이름은 rfg_rag입니다. 생성기는 이 저장소 밖의 wiki-agent 허브에 있으므로 수정 (1)은 그쪽에 들어갑니다. 이 저장소에서 바뀌는 것은 다시 만들거나 추적을 멈춘 .wiki/graph.json입니다. .wiki/.gitignore 4행(/graph.json)은 저장소가 이미 그래프를 로컬 생성 상태로 다룬다는 것을 보여 주므로, 수정 (2)는 기존 의도를 지키게 할 뿐 규칙을 더하지 않습니다.
 
-## Hypothesis
+## 가설
 
-The graph generator takes the repository identity from the basename of the working-tree directory it is given. Merge maintenance gives it the linked worktree path, so the basename is the worktree folder. A second factor keeps the problem visible: .wiki/.gitignore already lists /graph.json as a local, ignored artifact, but the file is tracked, and Git ignore rules do not apply to tracked files. Every regeneration therefore lands in the PR diff. Two changes would hold. (1) The generator derives the identity from the main worktree: the basename of the parent of `git rev-parse --path-format=absolute --git-common-dir`. (2) This repository stops tracking .wiki/graph.json with `git rm --cached`, as its own .gitignore already intends.
+그래프 생성기는 받은 작업 트리 폴더 이름에서 저장소 정체를 얻습니다. 병합 관리 작업이 연결된 worktree 경로를 주므로, 그 이름은 worktree 폴더가 됩니다. 문제가 계속 보이게 하는 두 번째 요인도 있습니다. .wiki/.gitignore는 이미 /graph.json을 무시되는 로컬 산출물로 적지만 이 파일은 추적되고, Git ignore 규칙은 추적되는 파일에 적용되지 않습니다. 그래서 다시 만들 때마다 PR diff에 들어옵니다. 두 수정이 버틸 것입니다. (1) 생성기가 주 worktree에서 정체를 얻습니다. 곧 `git rev-parse --path-format=absolute --git-common-dir`의 부모 폴더 이름입니다. (2) 이 저장소의 .gitignore가 이미 뜻하는 대로, `git rm --cached`로 .wiki/graph.json 추적을 멈춥니다.
 
-## Counterevidence
+## 반대 근거
 
-- For a bare repository there is no main worktree, so the parent of the common dir is not a checkout name. A teammate's clone (for example on the VM codeit) in a folder not named rfg_rag would also get a different identity. The parent-of-common-dir basename is stable only within one clone layout.
-- --git-common-dir prints a relative '.git' in the main worktree unless --path-format=absolute is given, and that option needs Git 2.31 or later. An older Git would need the path resolved against the cwd.
-- If reviewers or other tools expect .wiki/graph.json in the PR, untracking it removes something they rely on. Whether it is tracked on main as well, or only on this branch, was not checked (no shell was available).
+- bare 저장소에는 주 worktree가 없으므로, common dir의 부모는 checkout 이름이 아닙니다. 팀원의 clone(예: VM codeit)이 rfg_rag가 아닌 이름의 폴더에 있으면 정체도 달라집니다. common dir 부모 폴더 이름은 clone 하나의 배치 안에서만 안정적입니다.
+- --path-format=absolute를 주지 않으면 --git-common-dir은 주 worktree에서 상대 경로 '.git'을 출력하며, 이 옵션은 Git 2.31 이상이 필요합니다. 더 오래된 Git에서는 경로를 현재 폴더 기준으로 풀어야 합니다.
+- 리뷰어나 다른 도구가 PR에 .wiki/graph.json이 있기를 기대한다면, 추적을 멈추면 그들이 기대는 것이 사라집니다. main에서도 추적하는지, 이 브랜치에서만 추적하는지는 확인하지 않았습니다(shell을 쓸 수 없었음).
 
-## Alternatives
+## 다른 방법
 
-- Edit .wiki/graph.json by hand again: already failed once, and the next regeneration overwrites it.
-- Untrack the graph only, without the generator fix: makes F4 disappear from the PR and matches .wiki/.gitignore, but the local graph still carries the wrong identity for whatever reads it. A good companion to the generator fix, not a replacement for it.
-- Put a fixed name such as "rfg_rag" in .wiki/adapter.toml for the generator to read: deterministic across clones, but it adds a config key that only ever holds one value (CLAUDE.md 1.1) and needs a new generator code path. Use it only if the common-dir derivation proves unstable across clones.
-- Derive the name from `git remote get-url origin`: stable across clones, but it depends on a remote existing and adds URL parsing.
+- .wiki/graph.json을 다시 손으로 고치기. 이미 한 번 실패했고, 다음에 다시 만들면 덮어씁니다.
+- 생성기는 고치지 않고 그래프 추적만 멈추기. PR에서 F4가 사라지고 .wiki/.gitignore와도 맞지만, 로컬 그래프는 그것을 읽는 쪽에 여전히 틀린 정체를 줍니다. 생성기 수정과 함께 하면 좋지만, 대신하지는 못합니다.
+- 생성기가 읽도록 .wiki/adapter.toml에 "rfg_rag" 같은 고정 이름 넣기. clone 사이에서 결정적이지만, 늘 같은 값만 담는 설정 키를 더하고(CLAUDE.md 1.1) 생성기에 새 코드 경로가 필요합니다. common dir 방식이 clone 사이에서 불안정하다고 드러날 때만 씁니다.
+- `git remote get-url origin`에서 이름 얻기. clone 사이에서 안정적이지만, 원격이 있어야 하고 URL 파싱이 더해집니다.
 
-## Experiment
+## 실험
 
-Run the graph generator once with the worktree path and once with the main checkout C:/Users/dasdk/PycharmProjects/rfg_rag. Before the fix the worktree run writes "retrieval-port-requirement-links", which reproduces F4. After the fix both runs must write "repo": "rfg_rag". Then rerun the merge-maintenance refresh in this worktree and confirm with `git diff` that line 3 still reads rfg_rag. If the graph is also untracked, check that `git ls-files .wiki/graph.json` prints nothing and that `git status` stays clean after a regeneration.
+그래프 생성기를 worktree 경로로 한 번, 주 checkout C:/Users/dasdk/PycharmProjects/rfg_rag로 한 번 돌립니다. 수정 전에는 worktree 실행이 "retrieval-port-requirement-links"를 적어 F4를 재현합니다. 수정 뒤에는 두 실행 모두 "repo": "rfg_rag"를 적어야 합니다. 그다음 이 worktree에서 병합 관리 새로 고침을 다시 돌리고, `git diff`로 3행이 여전히 rfg_rag인지 확인합니다. 그래프 추적도 멈췄다면, `git ls-files .wiki/graph.json`이 아무것도 출력하지 않고 다시 만든 뒤에도 `git status`가 깨끗한지 확인합니다.
 
-## Result
+## 결과
 
-Observed, not verified: this is still a draft. Before the fix, `repo_graph.build` from the hub (wiki-agent `e821745`) gave `"repo": "retrieval-port-requirement-links"` from this worktree and `"repo": "rfg_rag"` from the main checkout. `git rev-parse --path-format=absolute --git-common-dir` resolved to a parent named `rfg_rag` from both. This reproduced F4. Change (1) landed in the hub, not in this repository: wiki-agent `a011636` (#177, merged into its main) adds `name_of()`, which takes the name from the common dir, and makes `decisions_of()` count only published records. With it, `build()` from both paths gave `"repo": "rfg_rag"` and 0 decisions. The count is 0 because `.wiki/decisions/` is ignored here, so no record is published; the main checkout gives 0 as well. `repo_graph.write` run in this worktree then produced a `.wiki/graph.json` whose only difference from the old refresh at `925bdf0` is line 3 (worktree name → `rfg_rag`). That file is committed with this page, so the next merge refresh should leave it unchanged. Change (2), untracking the graph, was not made: hub `maintenance.py` stages generated files with `git add -f`, so the existing ignore rule would not stop them coming back. The full merge-maintenance refresh is server-owned and was not rerun here. No repository tests changed; the check was the in-memory build above.
+관측했지만 검증하지 않았으며, 여전히 초안입니다. 수정 전에는 허브(wiki-agent `e821745`)의 `repo_graph.build`가 이 worktree에서 `"repo": "retrieval-port-requirement-links"`를, 주 checkout에서 `"repo": "rfg_rag"`를 냈습니다. `git rev-parse --path-format=absolute --git-common-dir`는 두 곳 모두에서 부모 이름이 `rfg_rag`로 나왔습니다. 이로써 F4를 재현했습니다. 수정 (1)은 이 저장소가 아니라 허브에 들어갔습니다. wiki-agent `a011636`(#177, 그쪽 main에 병합)이 common dir에서 이름을 얻는 `name_of()`를 더하고, `decisions_of()`가 공개된 기록만 세게 했습니다. 그 뒤 `build()`는 두 경로 모두에서 `"repo": "rfg_rag"`와 결정 0개를 냈습니다. 0개인 것은 여기서 `.wiki/decisions/`가 무시되어 공개된 기록이 없기 때문이며, 주 checkout도 0개를 냅니다. 이어서 이 worktree에서 `repo_graph.write`를 돌리자, `925bdf0`의 예전 새로 고침과 3행(worktree 이름 → `rfg_rag`)만 다른 `.wiki/graph.json`이 나왔습니다. 그 파일을 이 문서와 함께 커밋하므로, 다음 병합 새로 고침은 이를 바꾸지 않아야 합니다. 수정 (2), 그래프 추적 멈추기는 하지 않았습니다. 허브 `maintenance.py`가 생성 파일을 `git add -f`로 스테이징하므로, 기존 ignore 규칙으로는 다시 들어오는 것을 막지 못합니다. 병합 관리 새로 고침 전체는 서버 몫이며 여기서 다시 돌리지 않았습니다. 저장소 테스트는 바뀌지 않았고, 확인은 위의 메모리 안 build였습니다.
 
-## Unresolved limits
+## 남은 한계
 
-The generator and merge maintenance are in the hub, outside this repository. It is unconfirmed whether this task may change the hub or whether its owner must. Unchecked: whether .wiki/graph.json (and corpus.json, also listed in .wiki/.gitignore) is tracked on main as well as on this branch; who else reads the 'repo' key and which name they expect; and teammates' clone folder names.
+생성기와 병합 관리 작업은 이 저장소 밖의 허브에 있습니다. 이 작업이 허브를 바꿔도 되는지, 그 주인이 바꿔야 하는지는 확인하지 않았습니다. 확인하지 않은 것: .wiki/graph.json(그리고 .wiki/.gitignore에 함께 적힌 corpus.json)을 이 브랜치뿐 아니라 main에서도 추적하는지, 'repo' 키를 누가 더 읽으며 어떤 이름을 기대하는지, 팀원들의 clone 폴더 이름.

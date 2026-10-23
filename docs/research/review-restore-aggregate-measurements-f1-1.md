@@ -1,126 +1,126 @@
-# Review research — F1, cycle 1
+# 리뷰 조사 · F1, 1회차
 
-Draft research before the fix of review round 2 of PR #67, written 2026-10-19. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #67 리뷰 2회차의 수정 전에 2026-10-19에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-The original F1 finding cannot be reliably identified from this retry. The supplied context contains the rejection of source conversation:F1/rounds/1-2, but neither the original finding nor the rejected research answer. Reconstructing F1 from an unrelated historical finding would risk filing research under the wrong issue, a failure already documented in this repository. [C2, C3]
+이번 재시도만으로는 원래 F1 지적을 믿을 만하게 알아낼 수 없습니다. 받은 맥락에는 출처 conversation:F1/rounds/1-2를 거부했다는 내용만 있고, 원래 지적도 거부된 조사 답도 없습니다. 관련 없는 과거 지적으로 F1을 다시 짜 맞추면 조사를 엉뚱한 문제에 넣을 위험이 있으며, 이 저장소에는 그런 실패가 이미 기록되어 있습니다. [C2, C3]
 
-Trigger: repeat, rounds 1, 2.
+발생: 반복, 1·2회차.
 
 - [P0] 이전 PR 이력에 실제 레코드가 남아 과거 내용에 접근할 수 있음. 상세 식별자와 조회 위치는 비공개 로컬 사고 목록에만 보관한다.
 
-## Failed fixes
+## 실패한 수정
 
-- The earlier F1 implementation fixes are not available in the supplied context, so their changes and failure mechanisms cannot be established. The rejected conversation reference must not be replaced with a repository file unless that file actually records the same finding and chronology. [C3]
-- A historical repository investigation records format retries that received only the rejection message and subsequently researched a different issue. Its reported document corrections did not establish that the retry preserved the original task context. This is evidence about the research process, not evidence identifying the current F1 implementation failure. [C2]
+- 앞선 F1 구현 수정은 받은 맥락에 없으므로, 무엇을 바꿨고 어떻게 실패했는지 세울 수 없습니다. 거부된 대화 출처는, 같은 지적과 시간 순서를 실제로 기록한 파일이 아니라면 저장소 파일로 바꾸면 안 됩니다. [C3]
+- 저장소의 과거 조사에는, 형식 재시도가 거부 메시지만 받고 다른 문제를 조사한 기록이 있습니다. 그 문서가 보고한 정정은, 재시도가 원래 작업 맥락을 지켰다는 것을 세우지 못했습니다. 이것은 조사 과정에 관한 증거이지, 지금 F1 구현 실패를 알아내는 증거가 아닙니다. [C2]
 
-## Sources
+## 출처
 
-### S1 — Anthropic — Using the Messages API
+### S1 — Anthropic: Messages API 사용하기
 
 - URL: https://platform.claude.com/docs/en/build-with-claude/working-with-messages
-- Retrieved: 2026-10-19
-- Locator: Multiple conversational turns; official documentation returned by web search
-- Fragment: The Messages API is stateless, which means that you always send the full conversational history to the API.
-- Applicability: Supports the general need to carry prior context into stateless retries.
-- Counterevidence: This describes a particular API. It does not prove how the current Codex host preserves or restores sessions.
-- Validation: Inspect the actual retry input and establish whether it includes the finding and rejected answer, independently of session identity.
+- 확인일: 2026-10-19
+- 위치: Multiple conversational turns; 웹 검색으로 찾은 공식 문서
+- 인용: The Messages API is stateless, which means that you always send the full conversational history to the API.
+- 적용: 상태를 기억하지 않는 재시도에는 앞선 맥락을 함께 실어 보내야 한다는 일반적인 필요를 뒷받침합니다.
+- 반대 근거: 특정 API를 설명합니다. 지금 Codex 호스트가 세션을 어떻게 지키거나 되살리는지는 증명하지 않습니다.
+- 검증: 실제 재시도 입력을 살펴, 세션 정체와 상관없이 지적과 거부된 답이 들어 있는지 확인합니다.
 
-### S2 — Historical investigation of research misfiling on format retries
+### S2 — 형식 재시도에서 조사가 잘못 분류된 과거 조사
 
 - URL: docs/research/review-golden-abc-seven-topic-comparison-f5-1.md
-- Retrieved: 2026-10-19
-- Locator: Hypothesis, lines 101–103; Counterevidence, lines 105–110; Experiment and Result, lines 120–128
-- Fragment: The format retry in wiki-agent tool/main/recovery.py research() runs in a new session and sends no finding. ... Only two retries have occurred, and both misfiled (2 of 2). ... With the finding restored, a model could still drift in principle.
-- Applicability: Records a historical failure in which a format-only retry researched another issue. It explains why choosing an arbitrary historical F1 would be unsafe.
-- Counterevidence: The page is a historical draft, includes a small sample, and concerns another task. Its host-code observations were not independently verified in this turn.
-- Validation: Recover the current original finding and rejected answer, compare subjects before and after the retry, and verify the current host's actual retry payload.
+- 확인일: 2026-10-19
+- 위치: 가설 101–103행; 반대 근거 105–110행; 실험과 결과 120–128행
+- 인용: wiki-agent tool/main/recovery.py research()의 형식 재시도는 새 세션에서 돌고 지적을 보내지 않습니다. ... 재시도는 두 번만 일어났고 둘 다 잘못 분류됐습니다(2번 중 2번). ... 지적을 되돌려줘도 원리상 모델이 벗어날 수는 있습니다.
+- 적용: 형식만 고친 재시도가 다른 문제를 조사한 과거 실패를 기록합니다. 아무 과거 F1이나 고르면 안전하지 않은 이유를 설명합니다.
+- 반대 근거: 과거 초안이며 표본이 작고 다른 작업에 관한 것입니다. 호스트 코드 관측은 이번에 따로 검증하지 않았습니다.
+- 검증: 지금 원래 지적과 거부된 답을 되찾고, 재시도 전후 주제를 비교하며, 지금 호스트가 실제로 보내는 재시도 내용을 확인합니다.
 
 ### S3 — 공개 집계와 비공개 사고 관측의 경계
 
 - URL: docs/benchmarks/seven_model/protocol.md
-- Retrieved: 2026-10-19
-- Locator: 집계 결과 보관
-- Fragment: 집계는 Git에 보관하고 실제 레코드·개별 감사는 로컬에 둔다.
-- Applicability: 이전 구현의 비공개 대조는 두 보고서의 감사 문구 6곳을 확인했다. 이 공개 기록에는 건수와 처리 상태만 남긴다.
-- Counterevidence: 현재 파일이나 활성 브랜치의 정리는 이미 게시된 원격 객체의 제거를 증명하지 않는다.
-- Validation: 세부 이력 식별자·경로·행·조회 명령은 무시된 로컬 사고 목록으로 옮기고 공개 내용과 원격 처리 상태를 분리해 점검한다.
+- 확인일: 2026-10-19
+- 위치: 집계 결과 보관
+- 인용: 집계는 Git에 보관하고 실제 레코드·개별 감사는 로컬에 둔다.
+- 적용: 이전 구현의 비공개 대조는 두 보고서에서 감사 문구 6곳을 확인했습니다. 이 공개 기록에는 건수와 처리 상태만 남깁니다.
+- 반대 근거: 지금 파일이나 작업 중인 브랜치를 정리했다고, 이미 공개된 원격 객체가 지워졌다는 증명은 아닙니다.
+- 검증: 자세한 이력 식별자, 경로, 행, 조회 명령은 무시되는 로컬 사고 목록으로 옮기고, 공개 내용과 원격 처리 상태를 나눠 점검합니다.
 
-### S4 — GitHub의 민감 데이터 제거 절차
+### S4 — GitHub의 민감 데이터 지우기 절차
 
 - URL: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository
-- Retrieved: 2026-10-19
-- Locator: About sensitive data exposure; Fully removing the data from GitHub
-- Fragment: 이력을 교체해도 SHA로 직접 조회하는 캐시, PR 참조, 다른 clone이나 fork에 데이터가 남을 수 있다. GitHub의 캐시와 PR 참조 제거는 Support의 별도 처리다.
-- Applicability: 활성 작업 브랜치의 조상에서 제외하는 수정과 GitHub 저장소에서 객체를 완전히 제거하는 절차를 구분한다.
-- Counterevidence: Support의 처리 가능성이나 다른 clone의 제거를 이 문서나 force-push만으로 입증할 수 없다.
-- Validation: 교체 후 활성 PR 커밋 목록과 옛 SHA의 직접 조회 결과를 따로 보고하고 원격 삭제 완료로 표현하지 않는다.
+- 확인일: 2026-10-19
+- 위치: About sensitive data exposure; Fully removing the data from GitHub
+- 인용: 이력을 교체해도 SHA로 직접 조회하는 캐시, PR 참조, 다른 clone이나 fork에 데이터가 남을 수 있다. GitHub의 캐시와 PR 참조 제거는 Support의 별도 처리다.
+- 적용: 작업 브랜치의 조상에서 빼는 수정과, GitHub 저장소에서 객체를 완전히 지우는 절차를 구별합니다.
+- 반대 근거: Support가 처리할 수 있는지나 다른 clone에서 지워졌는지는 이 문서나 force-push만으로 증명할 수 없습니다.
+- 검증: 교체 뒤 PR 커밋 목록과 옛 SHA 직접 조회 결과를 따로 보고하고, 원격 삭제가 끝났다고 표현하지 않습니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): Anthropic documents its Messages API as stateless and requires callers to send conversational history.
-- C2 (source; S2): A repository research page records historical format retries that omitted the finding and produced research about another issue; it explicitly limits that observation to a small historical sample.
-- C3 (interpretation; S1, S2): The present format-only retry is insufficient to reconstruct the original F1 or justify substituting an unrelated repository citation. Recovering the original finding and rejected answer is necessary to correct attribution without changing the research subject. The historical context-loss explanation is plausible but unconfirmed for this host.
-- C4 (관측; S3): 이전 구현은 현재 파일에서 실제 감사 문구를 제외했지만 오염된 작업 조상을 유지했다. 이후 작업 조상을 교체했어도 원격 객체 제거를 입증하지 못했다. 세부 이력 식별자와 조회 안내는 공개 기록에서 제외한다.
-- C5 (출처와 수정 범위; S4): 작업 브랜치의 오염된 조상을 교체하는 것과 GitHub의 캐시·PR 참조·다른 clone을 제거하는 것은 별도 작업이다. 이번 수정의 검증은 전자에 한정하며 후자의 완료를 주장하지 않는다.
+- C1 (출처; S1): Anthropic은 Messages API가 상태를 기억하지 않으며, 부르는 쪽이 대화 기록을 보내야 한다고 문서에 적습니다.
+- C2 (출처; S2): 저장소의 한 조사 문서는 지적을 빼고 보낸 과거 형식 재시도가 다른 문제를 조사했다고 기록하며, 그 관측을 작은 과거 표본으로 분명히 한정합니다.
+- C3 (해석; S1, S2): 지금처럼 형식만 고친 재시도로는 원래 F1을 다시 짜 맞추거나, 관련 없는 저장소 인용으로 바꿀 근거가 없습니다. 조사 주제를 바꾸지 않고 귀속을 바로잡으려면 원래 지적과 거부된 답을 되찾아야 합니다. 과거의 맥락 손실 설명은 그럴듯하지만, 이 호스트에서는 확인되지 않았습니다.
+- C4 (관측; S3): 이전 구현은 지금 파일에서 실제 감사 문구를 뺐지만, 오염된 작업 조상은 그대로 두었습니다. 이후 작업 조상을 바꿨어도 원격 객체가 지워졌다는 것은 증명하지 못했습니다. 자세한 이력 식별자와 조회 안내는 공개 기록에서 뺍니다.
+- C5 (출처와 수정 범위; S4): 작업 브랜치의 오염된 조상을 바꾸는 일과, GitHub의 캐시, PR 참조, 다른 clone을 지우는 일은 별개입니다. 이번 수정의 검증은 앞의 것에 한정하며, 뒤의 것이 끝났다고 주장하지 않습니다.
 
-## Core theory
+## 핵심 원리
 
-Stateless message requests require the caller to supply conversational history. A retry that needs an earlier finding and answer must receive that context explicitly or through a verified session continuation. The cited API documentation establishes the stateless-request principle; it does not establish this host's current behavior. [C1, C3]
+상태를 기억하지 않는 메시지 요청에서는 부르는 쪽이 대화 기록을 줘야 합니다. 앞선 지적과 답이 필요한 재시도는, 그 맥락을 분명히 받거나 검증된 세션 이어가기로 받아야 합니다. 인용한 API 문서는 상태를 기억하지 않는 요청의 원리를 세울 뿐, 이 호스트의 지금 동작을 세우지는 않습니다. [C1, C3]
 
-## Applicability
+## 적용
 
-The principle applies to recovering the research context for this format retry. It does not identify any defect in the code originally reviewed as F1. The original finding, earlier fixes, and rejected answer must be recovered before substantive F1 research or another implementation change is justified. [C3]
+이 원리는 이번 형식 재시도의 조사 맥락을 되찾는 일에 적용됩니다. 원래 F1로 리뷰된 코드의 결함을 알아내지는 못합니다. F1을 제대로 조사하거나 구현을 또 바꾸려면, 먼저 원래 지적, 앞선 수정, 거부된 답을 되찾아야 합니다. [C3]
 
-## Hypothesis
+## 가설
 
-There is insufficient evidence to propose a cause or code fix for the original F1. The missing original finding and rejected answer are consistent with the context-loss failure documented in the repository, but the current host implementation has not been inspected and that explanation remains unconfirmed. [C2, C3]
+원래 F1의 원인이나 코드 수정을 제안할 증거가 모자랍니다. 원래 지적과 거부된 답이 없다는 점은 저장소에 기록된 맥락 손실 실패와 맞지만, 지금 호스트 구현은 살펴보지 않았으므로 그 설명은 확인되지 않은 채입니다. [C2, C3]
 
-## Counterevidence
+## 반대 근거
 
-- The repository's retry investigation describes historical sessions and a different task; it does not prove the current host still has the same defect. [C2, C3]
-- The public documentation describes Anthropic's Messages API, not this Codex session or wiki-agent's current session-continuation implementation. [C1, C3]
-- The rejected answer may still exist in app-owned state even though it is absent from the context available here. Its absence here does not establish that it was lost permanently. [C3]
+- 저장소의 재시도 조사는 과거 세션과 다른 작업을 설명합니다. 지금 호스트에 같은 결함이 남아 있다는 증명이 아닙니다. [C2, C3]
+- 공개 문서는 Anthropic Messages API를 설명할 뿐, 이 Codex 세션이나 wiki-agent의 지금 세션 이어가기 구현을 설명하지 않습니다. [C1, C3]
+- 거부된 답은 여기서 쓸 수 있는 맥락에는 없지만, 앱이 가진 상태에는 남아 있을 수 있습니다. 여기 없다고 영영 잃었다는 뜻은 아닙니다. [C3]
 
-## Alternatives
+## 다른 방법
 
-- Infer F1 from a historical F1 research page. Rejected because finding identifiers recur across tasks, and the repository documents precisely this kind of misfiling. [C2, C3]
-- Replace the invalid conversation source with a plausible repository path. Rejected unless that file actually supports the original claims; a valid path alone does not repair unsupported attribution. [C3]
-- Recover the original finding and rejected answer from app-owned task state and retry with both included. This preserves the requested subject and allows a narrow correction of the invalid citation. [C3]
+- 과거 F1 조사 문서로 F1을 짐작하기. 지적 ID는 작업마다 되풀이되고, 저장소에 바로 이런 잘못 분류가 기록되어 있으므로 받아들이지 않습니다. [C2, C3]
+- 잘못된 대화 출처를 그럴듯한 저장소 경로로 바꾸기. 그 파일이 원래 주장을 실제로 뒷받침하지 않는다면 받아들이지 않습니다. 올바른 경로만으로는 근거 없는 귀속이 고쳐지지 않습니다. [C3]
+- 앱이 가진 작업 상태에서 원래 지적과 거부된 답을 되찾아 둘 다 넣고 재시도하기. 요청한 주제를 지키고, 잘못된 인용을 좁게 바로잡을 수 있습니다. [C3]
 
-## Experiment
+## 실험
 
-The host should reconstruct this retry with the original task identifier, F1 finding text, review chronology, and rejected answer included. Verify that the replacement for the invalid source is an existing repository file or a fetched web URL that supports the same claims. Then check that the corrected answer still addresses the original finding. No checks or implementation tests were executed in this read-only research turn. [C3]
+호스트가 원래 작업 ID, F1 지적 글, 리뷰 시간 순서, 거부된 답을 넣어 이번 재시도를 다시 만들어야 합니다. 잘못된 출처를 대신할 것이 같은 주장을 뒷받침하는, 실제 있는 저장소 파일이거나 가져온 웹 URL인지 확인합니다. 그다음 고친 답이 여전히 원래 지적을 다루는지 확인합니다. 이번 읽기 전용 조사에서는 확인이나 구현 테스트를 하나도 돌리지 않았습니다. [C3]
 
 ### 수정 세션의 실험
 
-이번 입력은 작업 `restore-aggregate-measurements`, F1 전문, round 1·2 경위와 과거 응답의 “Previous history was not rewritten” 문구를 제공했다. 거절된 연구 응답 전체나 현재 host의 재시도 구현은 제공되지 않았으므로, 그 부분의 맥락 소실 가설은 검증하지 않았다. 대신 F1 자체를 S3의 실제 저장소 파일과 Git 객체로 재현했다. 관련 없는 F1이나 존재하지 않는 conversation 출처로 대체하지 않았다.
+이번 입력은 작업 `restore-aggregate-measurements`, F1 전문, 1·2회차 경위, 과거 응답의 "Previous history was not rewritten" 문구를 주었습니다. 거부된 조사 답 전체나 지금 호스트의 재시도 구현은 주지 않았으므로, 그 부분의 맥락 손실 가설은 검증하지 않았습니다. 대신 F1 자체를 S3의 실제 저장소 파일과 Git 객체로 재현했습니다. 관련 없는 F1이나 있지도 않은 conversation 출처로 바꾸지 않았습니다.
 
-1. 이전 구현에서 작업 조상과 활성 PR 목록을 대조했다. 파일 내용을 지우는 후속 커밋만으로는 과거 객체를 제거하지 못했다.
-2. 내용을 출력하지 않는 비공개 로컬 원본 대조에서 두 보고서의 실제 감사 문구 6곳을 확인했다. 원문·오염 식별자·정확한 조회 위치는 공개하지 않는다.
-3. 이전 정리의 경로별 diff를 대조해 지적 경로 외 11개 적용 지점을 집계했다. 아래 목록은 현재 문서의 정리 범위이며 과거 버전을 회수하는 안내가 아니다.
-4. 후속 구현은 정리된 최종 파일로 작업 조상을 교체했다. 집계 보존과 활성 조상 정리는 확인했지만 원격 객체의 공개 접근 차단은 확인하지 못했다. 이 조치만으로 F1을 해결한 것으로 취급해서는 안 된다.
+1. 이전 구현에서 작업 조상과 PR 목록을 대조했습니다. 파일 내용을 지우는 후속 커밋만으로는 과거 객체를 지우지 못했습니다.
+2. 내용을 출력하지 않는 비공개 로컬 원본 대조에서, 두 보고서의 실제 감사 문구 6곳을 확인했습니다. 원문, 오염 식별자, 정확한 조회 위치는 공개하지 않습니다.
+3. 이전 정리의 경로별 diff를 대조해, 지적된 경로 밖의 적용 지점 11곳을 셌습니다. 아래 목록은 지금 문서의 정리 범위이며, 과거 버전을 되찾는 안내가 아닙니다.
+4. 후속 구현은 정리된 최종 파일로 작업 조상을 바꿨습니다. 집계를 지킨 것과 작업 조상을 정리한 것은 확인했지만, 원격 객체의 공개 접근을 막았는지는 확인하지 못했습니다. 이 조치만으로 F1을 해결했다고 다루면 안 됩니다.
 
-| 적용 경로 | 보존하는 내용 | 계속 제외하는 내용과 이유 |
+| 적용 경로 | 남기는 내용 | 계속 빼는 내용과 이유 |
 | --- | --- | --- |
 | `docs/benchmarks/seven_model/full_dev/report.md` | 모델·주제·분할별 집계와 감사 표본 수 | 실제 문항 ID·기관/질문 설명·개별 순위·토큰 점수·사례별 진단 |
-| `docs/benchmarks/seven_model/historical/report.md` | 과거 집계와 일반적 감사 해석 | 동일한 실제 사례 감사 |
+| `docs/benchmarks/seven_model/historical/report.md` | 과거 집계와 일반적인 감사 해석 | 같은 실제 사례 감사 |
 | `docs/kiwi_bm25_review.md` | 토크나이저 품질·시간·선택 근거 | 개별 문서의 청크 출처 |
 | `docs/ocr_benchmark.md` | 유형별 품질·비용·시간·제외 수 | 개별 제외 이미지 번호 |
 | `docs/quantity_filter_estimate.md` | 전체 비용 견적과 조건 | 실제 사용자 질문 문구 |
-| `docs/quantity_filter_exclusions.md` | 제외 집계와 한계 | 개별 문서의 상충 값 |
+| `docs/quantity_filter_exclusions.md` | 제외 집계와 한계 | 개별 문서의 서로 어긋나는 값 |
 | `docs/quantity_filter_validation.md` | 품질·비용·시간·검증 집계 | 기관·개별 값·실제 질문/답 문구·행별 진단 |
 | `golden_pipeline/experiment_abc7.md` | 생성 방식별 집계와 결론 | 개별 검토 레코드 ID |
-| `docs/research/review-feature-eval-golden-input-f4-1.md` | 당시 실험 결과와 독립 합성 설명 | 실제 문항 ID와 인용·반복 문구 |
-| `docs/research/review-feature-eval-golden-input-f4-2.md` | 당시 실험 결과와 독립 합성 설명 | 실제 문구를 복사한 테스트·설명·실험 인용 |
-| `docs/research/review-feature-golden-absent-premise-f2-2.md` | 당시 집계와 독립 합성 예제 | 실제 질문·근거 발췌 |
-| `.wiki/corpus.json` | 정리된 문서의 색인 | 원문 제목·도입부에 포함된 실제 레코드의 색인 사본 |
+| `docs/research/review-feature-eval-golden-input-f4-1.md` | 당시 실험 결과와 따로 지은 합성 설명 | 실제 문항 ID와 인용·반복 문구 |
+| `docs/research/review-feature-eval-golden-input-f4-2.md` | 당시 실험 결과와 따로 지은 합성 설명 | 실제 문구를 복사한 테스트·설명·실험 인용 |
+| `docs/research/review-feature-golden-absent-premise-f2-2.md` | 당시 집계와 따로 지은 합성 예시 | 실제 질문·근거 발췌 |
+| `.wiki/corpus.json` | 정리된 문서의 색인 | 원문 제목·도입부에 들어 있던 실제 레코드의 색인 사본 |
 
-## Result
+## 결과
 
-관측 기록이며 독립 검증된 결론이 아닌 초안이다. 이전 구현은 두 보고서의 실제 감사 문구 6곳과 별도 적용 경로 11개를 확인하고 현재 내용과 작업 조상을 정리했다. Ruff·규칙 파일 일치·diff 공백 검사와 공개 집계·runtime·상대 링크 검사는 통과했지만, 공개 원격 접근 차단이나 Support 처리는 완료하지 않았다. 따라서 이전 처리 보고가 F1을 해결로 분류한 것은 잘못이었다. Round 3에서는 이 페이지의 조회 식별자·정확한 과거 위치·조회 명령을 제거하고 상세 사고 목록을 비공개 로컬에만 보관한다. 원격 공개 접근과 Support 처리 상태는 cycle 2 초안의 Result에서 별도로 보고하며, F1을 해결로 분류하지 않는다. 제품·테스트 코드를 바꾸지 않았고 서버 소유 전체 pytest 게이트는 pending이다. [C4, C5]
+관측 기록이며, 따로 검증된 결론이 아닌 초안입니다. 이전 구현은 두 보고서의 실제 감사 문구 6곳과 따로 적용할 경로 11개를 확인하고, 지금 내용과 작업 조상을 정리했습니다. Ruff, 규칙 파일 일치, diff 공백 검사와 공개 집계·runtime·상대 링크 검사는 통과했지만, 공개 원격 접근 차단이나 Support 처리는 끝내지 않았습니다. 그래서 이전 처리 보고가 F1을 해결로 분류한 것은 잘못이었습니다. 3회차에서는 이 문서의 조회 식별자, 정확한 과거 위치, 조회 명령을 지우고, 자세한 사고 목록은 비공개 로컬에만 둡니다. 원격 공개 접근과 Support 처리 상태는 2회차 초안의 결과 절에서 따로 보고하며, F1을 해결로 분류하지 않습니다. 제품·테스트 코드는 바꾸지 않았고, 서버가 맡는 전체 pytest 검사는 아직 기다리는 중입니다. [C4, C5]
 
-## Unresolved limits
+## 남은 한계
 
-초기 연구는 맥락이 부족했으며 이번 실험도 거절된 연구 응답 전체나 현재 host 구현을 복원하지 않았다. 따라서 초기 맥락 소실 가설은 미확인이다. 새 관측은 F1의 실제 파일·작업 이력에 한정한다. 이력 교체는 공유 base나 다른 브랜치·태그를 고치지 않으며 로컬 reflog·기존 clone·fork·GitHub 캐시와 옛 PR 참조의 제거를 입증하지 않는다. GitHub Support에 삭제를 요청하거나 삭제 완료를 확인한 상태도 아니다. 실제 레코드와 발췌를 이 페이지에 재인용하지 않았으며 새 벤치마크·유료 API 호출·제품 코드·테스트 추가는 없다. [C4, C5]
+처음 조사는 맥락이 모자랐고, 이번 실험도 거부된 조사 답 전체나 지금 호스트 구현을 되살리지 않았습니다. 그래서 처음의 맥락 손실 가설은 확인되지 않았습니다. 새 관측은 F1의 실제 파일과 작업 이력에 한정합니다. 이력을 바꿔도 공유 base나 다른 브랜치·태그는 고쳐지지 않으며, 로컬 reflog, 기존 clone, fork, GitHub 캐시, 옛 PR 참조가 지워졌다는 증명도 아닙니다. GitHub Support에 삭제를 요청하거나 삭제가 끝났음을 확인한 상태도 아닙니다. 실제 레코드와 발췌는 이 문서에 다시 인용하지 않았고, 새 벤치마크, 유료 API 호출, 제품 코드나 테스트 추가는 없습니다. [C4, C5]
