@@ -1,126 +1,126 @@
-# Review research — F1, cycle 2
+# 리뷰 조사 · F1, 2회차
 
-Draft research before the fix of review round 3 of PR #76, written 2026-10-20. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #76 리뷰 3회차의 수정 전에 2026-10-20에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-F1: a comparison item must be rejected exactly when its entities are field labels of one requirement record (고유번호 · 명칭 · 분류 · 정의 · 세부 내용 · 응낙수준 …), and admitted when it compares same-kind things, including row names of a detail table inside a requirement chunk, whatever the values look like (3초/1초, bare 42/103, or text). `_field_comparison` (golden_pipeline/validation.py:664-685) runs at screening (:242), release/rename (:310) and verdict (:603), so a false positive drops a valid item and writes a wrong invalid_comparison failure record, and a false negative lets a field comparison into the release. Round 3 shows the current rule rejects '목표경영 | 42' vs '과제관리 | 103' once requirement_ids=['QUR-003'] is attached, because quantities() drops bare numbers and the unit intersection is empty.
+F1: 비교 항목은 대상이 요구사항 기록 하나의 칸 이름(고유번호 · 명칭 · 분류 · 정의 · 세부 내용 · 응낙수준 …)일 때만 정확히 거부되고, 요구사항 청크 안 세부 표의 행 이름을 포함해 같은 종류의 것을 견줄 때는 값이 어떻게 생겼든(3초/1초, 맨 숫자 42/103, 글) 받아들여져야 합니다. `_field_comparison`(golden_pipeline/validation.py:664-685)은 선별(:242), 공개/이름 바꾸기(:310), 판정(:603)에서 돌므로, 잘못 거부하면 올바른 항목을 버리고 틀린 invalid_comparison 실패 기록을 쓰며, 잘못 통과시키면 칸 비교가 공개에 들어갑니다. 3회차는 지금 규칙이 requirement_ids=['QUR-003']이 붙으면 '목표경영 | 42'와 '과제관리 | 103'을 거부한다는 것을 보여 줍니다. quantities()가 맨 숫자를 버려 단위 교집합이 비기 때문입니다.
 
-Trigger: repeat, rounds 2, 3.
+발생: 반복, 2·3회차.
 
 - [P1] [P1] golden_pipeline/validation.py:676 — 단위 없는 수치나 글 값의 정상 비교를 요구사항 칸 비교로 오거절합니다
 
-## Failed fixes
+## 실패한 수정
 
-- fbf9c96: rejected when every evidence ref has requirement_ids and each entity sits next to its value ('대상 | 값'). Detail tables inside requirement chunks have the same 'name | value' layout, so '실명 인증 | 3초' vs '로그인 | 1초' was rejected (round 1). Layout is shared by attribute/value records and listings, so it cannot separate them.
-- f0b918d: added a closed list REQUIREMENT_FIELD = '요구사항\S*|산출정보|응낙수준|정의'. '요구사항\S*' matched real requirement names such as '요구사항 A' vs '요구사항 B', which the prompt (prompts/A/comparison.txt:9) allows as '요구사항 둘' (round 2). The list also missed bare 고유번호 · 명칭 · 분류 · 세부 내용. A label list drifts both ways because labels vary per document.
-- d3f129f: replaced the list with 'the values share no quantity unit'. That moved the test from the entity to the values. Valid comparisons of bare numbers ('42' vs '103') or text values have no shared unit and are rejected (round 3). Cycle 1 recorded this limit, but there was no positive example in local data to catch it. Value type does not say whether the entity is a field: a field record can hold same-unit values, and a detail listing can hold unitless or text values.
-- Common cause: all three judged field-ness from the single item and its cited units. Nothing in one item's text marks an attribute label apart from an instance name.
+- fbf9c96: 근거 참조마다 requirement_ids가 있고 대상마다 값 바로 옆에 있으면('대상 | 값') 거부했습니다. 요구사항 청크 안의 세부 표도 같은 '이름 | 값' 배치이므로, '실명 인증 | 3초'와 '로그인 | 1초'가 거부됐습니다(1회차). 배치는 속성/값 기록과 목록이 함께 쓰므로 둘을 나눌 수 없습니다.
+- f0b918d: 닫힌 목록 REQUIREMENT_FIELD = '요구사항\S*|산출정보|응낙수준|정의'를 더했습니다. '요구사항\S*'는 프롬프트(prompts/A/comparison.txt:9)가 '요구사항 둘'로 허용하는 '요구사항 A'와 '요구사항 B' 같은 실제 요구사항 이름과 맞았습니다(2회차). 목록은 고유번호 · 명칭 · 분류 · 세부 내용 단독형도 놓쳤습니다. 이름은 문서마다 다르므로, 이름 목록은 양쪽으로 어긋납니다.
+- d3f129f: 목록을 '값들이 수량 단위를 함께 갖지 않음'으로 바꿨습니다. 시험을 대상에서 값으로 옮긴 것입니다. 맨 숫자('42'와 '103')나 글 값의 올바른 비교는 공통 단위가 없어 거부됩니다(3회차). 1회차가 이 한계를 기록했지만, 로컬 데이터에 이를 잡을 긍정 사례가 없었습니다. 값의 종류는 대상이 칸인지 말해 주지 않습니다. 칸 기록도 같은 단위 값을 가질 수 있고, 세부 목록도 단위 없는 값이나 글 값을 가질 수 있습니다.
+- 공통 원인: 셋 모두 항목 하나와 그 인용 단위로 칸인지를 판단했습니다. 항목 하나의 글 안에는 속성 이름과 사례 이름을 구별하는 표시가 없습니다.
 
-## Sources
+## 출처
 
 ### S1 — Extracting Structured Data from Web Pages (Arasu & Garcia-Molina, SIGMOD 2003)
 
 - URL: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/extract.pdf
-- Retrieved: 2026-10-20
-- Locator: definitions of occurrence vector, equivalence class and LFEQ
-- Fragment: occurrence vector: "the vector of occurrence frequencies of the dtoken in the input pages"; equivalence class: "the maximal set of dtokens having the same occurrence vector"; "EXALG retains only the equivalence classes that are large and whose tokens occur in a large number of input pages. We call such equivalence classes LFEQs." (quoted via search extraction of the PDF; the full text, including its handling of tokens with several roles, was not readable to me)
-- Applicability: Requirement chunks of one document are pages from one form. Field labels are tokens that occur in a large number of those pages; detail-table entity names occur in one.
-- Counterevidence: ExAlg works on HTML tokens of many pages from one site and relies on enough input pages. A document with one or two requirement records gives too few pages.
-- Validation: In the data run, field labels should show near-full record coverage within a document and detail names coverage of one record.
+- 확인일: 2026-10-20
+- 위치: occurrence vector, equivalence class, LFEQ 정의
+- 인용: occurrence vector: "the vector of occurrence frequencies of the dtoken in the input pages"; equivalence class: "the maximal set of dtokens having the same occurrence vector"; "EXALG retains only the equivalence classes that are large and whose tokens occur in a large number of input pages. We call such equivalence classes LFEQs." (PDF를 검색으로 추출한 인용이며, 여러 역할을 가진 토큰의 처리를 포함한 전문은 읽을 수 없었음)
+- 적용: 한 문서의 요구사항 청크는 양식 하나로 만든 페이지들입니다. 칸 이름은 그 페이지 중 많은 곳에 나오는 토큰이고, 세부 표의 대상 이름은 한 곳에 나옵니다.
+- 반대 근거: ExAlg는 한 사이트의 여러 페이지 HTML 토큰에 대해 돌고, 입력 페이지가 충분해야 합니다. 요구사항 기록이 한두 개인 문서는 페이지가 너무 적습니다.
+- 검증: 데이터 실행에서 칸 이름은 문서 안 기록의 거의 전부에 나오고, 세부 이름은 기록 하나에 나와야 합니다.
 
-### S2 — ExAlg overview (slide summary)
+### S2 — ExAlg 개요(슬라이드 요약)
 
 - URL: https://www.slideshare.net/slideshow/exalg-overview/3589649
-- Retrieved: 2026-10-20
-- Locator: slides on template vs data tokens
-- Fragment: Per the search summary: nothing in the raw text syntactically marks template text apart from data, so tokens are grouped by occurrence counts across pages; a large class with wide page support usually comes from the template, while data tokens tend to appear rarely. (Student presentation, secondary; 'usually' and 'tend to' are its own hedges.)
-- Applicability: Explains why all three fixes failed: each looked for a syntactic mark (layout, label spelling, value type) inside one item.
-- Counterevidence: Secondary and informal; wording paraphrased by the search tool.
-- Validation: Same as S1.
+- 확인일: 2026-10-20
+- 위치: 틀 토큰과 데이터 토큰에 대한 슬라이드
+- 인용: 검색 요약에 따르면: 날것의 글에서 틀 글과 데이터를 문법적으로 구별하는 표시가 없으므로, 토큰을 페이지 사이의 등장 수로 묶습니다. 페이지에 널리 나오는 큰 묶음은 보통 틀에서 오고, 데이터 토큰은 드물게 나오는 경향이 있습니다. (학생 발표, 2차 자료이며 '보통'과 '경향'은 원문의 단서입니다.)
+- 적용: 세 수정이 모두 실패한 이유를 설명합니다. 각각 항목 하나 안에서 문법적 표시(배치, 이름 철자, 값 종류)를 찾았습니다.
+- 반대 근거: 2차 자료이고 비공식적이며, 문구는 검색 도구가 바꿔 말한 것입니다.
+- 검증: S1과 같습니다.
 
 ### S3 — golden_pipeline/validation.py _comparison_rule / _field_comparison
 
 - URL: golden_pipeline/validation.py
-- Retrieved: 2026-10-20
-- Locator: lines 655-685; callers 242, 310, 603
-- Fragment: if set.intersection(*({unit for _, unit in quantities(text)} for text in texts)): return False … return all((name, value) in pairs …) after `if not all(ref["requirement_ids"] …): return False`; quantities() skips a number when `not unit` (line 428).
-- Applicability: Bare numbers and text values produce empty unit sets, so the intersection is empty and requirement evidence with adjacent cells is rejected: round 3's '42 vs 103'.
-- Counterevidence: none given
-- Validation: After the fix, lines 674-677 no longer read values; field-ness comes from the label set.
+- 확인일: 2026-10-20
+- 위치: 655-685행; 호출 242, 310, 603행
+- 인용: if set.intersection(*({unit for _, unit in quantities(text)} for text in texts)): return False … return all((name, value) in pairs …) after `if not all(ref["requirement_ids"] …): return False`; quantities() skips a number when `not unit` (line 428).
+- 적용: 맨 숫자와 글 값은 빈 단위 집합을 만들므로, 교집합이 비어 칸이 붙어 있는 요구사항 근거가 거부됩니다. 3회차의 '42 대 103'입니다.
+- 반대 근거: 없음
+- 검증: 수정 뒤 674-677행은 더는 값을 읽지 않고, 칸인지는 이름 집합으로 정합니다.
 
-### S4 — tests/golden/test_improvement.py field-comparison cases
+### S4 — tests/golden/test_improvement.py 칸 비교 경우
 
 - URL: tests/golden/test_improvement.py
-- Retrieved: 2026-10-20
-- Locator: lines 232-250
-- Fragment: Admitted cases: (['QUR-003'], 실명 인증/로그인, 3초/1초), (['QUR-003'], 요구사항 A/B, 3초/5초), ([], 목표경영/과제관리, 42/103). The bare-number case is only tested with requirement_ids=[].
-- Applicability: Each round's test covered only the counterexample just raised, so the next one (unitless numbers under a requirement) stayed untested.
-- Counterevidence: none given
-- Validation: Add 목표경영/과제관리 and a text-valued detail case under ['QUR-003']; expect None.
+- 확인일: 2026-10-20
+- 위치: 232-250행
+- 인용: Admitted cases: (['QUR-003'], 실명 인증/로그인, 3초/1초), (['QUR-003'], 요구사항 A/B, 3초/5초), ([], 목표경영/과제관리, 42/103). The bare-number case is only tested with requirement_ids=[].
+- 적용: 회차마다 테스트는 방금 나온 반례만 다뤘으므로, 다음 반례(요구사항 아래의 단위 없는 숫자)는 시험되지 않은 채 남았습니다.
+- 반대 근거: 없음
+- 검증: ['QUR-003'] 아래에 목표경영/과제관리와 글 값의 세부 경우를 더하고 None을 기대합니다.
 
 ### S5 — golden_pipeline/prompts/A/comparison.txt
 
 - URL: golden_pipeline/prompts/A/comparison.txt
-- Retrieved: 2026-10-20
-- Locator: lines 9-12, 15
-- Fragment: "견주는 대상은 같은 종류의 것들이다 (차수 둘 · 요구사항 둘 · 장비 둘 · 평가 항목 둘처럼) … 한 대상의 서로 다른 칸 · 항목 이름(요구사항 고유번호 · 명칭 · 분류 · 정의 · 세부 내용 같은 것)을 대상으로 삼지 않는다." and values are "금액 · 기간 · 수량 · 날짜 · 비율 · 기준 같은 것".
-- Applicability: The contract forbids field names as entities; it does not restrict value type. '기준' values are text, so a value-type rule contradicts the prompt.
-- Counterevidence: The prompt is guidance, not evidence of what items contain.
-- Validation: The rule after the fix tests the entity (form label), matching line 10.
+- 확인일: 2026-10-20
+- 위치: 9-12행, 15행
+- 인용: "견주는 대상은 같은 종류의 것들이다 (차수 둘 · 요구사항 둘 · 장비 둘 · 평가 항목 둘처럼) … 한 대상의 서로 다른 칸 · 항목 이름(요구사항 고유번호 · 명칭 · 분류 · 정의 · 세부 내용 같은 것)을 대상으로 삼지 않는다." 그리고 값은 "금액 · 기간 · 수량 · 날짜 · 비율 · 기준 같은 것".
+- 적용: 약속은 칸 이름을 대상으로 삼지 말라는 것이지, 값의 종류를 제한하지 않습니다. '기준' 값은 글이므로, 값 종류 규칙은 프롬프트와 어긋납니다.
+- 반대 근거: 프롬프트는 안내이지, 항목에 무엇이 들었는지의 증거가 아닙니다.
+- 검증: 수정 뒤의 규칙은 10행과 맞게 대상(양식 이름)을 시험합니다.
 
-### S6 — Cycle-1 research page for F1
+### S6 — F1 1회차 조사 문서
 
 - URL: docs/research/review-littlebitai-golden-comparison-fields-f1-1.md
-- Retrieved: 2026-10-20
-- Locator: Alternatives (corpus vocabulary) and Result
-- Fragment: "Learn field labels from the corpus: a key cell that recurs as a left-hand label across chunks of two or more distinct requirement_ids … is a schema field; detail-table entities appear under one requirement only." Result: 856 items, 224 rejected, all hand-read as field comparisons; "same-kind values that are text, or bare numbers without a unit … would be rejected; none occur in the local outputs."
-- Applicability: Gives the regression set (224 field comparisons) and records that cycle 1 knew the value-type limit; the label-recurrence route was its second choice.
-- Counterevidence: Its label list is from hand reading, not a measured recurrence count.
-- Validation: All 224 must stay rejected under the recurrence rule.
+- 확인일: 2026-10-20
+- 위치: 다른 방법(코퍼스 어휘)과 결과
+- 인용: "코퍼스에서 칸 이름 배우기: v12 묶음에서 서로 다른 requirement_ids 둘 이상의 청크에 왼쪽 이름으로 되풀이되는 키 칸은 스키마 칸이고, 세부 표 대상은 요구사항 하나에만 나옵니다." 결과: 856개 항목, 224개 거부, 모두 손으로 읽어 칸 비교로 확인. "칸이 붙어 있는 요구사항 근거에서 글이거나 단위 없는 맨 숫자인 같은 종류 값은 거부됩니다. 로컬 출력에는 그런 경우가 없습니다."
+- 적용: 회귀 확인용 집합(칸 비교 224개)을 주고, 1회차가 값 종류 한계를 알고 있었다는 것을 기록합니다. 이름 되풀이 방법은 그 문서의 두 번째 선택이었습니다.
+- 반대 근거: 그 문서의 이름 목록은 잰 되풀이 수가 아니라 손으로 읽어 얻은 것입니다.
+- 검증: 되풀이 규칙에서도 224개가 모두 계속 거부돼야 합니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): In template extraction, template tokens are those in large equivalence classes whose tokens occur in a large number of input pages; data tokens vary across pages.
-- C2 (source; S2): Template text and data are not syntactically distinguishable within one page; occurrence across pages separates them.
-- C3 (interpretation; S1, S6): Requirement field labels behave as template tokens of the per-document requirement form (they recur across requirement records), and detail-table or requirement names behave as data; recurrence across requirement_ids is therefore the signal for 'field label'.
-- C4 (interpretation; S3, S5): The current rule rejects bare-number and text-valued comparisons in requirement evidence because quantities() yields no unit for them, contradicting the prompt contract that allows '기준'-type values.
-- C5 (interpretation; S4, S5, S6): Each fix was validated only against the counterexample just raised, so the next reviewer counterexample was untested; the fix needs a test matrix of entity kind (field label / detail name / requirement name) × value kind (unit / bare number / text) under requirement evidence.
+- C1 (출처; S1): 틀 기반 추출에서 틀 토큰은 큰 동치류에 속하고 많은 입력 페이지에 나오는 토큰이며, 데이터 토큰은 페이지마다 다릅니다.
+- C2 (출처; S2): 한 페이지 안에서는 틀 글과 데이터를 문법적으로 구별할 수 없으며, 페이지 사이의 등장이 둘을 나눕니다.
+- C3 (해석; S1, S6): 요구사항 칸 이름은 문서별 요구사항 양식의 틀 토큰처럼 움직이고(요구사항 기록마다 되풀이됨), 세부 표나 요구사항 이름은 데이터처럼 움직입니다. 그러므로 requirement_ids를 넘나드는 되풀이가 '칸 이름'의 신호입니다.
+- C4 (해석; S3, S5): 지금 규칙은 quantities()가 맨 숫자와 글 값에 단위를 내지 않으므로, 요구사항 근거의 그런 비교를 거부합니다. '기준' 같은 값을 허용하는 프롬프트 약속과 어긋납니다.
+- C5 (해석; S4, S5, S6): 수정마다 방금 나온 반례로만 확인했으므로, 리뷰어의 다음 반례는 시험되지 않았습니다. 수정에는 요구사항 근거 아래에서 대상 종류(칸 이름 / 세부 이름 / 요구사항 이름) × 값 종류(단위 / 맨 숫자 / 글)의 테스트 조합이 필요합니다.
 
-## Core theory
+## 핵심 원리
 
-In template-based extraction (Arasu & Garcia-Molina, ExAlg, SIGMOD 2003), template text and data cannot be told apart syntactically within one page. They are separated by occurrence across pages: tokens with the same occurrence vector form equivalence classes, and the large, frequently occurring classes are taken as template. Data tokens vary from page to page. Web-table taxonomies (cycle 1, S2) call one record's table an attribute/value table and a detail table a listing; both use 'name | value' rows, which is why single-item layout fails.
+틀 기반 추출(Arasu & Garcia-Molina, ExAlg, SIGMOD 2003)에서 틀 글과 데이터는 한 페이지 안에서 문법적으로 구별할 수 없습니다. 페이지 사이의 등장으로 나눕니다. 등장 벡터가 같은 토큰은 동치류를 이루고, 자주 나오는 큰 묶음을 틀로 봅니다. 데이터 토큰은 페이지마다 다릅니다. 웹 표 분류 체계(1회차, S2)는 기록 하나의 표를 속성/값 표, 세부 표를 목록이라고 부릅니다. 둘 다 '이름 | 값' 행을 쓰므로, 항목 하나의 배치로는 실패합니다.
 
-## Applicability
+## 적용
 
-Each v12 requirement chunk is one page generated from a per-document form. The form's labels recur across the document's requirement chunks (requirement_ids gives the record identity), while detail-table row names and requirement names do not. This applies in _field_comparison: replace lines 674-677 (the quantities intersection) with a membership test against the document's recurring-label set. The set comes from the evidence run that the plan pins (plan → evidence_run → outputs/evidence/<run>/units.jsonl, keyed by doc_sha), and it must reach all three rule_reason call sites (:242, :310, :603). The rejection message and improvement code stay the same.
+v12 요구사항 청크 하나하나는 문서별 양식으로 만든 페이지 하나입니다. 양식의 이름은 그 문서의 요구사항 청크마다 되풀이되고(requirement_ids가 기록의 정체를 줌), 세부 표 행 이름과 요구사항 이름은 그렇지 않습니다. 이는 _field_comparison에 적용됩니다. 674-677행(수량 교집합)을 그 문서의 되풀이 이름 집합에 속하는지 보는 시험으로 바꿉니다. 집합은 plan이 고정한 근거 실행(plan → evidence_run → outputs/evidence/<run>/units.jsonl, doc_sha 기준)에서 나오며, rule_reason 호출 지점 세 곳(:242, :310, :603) 모두에 닿아야 합니다. 거부 문구와 개선 코드는 그대로 둡니다.
 
-## Hypothesis
+## 가설
 
-Field labels are template text of the requirement-record form. The same label recurs as the left cell of a 'label | value' pair in most requirement records of a document (고유번호, 명칭, 분류, 정의, 세부 내용, 응낙수준, 산출정보 …). Detail-table entities and requirement names (실명 인증, 로그인, 요구사항 A, 목표경영) are data and appear under one record. So the rule should: keep fix 1's preconditions (all evidence has requirement_ids and each entity is adjacent to its value), drop the value-unit test, and reject only when every entity, whitespace- and ordinal-normalized ('② 요구사항 고유번호' → '요구사항고유번호'), is a recurring label of the document's requirement records. A recurring label is a left cell found in units of at least 2 distinct requirement_ids and at least half of the document's requirement_ids, computed from the evidence run's units.jsonl.
+칸 이름은 요구사항 기록 양식의 틀 글입니다. 같은 이름이 한 문서의 요구사항 기록 대부분에서 '이름 | 값' 쌍의 왼쪽 칸으로 되풀이됩니다(고유번호, 명칭, 분류, 정의, 세부 내용, 응낙수준, 산출정보 …). 세부 표 대상과 요구사항 이름(실명 인증, 로그인, 요구사항 A, 목표경영)은 데이터이며 기록 하나 아래에 나옵니다. 그래서 규칙은 이렇게 해야 합니다. 수정 1의 전제(모든 근거에 requirement_ids가 있고 대상마다 값 옆에 있음)는 유지하고, 값 단위 시험은 없애며, 공백과 순번을 정규화한('② 요구사항 고유번호' → '요구사항고유번호') 모든 대상이 그 문서 요구사항 기록의 되풀이 이름일 때만 거부합니다. 되풀이 이름은 근거 실행의 units.jsonl로 계산해, 서로 다른 requirement_ids 2개 이상이면서 그 문서 requirement_ids의 절반 이상의 단위에서 찾은 왼쪽 칸입니다.
 
-## Counterevidence
+## 반대 근거
 
-- A document with only one requirement record has no recurrence inside it, so field comparisons there would pass. A corpus-wide fallback (a label recurring across many documents' requirement chunks) covers this, but it risks catching common detail names such as '로그인'.
-- A detail-table row name could recur across most requirement records of one document (e.g. every requirement has a '처리 시간' row). The rule would then call it a field. That is arguably right: it is a field of the form.
-- Some RFPs may not render requirement records as 'label | value' cells in v12 chunks (e.g. a header row plus one value row). Then the adjacency precondition does not hold either way, so the gap is unchanged rather than new.
-- I did not measure label recurrence on the v12 package. It is not in this worktree, and I cannot run code. Recurrence is assumed from the 13 hand-read cycle-1 rejections, whose labels are standard form fields.
+- 요구사항 기록이 하나뿐인 문서에는 안에서 되풀이가 없으므로, 거기서는 칸 비교가 통과합니다. 코퍼스 전체로 대신하면(여러 문서의 요구사항 청크에서 되풀이되는 이름) 이를 다루지만, '로그인' 같은 흔한 세부 이름을 잡을 위험이 있습니다.
+- 세부 표 행 이름이 한 문서의 요구사항 기록 대부분에서 되풀이될 수 있습니다(예: 모든 요구사항에 '처리 시간' 행이 있음). 그러면 규칙이 이를 칸으로 봅니다. 양식의 칸이므로 맞다고 볼 수 있습니다.
+- 어떤 제안요청서는 v12 청크에서 요구사항 기록을 '이름 | 값' 칸으로 나타내지 않을 수 있습니다(예: 머리글 행과 값 행 하나). 그러면 붙어 있음 전제도 어느 쪽이든 성립하지 않으므로, 빈틈은 새로 생기지 않고 그대로입니다.
+- v12 묶음에서 이름 되풀이를 재지 않았습니다. 이 작업 트리에 없고, 코드를 돌릴 수 없습니다. 되풀이는 이름이 표준 양식 칸이었던 1회차의 손으로 읽은 거부 13개로부터 가정합니다.
 
-## Alternatives
+## 다른 방법
 
-- Extend or tighten REQUIREMENT_FIELD again: this is f0b918d's failure mode, a closed list that over- and under-matches. Rejected.
-- Keep the unit test and add 'or the values are bare numbers / same-kind text': it stays a value-type heuristic, and the reviewer can always build a counterexample, such as same-kind text values in a detail table or a field record with same-unit values. Rejected.
-- Admit any entity whose name is not in the cited record's first rows (position heuristic): the order of form fields versus detail tables is not guaranteed in v12 chunks. Not first.
-- Drop the rule and rely on the generator prompt (comparison.txt:10): generation produced 224 such items even with that instruction. Rejected.
+- REQUIREMENT_FIELD를 다시 넓히거나 좁히기: f0b918d의 실패 방식이며, 넘치게도 모자라게도 맞는 닫힌 목록입니다. 택하지 않았습니다.
+- 단위 시험을 유지하고 '또는 값이 맨 숫자 / 같은 종류 글이면'을 더하기: 여전히 값 종류 휴리스틱이고, 리뷰어는 언제든 반례를 만들 수 있습니다. 세부 표의 같은 종류 글 값이나 같은 단위 값을 가진 칸 기록 같은 것입니다. 택하지 않았습니다.
+- 이름이 인용한 기록의 첫 행들에 없는 대상은 받아들이기(위치 휴리스틱): v12 청크에서 양식 칸과 세부 표의 순서는 보장되지 않습니다. 첫 선택이 아닙니다.
+- 규칙을 없애고 생성기 프롬프트에 기대기(comparison.txt:10): 그 지시가 있는데도 생성은 그런 항목을 224개 만들었습니다. 택하지 않았습니다.
 
-## Experiment
+## 실험
 
-Offline, no API calls. (1) Unit: extend tests/golden/test_improvement.py:232 with a small field vocabulary and the reviewer's three cases under requirement_ids=['QUR-003']: '실명 인증 3초 / 로그인 1초', '요구사항 A 3초 / 요구사항 B 5초', '목표경영 42 / 과제관리 103', plus one text-valued detail case. All must return None. The two field cases ('요구사항 분류'/'응낙수준', '고유번호'/'분    류') must return invalid_comparison. Under d3f129f the '목표경영 42' case with QUR-003 fails, which confirms the bug. (2) Data: build the recurring-label set per document from the evidence run's units.jsonl and record the distribution of 'requirement records per label' (aggregate counts only). Then re-run the rule over the 856 local comparison items from cycle 1. The hypothesis holds if all 224 items the current rule rejects stay rejected (they were hand-read as field comparisons), no item comparing non-label names is rejected, and the label-frequency distribution is bimodal: form labels near 100% of a document's records, other left cells near one record. Recurring labels without a clean split, or any of the 224 lost, refute it.
+API 호출 없이 오프라인으로. (1) 단위 테스트: tests/golden/test_improvement.py:232를 작은 칸 어휘와, requirement_ids=['QUR-003'] 아래 리뷰어의 세 경우로 넓힙니다. '실명 인증 3초 / 로그인 1초', '요구사항 A 3초 / 요구사항 B 5초', '목표경영 42 / 과제관리 103', 그리고 글 값의 세부 경우 하나입니다. 모두 None을 돌려줘야 합니다. 칸 경우 두 개('요구사항 분류'/'응낙수준', '고유번호'/'분    류')는 invalid_comparison을 돌려줘야 합니다. d3f129f에서는 QUR-003이 붙은 '목표경영 42' 경우가 실패하며, 버그가 확인됩니다. (2) 데이터: 근거 실행의 units.jsonl로 문서마다 되풀이 이름 집합을 만들고, '이름별 요구사항 기록 수' 분포를 기록합니다(집계 수만). 그다음 1회차의 로컬 비교 항목 856개에 규칙을 다시 돌립니다. 지금 규칙이 거부하는 224개(손으로 읽어 칸 비교로 확인함)가 모두 계속 거부되고, 이름이 아닌 것을 견주는 항목은 거부되지 않으며, 이름 빈도 분포가 두 봉우리면 가설이 맞습니다. 양식 이름은 문서 기록의 100% 가까이, 다른 왼쪽 칸은 기록 하나 가까이입니다. 깔끔하게 갈리지 않는 되풀이 이름이 있거나 224개 중 하나라도 잃으면 가설이 틀린 것입니다.
 
-## Result
+## 결과
 
-Draft observation, not verified beyond what is listed here. The fix is in the commit that carries this page, on top of 98a5df7 ("golden: 칸 비교는 그 문서 요구사항 양식의 칸 이름을 견줄 때만 거절한다"). `_field_comparison` keeps fix 1's preconditions (every evidence ref has requirement_ids, each entity is next to its value) and drops the value-unit test. It rejects when any entity, whitespace-removed, is a form label of the cited document: a left cell found in requirement chunks of at least 2 records and at least `LABEL_SHARE` = 0.5 of that document's records. The labels are counted from `evidence.PACKAGE`'s `corpus/chunks.jsonl` (`_form_labels`, cached per package). The local evidence run predates unit text, so it could not be used. Ordinal normalization was not needed. (1) tests/golden/test_improvement.py::test_a_comparison_between_fields_of_one_requirement_is_ruled_out now runs all six cases under requirement_ids ['QUR-003'] against a two-record synthetic package. Under d3f129f the bare-number detail case ('목표경영 42 / 과제관리 103') and the text-valued detail case failed, which confirms the finding. With the fix, all six pass, and so does test_a_rename_drops_what_a_newer_rule_rules_out_and_records_it_as_a_failure. (2) Data, aggregates only: 89 documents in the v12 package have requirement chunks, with a median of 56 records per document. Over the 5,127 (document, left cell) pairs in documents with at least 4 records, the share of records per cell is bimodal: 4,456 fall in the lowest decile and 460 in the highest, with 211 in between. Requiring every entity to be a label kept 214 of the 224 at share 0.5 and 219 at 0.3. In each miss, one entity was a full-recurrence label and the other an optional field. Requiring any entity to be a label keeps 224 of 224 at both thresholds. The real `_field_comparison` over the 856 local items rejects the same 224 and admits the other 632, and release final2 still rejects 38 of 184. A plan-only variant (recurrence counted from plan bundle units) kept only 206 of 224, because some documents have fewer than 2 requirement records in the plan, so it was not used. Gate: 1448 passed. Limits: a document with a single requirement record yields no labels, so field comparisons there pass. The rule reads the current package, so a run pinned to an older package is screened with the current package's labels, matched by document SHA.
+관측한 초안이며, 여기 적은 것 말고는 검증하지 않았습니다. 수정은 98a5df7("golden: 칸 비교는 그 문서 요구사항 양식의 칸 이름을 견줄 때만 거절한다") 위의, 이 문서를 담은 커밋에 있습니다. `_field_comparison`은 수정 1의 전제(모든 근거 참조에 requirement_ids가 있고, 대상마다 값 옆에 있음)를 유지하고 값 단위 시험을 없앱니다. 공백을 지운 대상 중 하나라도 인용한 문서의 양식 이름이면 거부합니다. 양식 이름은 기록 2개 이상이면서 그 문서 기록의 `LABEL_SHARE` = 0.5 이상의 요구사항 청크에서 찾은 왼쪽 칸입니다. 이름은 `evidence.PACKAGE`의 `corpus/chunks.jsonl`에서 셉니다(`_form_labels`, 묶음별 캐시). 로컬 근거 실행은 단위 글보다 오래돼 쓸 수 없었습니다. 순번 정규화는 필요 없었습니다. (1) tests/golden/test_improvement.py::test_a_comparison_between_fields_of_one_requirement_is_ruled_out은 이제 기록 두 개짜리 합성 묶음에 대해 requirement_ids ['QUR-003'] 아래 여섯 경우를 모두 돌립니다. d3f129f에서는 맨 숫자 세부 경우('목표경영 42 / 과제관리 103')와 글 값 세부 경우가 실패했으며, 지적이 확인됩니다. 수정 뒤 여섯 모두 통과하고, test_a_rename_drops_what_a_newer_rule_rules_out_and_records_it_as_a_failure도 통과합니다. (2) 데이터, 집계만: v12 묶음에서 요구사항 청크가 있는 문서는 89개이고, 문서당 기록 수의 중앙값은 56개입니다. 기록이 4개 이상인 문서의 (문서, 왼쪽 칸) 쌍 5,127개에서 칸별 기록 비율은 두 봉우리입니다. 4,456개가 가장 낮은 10% 구간, 460개가 가장 높은 구간에 있고, 211개가 그 사이입니다. 모든 대상이 이름이어야 한다고 하면 비율 0.5에서 224개 중 214개, 0.3에서 219개를 지켰습니다. 놓친 것마다 대상 하나는 완전히 되풀이되는 이름이고 다른 하나는 선택 칸이었습니다. 대상 중 하나라도 이름이면 된다고 하면 두 기준 모두에서 224개 중 224개를 지킵니다. 로컬 항목 856개에 실제 `_field_comparison`을 돌리면 같은 224개를 거부하고 나머지 632개를 받아들이며, 공개 final2는 여전히 184개 중 38개를 거부합니다. plan만 쓰는 변형(plan 묶음 단위로 되풀이를 셈)은 일부 문서가 plan에 요구사항 기록을 2개 미만 가지고 있어 224개 중 206개만 지켰으므로 쓰지 않았습니다. 검사: 1448 passed. 한계: 요구사항 기록이 하나뿐인 문서는 이름이 나오지 않으므로, 거기서는 칸 비교가 통과합니다. 규칙은 지금 묶음을 읽으므로, 옛 묶음에 고정된 실행은 문서 SHA로 맞춰 지금 묶음의 이름으로 선별됩니다.
 
-## Unresolved limits
+## 남은 한계
 
-The ExAlg wording comes from search-result quotes of the PDF; I could not render the PDF itself. Whether v12 requirement chunks repeat field labels in every record has not been measured. The thresholds (≥2 records and ≥50% of a document's records) are a starting guess that the data run must set. Documents with a single requirement record need a decision: corpus fallback or accept the gap. Local outputs have no confirmed admitted detail-table comparison, so positives rest on synthetic tests.
+ExAlg 문구는 PDF를 검색 결과로 인용한 것이며, PDF 자체를 렌더링할 수 없었습니다. v12 요구사항 청크가 기록마다 칸 이름을 되풀이하는지는 재지 않았습니다. 기준값(기록 2개 이상, 문서 기록의 50% 이상)은 데이터 실행이 정해야 할 첫 짐작입니다. 요구사항 기록이 하나뿐인 문서는 결정이 필요합니다. 코퍼스로 대신할지, 빈틈을 받아들일지입니다. 로컬 출력에는 받아들여진 세부 표 비교가 확인된 것이 없으므로, 긍정 사례는 합성 테스트에 기댑니다.

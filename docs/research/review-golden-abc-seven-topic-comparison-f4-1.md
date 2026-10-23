@@ -1,125 +1,125 @@
-# Review research — F4, cycle 1
+# 리뷰 조사 · F4, 1회차
 
-집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
+집계 결과와 측정 조건은 Git에 보관하고, 실제 질문·정답·근거·OCR 텍스트와 레코드별 내보내기는 Git에서 제외된 로컬 `artifacts/`에 보관합니다.
 
-복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행의 역사적 관측이며 이번 작업에서 재측정한 결과가 아니다.
+복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행에서 관측한 과거 기록이며, 이번 작업에서 다시 측정한 결과가 아닙니다.
 
-Draft research before the fix of review round 2 of PR #65, written 2026-10-18. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #65 리뷰 2회차의 수정 전에 2026-10-18에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-> Not F4 research (review round 3, F5). This page is filed under F4, but every section below analyses the review-packets plan hash: round-2 F1, the same subject as `review-golden-abc-seven-topic-comparison-f1-1.md`. It says nothing about F4, the settled sub-call outputs of one candidate on resume, or about the replay key the round-2 F4 fix used. That key collided across candidates and was found in round 3. Do not cite this page as grounds for any F4 fix. The F4 research is `review-golden-abc-seven-topic-comparison-f4-2.md`.
+> F4 조사가 아닙니다(리뷰 3회차, F5). 이 문서는 F4로 분류돼 있지만, 아래 모든 절은 review-packets의 plan 해시, 곧 2회차 F1을 분석하며 `review-golden-abc-seven-topic-comparison-f1-1.md`와 같은 주제입니다. F4, 즉 이어할 때 후보 하나의 끝난 하위 호출 결과에 대해서도, 2회차 F4 수정이 쓴 재사용 키에 대해서도 아무 말도 하지 않습니다. 그 키는 후보끼리 겹쳤고 3회차에서 발견됐습니다. 이 문서를 F4 수정의 근거로 인용하지 마세요. F4 조사는 `review-golden-abc-seven-topic-comparison-f4-2.md`입니다.
 
-## Problem
+## 문제
 
-`review_packets()` is supposed to quote only the evidence from the frozen experiment, meaning the plan whose SHA-256 is in freeze.json. At comparison.py:177 it reloads outputs/plans/{plan_id}.json from disk as the file is now and throws away the hash `plan.load_plan` returns. Each sampled item's quoted evidence then comes from that copy (`_packet` -> `validation.evidence_units(item, bundles[...])`, comparison.py:227). If the plan file is edited after the runs, blinded reviewers judge evidence that is not what generated and validated the candidates. The rule it breaks: everything the comparison reads must be tied to the frozen hashes at the moment it is read.
+`review_packets()`는 고정한 실험의 근거, 곧 freeze.json에 SHA-256이 적힌 plan의 근거만 인용해야 합니다. comparison.py:177에서 outputs/plans/{plan_id}.json을 지금 디스크 상태 그대로 다시 읽고, `plan.load_plan`이 돌려준 해시를 버립니다. 표본 항목마다 인용하는 근거는 그 사본에서 옵니다(`_packet` -> `validation.evidence_units(item, bundles[...])`, comparison.py:227). 실행 뒤에 plan 파일을 고치면, 방식을 가린 검토자는 후보를 만들고 검증한 것과 다른 근거를 판단합니다. 어기는 규칙: 비교가 읽는 모든 것은 읽는 순간에 고정한 해시에 묶여 있어야 합니다.
 
-Trigger: repeat, rounds 1, 2.
+발생: 반복, 1·2회차.
 
-- [P1] [P1] golden_pipeline/validation.py:122 — a ceiling interruption still discards settled sub-call results within one candidate
+- [P1] [P1] golden_pipeline/validation.py:122 — 한도에 걸려 중단되면 후보 하나 안에서 끝난 하위 호출 결과를 여전히 버립니다
 
-## Failed fixes
+## 실패한 수정
 
-- Round 1 (89f54e6) added `_checked_runs`/`_check_run` (comparison.py:65-105). This compares each run manifest's recorded `generation.plan_id/plan_sha256/topic_spec_sha256` with freeze.json, rejects outputs on bundles outside the train part, and checks prompt hashes and settings. Both sides of that comparison are records written in the past. Neither is the plan file `review_packets` parses at packet time. The fix answered 'are these the frozen runs?' and never listed what `review_packets` itself reads from disk, so the second read of the plan file (comparison.py:177) stayed unchecked.
-- The round-1 test (tests/golden/test_cli.py around 180-205) fakes a mismatch by writing a wrong hash into freeze.json (`write_freeze(plan_sha='0'*64)`) and only runs `compare`. It never edits the plan file after valid runs and never runs `review-packets`, so the case round 2 raised was never exercised.
-- The cycle-1 research (291ed08) found the same cause, but no code fix followed it: comparison.py:177 at HEAD still reads `planned, _ = plan.load_plan(...)`. The finding stands because the fix was never made, not because a fix was tried and failed.
+- 1회차(89f54e6)는 `_checked_runs`/`_check_run`(comparison.py:65-105)을 더했습니다. 실행 manifest마다 기록된 `generation.plan_id/plan_sha256/topic_spec_sha256`을 freeze.json과 비교하고, 비교용 밖 묶음의 출력을 거부하며, 프롬프트 해시와 설정을 확인합니다. 그 비교의 양쪽은 모두 과거에 쓴 기록입니다. 어느 쪽도 `review_packets`가 묶음을 만들 때 파싱하는 plan 파일이 아닙니다. 수정은 '이것이 고정한 실행인가?'에 답했을 뿐 `review_packets` 자신이 디스크에서 무엇을 읽는지는 적어 보지 않았으므로, plan 파일의 두 번째 읽기(comparison.py:177)는 확인되지 않은 채 남았습니다.
+- 1회차 테스트(tests/golden/test_cli.py 180-205행 부근)는 freeze.json에 틀린 해시를 써서(`write_freeze(plan_sha='0'*64)`) 불일치를 흉내 내고 `compare`만 돌립니다. 올바른 실행 뒤에 plan 파일을 고치지 않고 `review-packets`도 돌리지 않으므로, 2회차가 제기한 경우는 시험되지 않았습니다.
+- 1회차 조사(291ed08)는 같은 원인을 찾았지만 코드 수정이 뒤따르지 않았습니다. HEAD의 comparison.py:177은 여전히 `planned, _ = plan.load_plan(...)`입니다. 지적이 남은 것은 수정을 시도했다가 실패해서가 아니라 수정을 하지 않았기 때문입니다.
 
-## Sources
+## 출처
 
 ### S1 — CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition
 
 - URL: https://cwe.mitre.org/data/definitions/367.html
-- Retrieved: 2026-10-18
-- Locator: Description; Potential Mitigations
-- Fragment: "The product checks the state of a resource before using that resource, but the resource's state can change between the check and the use in a way that invalidates the results of the check." Mitigation: "Ensure that locking occurs before the check, as opposed to afterwards, such that the resource, as checked, is the same as it is when in use." Also: "The most basic advice for TOCTOU vulnerabilities is to not perform a check before the use. This does not resolve the underlying issue of the execution of a function on a resource whose state and identity cannot be assured, but it does help to limit the false sense of security given by the check." Shrinking the window "will not fix the problem, but it could make it more difficult for an attack to succeed."
-- Applicability: The plan file's state at generation was checked through the recorded manifest hash, but it is used later at comparison.py:177/227, after it may have changed. The check result is stale at the point of use.
-- Counterevidence: CWE frames this as a race between processes or threads. Here the gap is a later manual edit, so the locking mitigations do not apply, only the principle that the resource checked must be the resource used.
-- Validation: After the fix, review_packets hashes the same plan load that feeds `_packet` and compares it with freeze.json in the same call. The new test edits p3.json after valid runs and expects ValueError with no review folder written.
+- 확인일: 2026-10-18
+- 위치: Description; Potential Mitigations
+- 인용: "The product checks the state of a resource before using that resource, but the resource's state can change between the check and the use in a way that invalidates the results of the check." Mitigation: "Ensure that locking occurs before the check, as opposed to afterwards, such that the resource, as checked, is the same as it is when in use." Also: "The most basic advice for TOCTOU vulnerabilities is to not perform a check before the use. This does not resolve the underlying issue of the execution of a function on a resource whose state and identity cannot be assured, but it does help to limit the false sense of security given by the check." Shrinking the window "will not fix the problem, but it could make it more difficult for an attack to succeed."
+- 적용: 생성할 때 plan 파일의 상태는 기록된 manifest 해시로 확인됐지만, 바뀌었을 수 있는 뒤에 comparison.py:177/227에서 쓰입니다. 쓰는 시점에는 확인 결과가 낡은 것입니다.
+- 반대 근거: CWE는 이를 프로세스나 스레드 사이의 경쟁으로 다룹니다. 여기서의 틈은 나중의 손 편집이므로 잠금 대책은 맞지 않고, '확인한 자원이 쓰는 자원이어야 한다'는 원칙만 옮겨 옵니다.
+- 검증: 수정 뒤 review_packets는 `_packet`에 들어가는 같은 plan 읽기를 해시하고, 같은 호출에서 freeze.json과 비교합니다. 새 테스트는 올바른 실행 뒤에 p3.json을 고치고, 검토 폴더를 쓰지 않은 채 ValueError가 나기를 기대합니다.
 
 ### S2 — SLSA v1.2 — Build: Verifying artifacts
 
 - URL: https://slsa.dev/spec/v1.2/verifying-artifacts
-- Retrieved: 2026-10-18
-- Locator: Step 1, "Given an artifact and its provenance"
-- Fragment: "Verify the envelope's signature using the roots of trust ..." then "Verify that statement's `subject` matches the digest of the artifact in question." These steps assume the verifier has been bootstrapped with roots of trust. If provenance is not in the recommended format, "the verifier SHOULD perform equivalent checks".
-- Applicability: freeze.json works like the root of trust and the run manifests like provenance. Round 1 checked provenance against the root but not that the artifact in hand, the plan file read at packet time, matches the trusted digest.
-- Counterevidence: SLSA covers signed supply-chain attestations. golden_pipeline has no signatures, so the analogy covers only the step of matching the digest of the artifact in hand.
-- Validation: After the fix, review_packets compares the SHA-256 of the plan it parses with freeze.json's plan.sha256, the 'subject matches the artifact in question' step. The new test shows a changed file is refused.
+- 확인일: 2026-10-18
+- 위치: 1단계, "Given an artifact and its provenance"
+- 인용: "Verify the envelope's signature using the roots of trust ..." then "Verify that statement's `subject` matches the digest of the artifact in question." These steps assume the verifier has been bootstrapped with roots of trust. If provenance is not in the recommended format, "the verifier SHOULD perform equivalent checks".
+- 적용: freeze.json은 신뢰 기준, 실행 manifest는 출처 기록 역할을 합니다. 1회차는 출처 기록을 신뢰 기준과 대조했지만, 손에 든 산출물, 곧 묶음을 만들 때 읽는 plan 파일이 믿는 해시와 맞는지는 확인하지 않았습니다.
+- 반대 근거: SLSA는 서명된 공급망 증명을 다룹니다. golden_pipeline에는 서명이 없으므로, 비유는 손에 든 산출물의 해시를 맞추는 단계에만 해당합니다.
+- 검증: 수정 뒤 review_packets는 파싱하는 plan의 SHA-256을 freeze.json의 plan.sha256과 비교합니다. 'subject matches the artifact in question' 단계입니다. 새 테스트는 바뀐 파일이 거부되는 것을 보여 줍니다.
 
 ### S3 — golden_pipeline/comparison.py (review_packets, _check_run, _packet)
 
 - URL: golden_pipeline/comparison.py
-- Retrieved: 2026-10-18
-- Locator: lines 85-92 (_check_run pinned tuple), 175-178 (review_packets), 226-227 (_packet)
-- Fragment: `pinned = (record["plan"]["plan_id"], record["plan"]["sha256"], record["topic_specs"][topic])` compared with the manifest's `generation` fields; `planned, _ = plan.load_plan(record["plan"]["plan_id"])`; `units = validation.evidence_units(item, bundles[item["bundle_id"]])`
-- Applicability: Shows that the only check compares the manifest with freeze.json, and that the plan contents used for packet evidence are loaded with their hash thrown away.
-- Counterevidence: `_checked_runs` runs inside review_packets for every topic, so a run built from a different plan is still refused. The gap is only an edit to the plan file after valid runs.
-- Validation: The fixed line keeps the hash and raises when it differs from record['plan']['sha256'] before `folder.mkdir()`. The new test fails on HEAD and passes after the fix.
+- 확인일: 2026-10-18
+- 위치: 85-92행(_check_run 고정 튜플), 175-178행(review_packets), 226-227행(_packet)
+- 인용: `pinned = (record["plan"]["plan_id"], record["plan"]["sha256"], record["topic_specs"][topic])` compared with the manifest's `generation` fields; `planned, _ = plan.load_plan(record["plan"]["plan_id"])`; `units = validation.evidence_units(item, bundles[item["bundle_id"]])`
+- 적용: 유일한 확인이 manifest와 freeze.json을 비교하며, 묶음 근거에 쓰는 plan 내용은 해시를 버린 채 읽는다는 것을 보여 줍니다.
+- 반대 근거: `_checked_runs`는 review_packets 안에서 주제마다 돌므로, 다른 plan으로 만든 실행은 여전히 거부됩니다. 빈틈은 올바른 실행 뒤에 plan 파일을 고치는 경우뿐입니다.
+- 검증: 고친 줄은 해시를 남기고, `folder.mkdir()` 전에 record['plan']['sha256']과 다르면 오류를 냅니다. 새 테스트는 HEAD에서 실패하고 수정 뒤에 통과합니다.
 
-### S4 — Existing plan-hash guards in golden_pipeline
+### S4 — golden_pipeline의 기존 plan 해시 막이
 
 - URL: golden_pipeline/experiment.py
-- Retrieved: 2026-10-18
-- Locator: experiment.py:79-86 (pro_packets); report.py:43-45 (compare); plan.py:146-148 (asked_document); validation.py:255-257
-- Fragment: pro_packets: `planned, sha = plan.load_plan(experiment_id)` ... `frozen = {"계획": record["plan"]["sha256"], ...}` ... `raise ValueError(f"실험 {experiment_id} 를 고정한 뒤 바뀌었습니다: {changed}")`. report.compare: `planned, current_sha = plan.load_plan(plan_id)` / `if current_sha != plan_sha: raise ValueError(...)`. experiment.estimate:214 also discards the hash, but it runs before any run exists.
-- Applicability: The repository already uses this pattern wherever plan contents feed a result. review_packets is the exception among post-run consumers, so the fix copies the pattern.
-- Counterevidence: experiment.estimate discards the hash too. It is a pre-run cost estimate with no frozen runs to contradict, so it is not a sibling of this bug.
-- Validation: The fix's shape and error style match pro_packets. A grep for `load_plan(` with `, _ =` after the fix shows only estimate and improvement.py:342 (a train-part listing) left unguarded.
+- 확인일: 2026-10-18
+- 위치: experiment.py:79-86(pro_packets); report.py:43-45(compare); plan.py:146-148(asked_document); validation.py:255-257
+- 인용: pro_packets: `planned, sha = plan.load_plan(experiment_id)` ... `frozen = {"계획": record["plan"]["sha256"], ...}` ... `raise ValueError(f"실험 {experiment_id} 를 고정한 뒤 바뀌었습니다: {changed}")`. report.compare: `planned, current_sha = plan.load_plan(plan_id)` / `if current_sha != plan_sha: raise ValueError(...)`. experiment.estimate:214 also discards the hash, but it runs before any run exists.
+- 적용: 저장소는 plan 내용이 결과에 들어가는 곳마다 이미 이 방식을 씁니다. 실행 뒤에 plan을 쓰는 곳 중 review_packets만 예외이므로, 수정은 이 방식을 따라 합니다.
+- 반대 근거: experiment.estimate도 해시를 버립니다. 실행 전 비용 추정이라 맞지 않을 고정 실행이 없으므로, 이 버그와 같은 종류가 아닙니다.
+- 검증: 수정의 모양과 오류 문구가 pro_packets와 맞습니다. 수정 뒤 `load_plan(`과 `, _ =`을 grep하면 막이 없는 곳은 estimate와 improvement.py:342(비교용 목록)뿐입니다.
 
-### S5 — tests/golden/test_cli.py round-1 test
+### S5 — tests/golden/test_cli.py 1회차 테스트
 
 - URL: tests/golden/test_cli.py
-- Retrieved: 2026-10-18
-- Locator: write_freeze helper and test_compare_refuses_runs_outside_the_frozen_plan_or_train_assignment (around lines 180-205)
-- Fragment: `write_freeze(plan_sha="0" * 64)` / `with pytest.raises(ValueError, match="고정한 계획"): golden("compare", "x1")`
-- Applicability: The test changes the freeze side, not the plan file, and only runs compare, so it cannot catch review_packets reading a changed plan.
-- Counterevidence: The test is still valid for what it guards (a run made under a different plan). It is incomplete, not wrong.
-- Validation: The new test edits outputs/plans/p3.json after the runs and calls review-packets. It must fail on HEAD and pass after the fix, which shows it covers the round-2 case.
+- 확인일: 2026-10-18
+- 위치: write_freeze 도우미와 test_compare_refuses_runs_outside_the_frozen_plan_or_train_assignment(180-205행 부근)
+- 인용: `write_freeze(plan_sha="0" * 64)` / `with pytest.raises(ValueError, match="고정한 계획"): golden("compare", "x1")`
+- 적용: 테스트는 plan 파일이 아니라 freeze 쪽을 바꾸고 compare만 돌리므로, review_packets가 바뀐 plan을 읽는 것을 잡을 수 없습니다.
+- 반대 근거: 테스트는 자신이 막는 것(다른 plan으로 만든 실행)에 대해서는 여전히 유효합니다. 틀린 것이 아니라 덜 다룬 것입니다.
+- 검증: 새 테스트는 실행 뒤에 outputs/plans/p3.json을 고치고 review-packets를 부릅니다. HEAD에서 실패하고 수정 뒤에 통과해야 하며, 그러면 2회차 경우를 다룬다는 것이 보입니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): A check holds only if the resource checked is, when used, the same as when it was checked.
-- C2 (interpretation; S1, S2): Checking recorded provenance is not enough: the digest of the artifact actually used must match the trusted digest.
-- C3 (source; S3): The round-1 guard compares only the run manifest's recorded plan hash with freeze.json, two records, and never hashes the plan file read later.
-- C4 (source; S3): review_packets builds packet evidence from the current plan file and throws away the hash load_plan returns, so an edit after the runs goes unnoticed.
-- C5 (source; S4): The other post-run readers of plan contents in golden_pipeline already compare load_plan's hash with the pinned one; review_packets is the exception.
-- C6 (interpretation; S5): The round-1 test fakes the mismatch on the freeze side and only for compare, so it could not have caught the round-2 finding.
+- C1 (출처; S1): 확인은 확인한 자원이 쓰는 시점에도 확인할 때와 같을 때만 유효합니다.
+- C2 (해석; S1, S2): 기록된 출처를 확인하는 것으로는 부족하며, 실제로 쓰는 산출물의 해시가 믿는 해시와 맞아야 합니다.
+- C3 (출처; S3): 1회차 막이는 실행 manifest에 기록된 plan 해시와 freeze.json, 즉 두 기록만 비교하고, 나중에 읽는 plan 파일은 해시하지 않습니다.
+- C4 (출처; S3): review_packets는 지금 plan 파일로 묶음 근거를 만들고 load_plan이 돌려준 해시를 버리므로, 실행 뒤의 편집을 알아채지 못합니다.
+- C5 (출처; S4): golden_pipeline에서 실행 뒤에 plan 내용을 읽는 다른 곳은 이미 load_plan의 해시를 고정 해시와 비교하며, review_packets만 예외입니다.
+- C6 (해석; S5): 1회차 테스트는 freeze 쪽에서, compare에 대해서만 불일치를 흉내 내므로 2회차 지적을 잡을 수 없었습니다.
 
-## Core theory
+## 핵심 원리
 
-A check only counts for a resource in the state it is in when it is used. CWE-367 says a resource whose state can change between the check and the use invalidates the check, and recommends making sure the resource, as checked, is the same as it is when in use. SLSA artifact verification checks the provenance and also that the provenance subject matches the digest of the artifact being consumed. A valid provenance record alone does not vouch for the artifact in hand.
+확인은 쓰는 시점의 상태에 있는 자원에 대해서만 의미가 있습니다. CWE-367은 확인과 사용 사이에 상태가 바뀔 수 있는 자원이 확인을 무효로 만든다고 말하고, 확인한 자원이 쓰는 시점에도 같도록 하라고 권합니다. SLSA 산출물 검증은 출처 기록을 확인하고, 그 출처 기록의 대상이 쓰려는 산출물의 해시와 맞는지도 확인합니다. 올바른 출처 기록만으로는 손에 든 산출물을 보증하지 못합니다.
 
-## Applicability
+## 적용
 
-freeze.json plays the trusted root and the run manifests the provenance. Round 1 checked provenance against the root but skipped the subject-digest step for the artifact actually consumed: the plan file read at comparison.py:177 and used at comparison.py:227. The window between check and use is the time between generating the runs and running review-packets, which can be days. `compare()` does not parse plan contents. It uses freeze.json parts, run files through report._collect/read_validated, and loop report.json. So the new guard is needed in review_packets only. Other plan readers already guard this way: experiment.pro_packets:79-86, report.compare:43-45, plan.asked_document:146-148, validation.py:255-257.
+freeze.json은 신뢰 기준, 실행 manifest는 출처 기록 역할을 합니다. 1회차는 출처 기록을 신뢰 기준과 대조했지만, 실제로 쓰는 산출물, 곧 comparison.py:177에서 읽어 comparison.py:227에서 쓰는 plan 파일의 대상 해시 단계는 건너뛰었습니다. 확인과 사용 사이의 틈은 실행을 만든 때와 review-packets를 돌리는 때 사이이며, 며칠일 수 있습니다. `compare()`는 plan 내용을 파싱하지 않습니다. freeze.json 항목, report._collect/read_validated로 읽는 실행 파일, 반복 report.json을 씁니다. 그래서 새 막이는 review_packets에만 필요합니다. 다른 plan 읽기는 이미 이렇게 막습니다. experiment.pro_packets:79-86, report.compare:43-45, plan.asked_document:146-148, validation.py:255-257입니다.
 
-## Hypothesis
+## 가설
 
-The guard checks recorded provenance (manifest against freeze), not the bytes that are actually used. In comparison.py, `review_packets` is the only code that parses the plan file's contents, and it never ties those contents to the frozen hash. Fix: `planned, sha = plan.load_plan(record['plan']['plan_id'])`, then raise ValueError if `sha != record['plan']['sha256']`. Do this before `_checked_runs`/sampling and before `folder.mkdir()`, so nothing is written on refusal. This mirrors experiment.pro_packets (experiment.py:79-86) and report.compare (report.py:43-45).
+막이가 실제로 쓰는 바이트가 아니라 기록된 출처(manifest 대 freeze)를 확인합니다. comparison.py에서 plan 파일 내용을 파싱하는 코드는 `review_packets`뿐이며, 그 내용을 고정 해시에 묶지 않습니다. 수정: `planned, sha = plan.load_plan(record['plan']['plan_id'])`로 받고, `sha != record['plan']['sha256']`이면 ValueError를 냅니다. 거부할 때 아무것도 쓰지 않도록 `_checked_runs`/표본 뽑기 전, `folder.mkdir()` 전에 합니다. experiment.pro_packets(experiment.py:79-86)와 report.compare(report.py:43-45)를 그대로 따릅니다.
 
-## Counterevidence
+## 반대 근거
 
-- CWE-367 is about concurrent races. Here the change is a later edit by a person, so only the principle carries over (check the resource as used), not the threat model or the locking mitigations.
-- plan.load_plan reads the file twice (`_read_json`, then `_sha256` on the same path). Even after the fix, a change between those two reads is possible in theory. That window is tiny, every existing caller shares it, and the reviewer did not raise it.
-- validation.py:255-257 already refuses to validate if the plan changed since generation. So accepted items were validated against the frozen plan, and the remaining risk is only what review_packets reads later. That supports the hypothesis rather than weakening it, but it means compare's numbers are not affected.
+- CWE-367은 동시 경쟁에 관한 것입니다. 여기서의 변경은 사람이 나중에 고친 것이므로, 위협 모델이나 잠금 대책이 아니라 '쓰는 자원을 확인하라'는 원칙만 옮겨 옵니다.
+- plan.load_plan은 파일을 두 번 읽습니다(`_read_json`, 그다음 같은 경로에 `_sha256`). 수정 뒤에도 이론상 두 읽기 사이에 바뀔 수 있습니다. 아주 좁은 틈이고 기존 호출 지점이 모두 같으며, 리뷰어가 제기하지 않았습니다.
+- validation.py:255-257은 생성 뒤 plan이 바뀌었으면 이미 검증을 거부합니다. 그래서 받아들인 항목은 고정한 plan으로 검증됐고, 남은 위험은 review_packets가 나중에 읽는 것뿐입니다. 가설을 약하게 하기보다 뒷받침하지만, compare의 수치는 영향을 받지 않는다는 뜻입니다.
 
-## Alternatives
+## 다른 방법
 
-- Add an `expected_sha` argument to `plan.load_plan` so every caller is checked in one place. That centralises the check, but five call sites already check inline with their own messages, so it is a wider refactor than the finding needs. Not first.
-- Copy each bundle's evidence text into the run or into freeze.json and build packets from that copy. This removes the dependency on the plan file but adds storage and changes formats. Elsewhere golden_pipeline handles a changed plan by refusing and telling the user to make a new run, and a hash refusal matches that.
-- Call the check from `_checked_runs` so compare also refuses a changed plan. compare does not read plan contents, so this would refuse a state that does not change its numbers. It could be added for consistency, but the finding does not require it.
+- `plan.load_plan`에 `expected_sha` 인자를 더해 모든 호출을 한곳에서 확인하기. 확인을 모으지만, 다섯 호출 지점이 이미 자기 문구로 직접 확인하므로 지적에 비해 넓은 리팩터링입니다. 첫 선택이 아닙니다.
+- 묶음마다 근거 글을 실행이나 freeze.json에 복사하고 그 사본으로 검토 묶음을 만들기. plan 파일 의존을 없애지만 저장이 늘고 형식이 바뀝니다. golden_pipeline의 다른 곳은 바뀐 plan을 거부하고 새 실행을 만들라고 안내하며, 해시 거부가 이와 맞습니다.
+- `_checked_runs`에서 확인을 불러 compare도 바뀐 plan을 거부하게 하기. compare는 plan 내용을 읽지 않으므로, 수치가 바뀌지 않는 상태를 거부하게 됩니다. 일관성을 위해 더할 수는 있지만 지적이 요구하지는 않습니다.
 
-## Experiment
+## 실험
 
-Add one test to tests/golden/test_cli.py using the existing planned/api fixtures. Run B b1 on p3 with `--part train`, call `write_freeze()` with correct hashes, then rewrite outputs/plans/p3.json so a train bundle's unit text changes. `golden('review-packets', 'x1')` must raise ValueError (match the frozen-plan message), and outputs/experiments/x1/review must not exist. On the current code the same steps should instead write packet.md quoting the edited text, which confirms the hypothesis. Run only this test, then the gate once.
+tests/golden/test_cli.py에 기존 planned/api 테스트 준비물을 쓰는 테스트 하나를 더합니다. p3에서 B b1을 `--part train`으로 돌리고, 올바른 해시로 `write_freeze()`를 부른 뒤, 비교용 묶음의 단위 글이 바뀌도록 outputs/plans/p3.json을 다시 씁니다. `golden('review-packets', 'x1')`은 ValueError(고정한 plan 문구와 일치)를 내야 하고, outputs/experiments/x1/review는 없어야 합니다. 지금 코드에서는 같은 단계가 대신 고친 글을 인용한 packet.md를 써야 하며, 그러면 가설이 확인됩니다. 이 테스트만 돌린 뒤 검사를 한 번 돌립니다.
 
-## Result
+## 결과
 
-Observed, not verified (draft). This page's text researches the review-packets plan hash (round-2 F1), not the round-2 F4 finding it is listed under (sub-call results lost inside one candidate's verdict). Both were run.
+관측했지만 검증하지 않은 초안입니다. 이 문서의 본문은 review-packets의 plan 해시(2회차 F1)를 조사하며, 분류된 2회차 F4 지적(후보 하나의 판정 안에서 하위 호출 결과를 잃음)이 아닙니다. 둘 다 돌렸습니다.
 
-- Plan hash: the experiment in this page is `tests/golden/test_cli.py::test_review_packets_refuse_a_plan_file_changed_after_the_freeze`. It failed on 9272eca (`DID NOT RAISE`; the review folder was written from the edited plan) and passes after the fix (see the F1 page).
-- F4 as raised: `tests/golden/test_cli.py::test_resuming_a_candidate_refused_mid_verdict_reuses_its_settled_calls`. In it, the bond candidate's first validator call settles with output that breaks the contract, and the retry is refused by the ledger (`BudgetExceeded`). The candidate stays pending; `resume` then runs. On 9272eca, resume re-sent the settled first call, giving 4 validator requests where 3 were needed (`assert 4 == 3`). That confirms the settled sub-call result was lost.
-- Fix (commit after 9272eca): `validation._reply` records each call's request SHA-256, attempt and output in the validation record. `resume_validation` passes these as `settled`, so `_reply` reuses a settled output instead of calling again and does not count its cost twice. The test then passed, with exactly 3 requests and the candidate rejected for validator output error.
-- All validator, judge, document-batch and multi-hop sub-calls go through `_reply`, so there are no other call sites. release screening passes an empty `settled` because release refuses `--experiment`.
+- plan 해시: 이 문서의 실험은 `tests/golden/test_cli.py::test_review_packets_refuse_a_plan_file_changed_after_the_freeze`입니다. 9272eca에서 실패했고(`DID NOT RAISE`, 검토 폴더가 고친 plan으로 쓰임), 수정 뒤에 통과합니다(F1 문서 참고).
+- 제기된 F4: `tests/golden/test_cli.py::test_resuming_a_candidate_refused_mid_verdict_reuses_its_settled_calls`. 여기서 채권 후보의 첫 검증기 호출은 약속을 어기는 출력으로 끝나고, 재시도는 장부에 의해 거부됩니다(`BudgetExceeded`). 후보는 미판정으로 남고, 그다음 `resume`이 돕니다. 9272eca에서 resume은 끝난 첫 호출을 다시 보내, 3번이면 될 검증기 요청이 4번이 됐습니다(`assert 4 == 3`). 끝난 하위 호출 결과를 잃었다는 것이 확인됩니다.
+- 수정(9272eca 다음 커밋): `validation._reply`가 호출마다 요청 SHA-256, 시도 번호, 출력을 검증 기록에 남깁니다. `resume_validation`이 이를 `settled`로 넘기므로, `_reply`는 다시 부르지 않고 끝난 출력을 다시 쓰며 비용도 두 번 세지 않습니다. 그 뒤 테스트는 정확히 요청 3번, 검증기 출력 오류로 후보 거부로 통과했습니다.
+- 검증기, 채점, 문서 묶음, 다중 근거 하위 호출은 모두 `_reply`를 거치므로 다른 호출 지점은 없습니다. release는 `--experiment`를 거부하므로, release 선별은 빈 `settled`를 넘깁니다.
 
-## Unresolved limits
+## 남은 한계
 
-Nothing was run; there is no shell in this turn. I did not check whether review_packets' other inputs are tied to the freeze: candidates.jsonl/accepted.jsonl/rejected.jsonl read by `_sample` for the items themselves, and loop report.json cost fields used by `_costs`/`_reconcile`. They may draw the same kind of finding later, but they are separate from F1. freeze.json itself is trusted and not protected.
+아무것도 돌리지 않았습니다. 이 단계에는 셸이 없습니다. review_packets의 다른 입력이 freeze에 묶여 있는지는 확인하지 않았습니다. 항목 자체를 위해 `_sample`이 읽는 candidates.jsonl/accepted.jsonl/rejected.jsonl과, `_costs`/`_reconcile`이 쓰는 반복 report.json의 비용 항목입니다. 나중에 같은 종류의 지적을 받을 수 있지만 F1과는 별개입니다. freeze.json 자체는 믿는 것으로 보며 보호하지 않습니다.

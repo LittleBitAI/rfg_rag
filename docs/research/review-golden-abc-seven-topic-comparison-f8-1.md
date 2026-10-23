@@ -1,161 +1,161 @@
-# Review research — F8, cycle 1
+# 리뷰 조사 · F8, 1회차
 
-집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
+집계 결과와 측정 조건은 Git에 보관하고, 실제 질문·정답·근거·OCR 텍스트와 레코드별 내보내기는 Git에서 제외된 로컬 `artifacts/`에 보관합니다.
 
-복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행의 역사적 관측이며 이번 작업에서 재측정한 결과가 아니다.
+복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행에서 관측한 과거 기록이며, 이번 작업에서 다시 측정한 결과가 아닙니다.
 
-Draft research before the fix of review round 8 of PR #65, written 2026-10-18. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #65 리뷰 8회차의 수정 전에 2026-10-18에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-experiment.freeze() publishes plans/{id}.json (experiment.py:51-53) before reading the evidence manifest (line 54), taking the prompt snapshot (line 61) and exclusively creating experiments/{id}/freeze.json (line 67). If any step after the plan write fails, the plan stays published with no freeze record. generation._plan_for (generation.py:495) and validation.py:217 load any plan by id, so the orphan plan can be used without frozen provenance. A retry hits FileExistsError at plan_path.open('x'), so the experiment can no longer be frozen. Invariant broken: a plan published under an experiment id must exist only if its complete freeze record exists, and a failed freeze must leave nothing behind so it can be retried.
+experiment.freeze()는 근거 manifest를 읽기(54행), 프롬프트 스냅숏 찍기(61행), experiments/{id}/freeze.json을 단독 생성하기(67행) 전에 plans/{id}.json을 공개합니다(experiment.py:51-53). plan을 쓴 뒤 어느 단계든 실패하면, plan은 freeze 기록 없이 공개된 채 남습니다. generation._plan_for(generation.py:495)와 validation.py:217은 id로 어떤 plan이든 읽으므로, 주인 없는 plan을 고정 출처 없이 쓸 수 있습니다. 다시 시도하면 plan_path.open('x')에서 FileExistsError가 나므로, 그 실험은 더는 고정할 수 없습니다. 어긴 규칙: 실험 id로 공개된 plan은 완전한 freeze 기록이 있을 때만 있어야 하고, 실패한 고정은 아무것도 남기지 않아 다시 시도할 수 있어야 합니다.
 
-Trigger: backstop, rounds 8.
+발생: 최후 확인(backstop), 8회차.
 
-- [P1] [P1] golden_pipeline/experiment.py:52 — freeze publication is non-atomic / when a later dependency read or manifest write fails / the experiment becomes non-retryable and can be run without frozen provenance
+- [P1] [P1] golden_pipeline/experiment.py:52 — 고정 공개가 원자적이지 않습니다 / 뒤의 의존 파일 읽기나 manifest 쓰기가 실패하면 / 실험을 다시 시도할 수 없게 되고 고정 출처 없이 돌릴 수 있게 됩니다
 
-## Failed fixes
+## 실패한 수정
 
-- No fix for F8 has been tried yet (correction: none yet). It got through earlier rounds because the only failure test, test_freeze_refuses_a_topic_with_an_empty_part_and_writes_no_plan (tests/golden/test_experiment.py:53), fails during partition checking, before any write. No test covers a failure after the plan write, so the write-then-read order was never exercised.
+- F8에 대해서는 아직 시도한 수정이 없습니다(정정: 아직 없음). 앞선 회차를 통과한 것은 유일한 실패 테스트인 test_freeze_refuses_a_topic_with_an_empty_part_and_writes_no_plan(tests/golden/test_experiment.py:53)이 어떤 쓰기보다 앞선 분할 확인 단계에서 실패하기 때문입니다. plan을 쓴 뒤의 실패를 다루는 테스트가 없어, 쓰고 나서 읽는 순서가 한 번도 시험되지 않았습니다.
 
-## Sources
+## 출처
 
 ### S1 — golden_pipeline/experiment.py freeze()
 
 - URL: golden_pipeline/experiment.py
-- Retrieved: 2026-10-18
-- Locator: lines 51-69
-- Fragment: plan_path = storage._child(storage.OUTPUTS / "plans", f"{experiment_id}.json")
+- 확인일: 2026-10-18
+- 위치: 51-69행
+- 인용: plan_path = storage._child(storage.OUTPUTS / "plans", f"{experiment_id}.json")
     with plan_path.open("x", encoding="utf-8") as f: ...
     evidence_manifest = storage._read_json(storage.OUTPUTS / "evidence" / pool["evidence_run"] / "manifest.json") ... "prompts": storage.snapshot(storage.PROMPTS) ... with (root / "freeze.json").open("x", encoding="utf-8") as f:
-- Applicability: The plan is written before the reads and steps that can fail, with no rollback.
-- Counterevidence: none given
-- Validation: After the fix, no write happens before the last read, and the plan link is the last statement that can fail.
+- 적용: plan을 실패할 수 있는 읽기와 단계보다 먼저, 되돌리기 없이 씁니다.
+- 반대 근거: 없음
+- 검증: 수정 뒤에는 마지막 읽기 전에 아무것도 쓰지 않고, plan 연결이 실패할 수 있는 마지막 문장입니다.
 
-### S2 — generation._plan_for and plan.load_plan
+### S2 — generation._plan_for와 plan.load_plan
 
 - URL: golden_pipeline/generation.py
-- Retrieved: 2026-10-18
-- Locator: generation.py:495-500; plan.py:74-77; validation.py:217
-- Fragment: def _plan_for(plan_id, topic):
+- 확인일: 2026-10-18
+- 위치: generation.py:495-500; plan.py:74-77; validation.py:217
+- 인용: def _plan_for(plan_id, topic):
     plan, plan_sha = plans.load_plan(plan_id) ... load_plan: path = storage._child(storage.OUTPUTS / "plans", f"{plan_id}.json"); return storage._read_json(path), storage._sha256(path)
-- Applicability: Generation and validation load any plan by id and never look for freeze.json, so an orphan plan is usable. load_plan hashes the file bytes, so the recorded hash must come from the file, not the in-memory string.
-- Counterevidence: Readers of freeze.json (pro_packets, comparison.py:26,176) also need the plan, so a freeze.json without a plan is not usable.
-- Validation: The test checks record['plan']['sha256'] == storage._sha256(plan file).
+- 적용: 생성과 검증은 id로 어떤 plan이든 읽고 freeze.json을 찾지 않으므로, 주인 없는 plan을 쓸 수 있습니다. load_plan은 파일 바이트를 해시하므로, 기록하는 해시는 메모리의 문자열이 아니라 파일에서 나와야 합니다.
+- 반대 근거: freeze.json을 읽는 곳(pro_packets, comparison.py:26,176)도 plan이 필요하므로, plan 없는 freeze.json은 쓸 수 없습니다.
+- 검증: 테스트가 record['plan']['sha256'] == storage._sha256(plan 파일)을 확인합니다.
 
-### S3 — Python os module docs: os.rename, os.replace
+### S3 — Python os 모듈 문서: os.rename, os.replace
 
 - URL: https://docs.python.org/3/library/os.html
-- Retrieved: 2026-10-18
-- Locator: os.rename / os.replace entries
-- Fragment: os.rename: "On Windows, if dst exists a FileExistsError is always raised. The operation may fail if src and dst are on different filesystems." "On Unix, ... If both are files, dst will be replaced silently if the user has permission. ... If successful, the renaming will be an atomic operation (this is a POSIX requirement)." os.replace: "If dst exists and is a file, it will be replaced silently if the user has permission. The operation may fail if src and dst are on different filesystems."
-- Applicability: Rules out rename and replace for no-overwrite publishing of plans across Windows and the Linux VM.
-- Counterevidence: rename does refuse to overwrite on Windows, so a Windows-only codebase could use it; this repository also runs on Linux (CLAUDE.md section 6).
-- Validation: The collision test on Linux would show replacement if rename were used.
+- 확인일: 2026-10-18
+- 위치: os.rename / os.replace 항목
+- 인용: os.rename: "On Windows, if dst exists a FileExistsError is always raised. The operation may fail if src and dst are on different filesystems." "On Unix, ... If both are files, dst will be replaced silently if the user has permission. ... If successful, the renaming will be an atomic operation (this is a POSIX requirement)." os.replace: "If dst exists and is a file, it will be replaced silently if the user has permission. The operation may fail if src and dst are on different filesystems."
+- 적용: Windows와 Linux VM 모두에서 덮어쓰지 않고 plan을 공개하는 데 rename과 replace는 맞지 않습니다.
+- 반대 근거: Windows에서 rename은 실제로 덮어쓰기를 거부하므로, Windows만 쓰는 코드라면 쓸 수 있습니다. 이 저장소는 Linux에서도 돕니다(CLAUDE.md 6절).
+- 검증: rename을 쓰면 Linux에서 충돌 테스트가 바꿔치기를 보여 줍니다.
 
 ### S4 — POSIX link() (The Open Group Base Specifications)
 
 - URL: https://pubs.opengroup.org/onlinepubs/9799919799/functions/link.html
-- Retrieved: 2026-10-18
-- Locator: DESCRIPTION; ERRORS [EEXIST]
-- Fragment: "The link() function shall atomically create a new hard link for the existing file" ... "If link() fails, no link shall be created and the link count of the file shall remain unchanged." [EEXIST] "The path2 argument resolves to an existing directory entry or refers to a symbolic link."
-- Applicability: os.link on Linux publishes the plan in one step and fails rather than overwriting an existing plan.
-- Counterevidence: The page does not literally say link never replaces; that follows from the EEXIST condition together with the no-link-on-failure sentence.
-- Validation: The pre-existing-plan test raises FileExistsError and leaves the existing bytes unchanged.
+- 확인일: 2026-10-18
+- 위치: DESCRIPTION; ERRORS [EEXIST]
+- 인용: "The link() function shall atomically create a new hard link for the existing file" ... "If link() fails, no link shall be created and the link count of the file shall remain unchanged." [EEXIST] "The path2 argument resolves to an existing directory entry or refers to a symbolic link."
+- 적용: Linux에서 os.link는 plan을 한 단계로 공개하고, 기존 plan을 덮어쓰지 않고 실패합니다.
+- 반대 근거: 이 문서가 link가 절대 바꿔치지 않는다고 그대로 말하지는 않습니다. EEXIST 조건과 '실패하면 링크를 만들지 않는다'는 문장에서 나오는 결론입니다.
+- 검증: 이미 있는 plan 테스트가 FileExistsError를 내고 기존 바이트를 그대로 둡니다.
 
 ### S5 — CreateHardLinkW function (Microsoft Learn)
 
 - URL: https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createhardlinkw
-- Retrieved: 2026-10-18
-- Locator: summary; Remarks
-- Fragment: "This function is only supported on the NTFS file system, and only for files, not directories." "all hard links to a file must be on the same volume." Technology table: "Resilient File System (ReFS) | No"; "SMB 3.0 does not support creation of hard links on shares with continuous availability capability."
-- Applicability: os.link on Windows needs NTFS and the same volume, hence the temporary folder under OUTPUTS.
-- Counterevidence: The page does not state the error raised when lpFileName exists; FileExistsError on Windows is expected from Python's error mapping but not quoted here.
-- Validation: The Windows gate run of the collision test confirms FileExistsError from os.link.
+- 확인일: 2026-10-18
+- 위치: 요약; Remarks
+- 인용: "This function is only supported on the NTFS file system, and only for files, not directories." "all hard links to a file must be on the same volume." Technology table: "Resilient File System (ReFS) | No"; "SMB 3.0 does not support creation of hard links on shares with continuous availability capability."
+- 적용: Windows의 os.link는 NTFS와 같은 볼륨이 필요하므로, 임시 폴더를 OUTPUTS 아래에 둡니다.
+- 반대 근거: 이 문서는 lpFileName이 있을 때 나는 오류를 말하지 않습니다. Windows에서 FileExistsError가 나는 것은 Python의 오류 대응에서 예상할 뿐 여기서 인용하지는 않습니다.
+- 검증: 충돌 테스트를 Windows 검사에서 돌리면 os.link가 FileExistsError를 내는 것이 확인됩니다.
 
 ### S6 — atomicwrites README
 
 - URL: https://slackbuilds.org/repository/14.2/python/atomicwrites/
-- Retrieved: 2026-10-18
-- Locator: README, overwrite behaviour
-- Fragment: It uses a temporary file in the same directory as the given path. ... On POSIX, it will use rename if files should be overwritten, otherwise a combination of link and unlink. ... there's a timewindow where the file might be available under two entries in the filesystem; permissions of the target file may change this way.
-- Applicability: Established pattern: temporary file plus link for no-overwrite publishing. The window with two names is harmless here because the temporary name sits in a TemporaryDirectory that no reader looks at.
-- Counterevidence: The project is marked unmaintained; it is used here only as evidence of the pattern, not as a dependency.
-- Validation: No reader looks at the temporary folder (grep found no glob over outputs/plans or OUTPUTS root).
+- 확인일: 2026-10-18
+- 위치: README, 덮어쓰기 동작
+- 인용: It uses a temporary file in the same directory as the given path. ... On POSIX, it will use rename if files should be overwritten, otherwise a combination of link and unlink. ... there's a timewindow where the file might be available under two entries in the filesystem; permissions of the target file may change this way.
+- 적용: 덮어쓰지 않는 공개에 임시 파일과 link를 쓰는 것은 자리 잡은 방식입니다. 이름이 두 개인 틈은 여기서는 해가 없습니다. 임시 이름은 아무도 읽지 않는 TemporaryDirectory 안에 있기 때문입니다.
+- 반대 근거: 이 프로젝트는 관리 중단으로 표시돼 있습니다. 여기서는 의존성이 아니라 방식의 근거로만 씁니다.
+- 검증: 임시 폴더를 읽는 곳이 없습니다(grep으로 outputs/plans나 OUTPUTS 최상위를 훑는 glob이 없음을 확인).
 
 ### S7 — OpenStack Swift: Make object creation more atomic in Linux
 
 - URL: https://opendev.org/openstack/swift/commit/773edb4a5dd22b22f5fcab57820bcbdd4176dfcd
-- Retrieved: 2026-10-18
-- Locator: commit message
-- Fragment: Unlike os.rename(), linkat() cannot overwrite destination path if it already exists.
-- Applicability: A production system that uses link rather than rename for no-overwrite publishing.
-- Counterevidence: Swift uses O_TMPFILE on Linux, which Windows does not have; this fix uses a named temporary file instead.
-- Validation: As S4.
+- 확인일: 2026-10-18
+- 위치: 커밋 메시지
+- 인용: Unlike os.rename(), linkat() cannot overwrite destination path if it already exists.
+- 적용: 덮어쓰지 않는 공개에 rename 대신 link를 쓰는 실제 운영 시스템입니다.
+- 반대 근거: Swift는 Linux에서 O_TMPFILE을 쓰는데 Windows에는 없습니다. 이 수정은 대신 이름 있는 임시 파일을 씁니다.
+- 검증: S4와 같습니다.
 
-### S8 — tests/golden/test_experiment.py existing freeze failure test
+### S8 — tests/golden/test_experiment.py 기존 고정 실패 테스트
 
 - URL: tests/golden/test_experiment.py
-- Retrieved: 2026-10-18
-- Locator: lines 53-59
-- Fragment: def test_freeze_refuses_a_topic_with_an_empty_part_and_writes_no_plan ... with pytest.raises(ValueError, match="numeric 묶음이 모자랍니다"): experiment.freeze("x1", "pool") ... assert not (outputs / "outputs/plans/x1.json").exists()
-- Applicability: Only a failure before any write is covered, which is why the post-write failure was not caught.
-- Counterevidence: none given
-- Validation: The new tests cover the post-write failure and the publish collision.
+- 확인일: 2026-10-18
+- 위치: 53-59행
+- 인용: def test_freeze_refuses_a_topic_with_an_empty_part_and_writes_no_plan ... with pytest.raises(ValueError, match="numeric 묶음이 모자랍니다"): experiment.freeze("x1", "pool") ... assert not (outputs / "outputs/plans/x1.json").exists()
+- 적용: 어떤 쓰기보다 앞선 실패만 다루므로, 쓴 뒤의 실패를 잡지 못했습니다.
+- 반대 근거: 없음
+- 검증: 새 테스트가 쓴 뒤의 실패와 공개 충돌을 다룹니다.
 
-### S9 — cli._config_file temporary folder under OUTPUTS
+### S9 — OUTPUTS 아래의 cli._config_file 임시 폴더
 
 - URL: golden_pipeline/cli.py
-- Retrieved: 2026-10-18
-- Locator: lines 147-155
-- Fragment: with tempfile.TemporaryDirectory(dir=storage.guard(storage.OUTPUTS)) as folder: path = Path(folder) / "config.json"
-- Applicability: An existing pattern to reuse for the plan's temporary file: same volume as outputs/plans, inside the output guard, and cleaned up automatically.
-- Counterevidence: none given
-- Validation: After freeze, no stray temporary file remains under OUTPUTS.
+- 확인일: 2026-10-18
+- 위치: 147-155행
+- 인용: with tempfile.TemporaryDirectory(dir=storage.guard(storage.OUTPUTS)) as folder: path = Path(folder) / "config.json"
+- 적용: plan의 임시 파일에 다시 쓸 수 있는 기존 방식입니다. outputs/plans와 같은 볼륨이고, 출력 막이 안에 있으며, 저절로 정리됩니다.
+- 반대 근거: 없음
+- 검증: 고정 뒤 OUTPUTS 아래에 남은 임시 파일이 없습니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1, S2): freeze() publishes the plan before steps that can fail, and generation/validation use any published plan without needing freeze.json, so a failure after the plan write leaves a usable, unbacked plan and the experiment cannot be retried.
-- C2 (source; S3, S4, S6, S7): For no-overwrite publishing on both Linux and Windows, a hard link from a temporary file is the right step; os.rename overwrites on Unix and os.replace overwrites everywhere.
-- C3 (interpretation; S4, S5): os.link fails without creating anything when the target exists, so a plan-id collision with an existing pool plan is refused and rolled back rather than overwritten.
-- C4 (interpretation; S2): The recorded plan SHA-256 must be computed from the written file, not the in-memory string, because Windows text-mode writes change newlines and load_plan hashes the file bytes.
-- C5 (interpretation; S5, S9): Putting the temporary file in a TemporaryDirectory under OUTPUTS meets the same-volume and NTFS-only requirements for hard links and reuses an existing repository pattern.
-- C6 (interpretation; S8): The finding got through earlier rounds because the only freeze failure test fails before any write.
+- C1 (출처; S1, S2): freeze()는 실패할 수 있는 단계보다 먼저 plan을 공개하고, 생성/검증은 freeze.json 없이 공개된 plan을 무엇이든 씁니다. 그래서 plan을 쓴 뒤 실패하면 쓸 수 있지만 뒷받침 없는 plan이 남고, 실험을 다시 시도할 수 없습니다.
+- C2 (출처; S3, S4, S6, S7): Linux와 Windows 모두에서 덮어쓰지 않고 공개하려면 임시 파일에서 하드 링크를 거는 것이 맞는 단계입니다. os.rename은 Unix에서 덮어쓰고, os.replace는 어디서나 덮어씁니다.
+- C3 (해석; S4, S5): os.link는 대상이 있으면 아무것도 만들지 않고 실패하므로, 기존 pool plan과 plan id가 겹치면 덮어쓰지 않고 거부한 뒤 되돌립니다.
+- C4 (해석; S2): Windows 텍스트 모드 쓰기는 줄바꿈을 바꾸고 load_plan은 파일 바이트를 해시하므로, 기록하는 plan SHA-256은 메모리의 문자열이 아니라 쓴 파일에서 계산해야 합니다.
+- C5 (해석; S5, S9): 임시 파일을 OUTPUTS 아래 TemporaryDirectory에 두면 하드 링크의 같은 볼륨·NTFS 조건을 만족하고, 저장소의 기존 방식을 다시 씁니다.
+- C6 (해석; S8): 유일한 고정 실패 테스트가 어떤 쓰기보다 앞서 실패하므로, 이 지적이 앞선 회차를 통과했습니다.
 
-## Core theory
+## 핵심 원리
 
-To publish a file without letting a reader see a partial or unbacked state, prepare it under a temporary name and expose it with a single atomic directory operation. When the target must not be overwritten, use link() rather than rename(): POSIX link() 'shall atomically create a new hard link' and fails with EEXIST if path2 exists, creating no link when it fails. Python's os.rename overwrites silently on Unix but always raises FileExistsError on Windows, and os.replace overwrites on both, so neither gives portable no-overwrite publishing. A two-file commit cannot be made atomic, so one file has to be the commit point and written last, after everything it depends on.
+읽는 사람이 일부만 쓰였거나 뒷받침 없는 상태를 보지 않게 파일을 공개하려면, 임시 이름으로 준비하고 원자적인 디렉터리 작업 하나로 드러냅니다. 대상을 덮어쓰면 안 될 때는 rename() 대신 link()를 씁니다. POSIX link()는 'shall atomically create a new hard link'이고, path2가 있으면 EEXIST로 실패하며, 실패하면 링크를 만들지 않습니다. Python의 os.rename은 Unix에서 소리 없이 덮어쓰지만 Windows에서는 언제나 FileExistsError를 내고, os.replace는 둘 다에서 덮어쓰므로, 어느 것도 이식 가능한 '덮어쓰지 않는 공개'를 주지 못합니다. 파일 두 개를 한 번에 원자적으로 확정할 수는 없으므로, 한 파일을 확정 지점으로 삼아 그것이 기대는 모든 것 뒤에 마지막으로 써야 합니다.
 
-## Applicability
+## 적용
 
-In golden_pipeline/experiment.py freeze(): move storage._read_json(...evidence manifest...) and storage.snapshot(storage.PROMPTS) above any write. Serialise `frozen` into a file in a tempfile.TemporaryDirectory(dir=storage.guard(storage.OUTPUTS)), reusing the cli._config_file pattern (cli.py:147-155). That keeps the temporary file on the same volume as outputs/plans, which hard links require, and the folder cleans up the temporary name. Hash that file with storage._sha256 for record['plan']['sha256']. Windows text-mode writes turn '\n' into '\r\n', so hashing the in-memory string would not match load_plan's hash of the file. Write freeze.json with open('x'), then os.link(temp, plan_path) inside try/except that unlinks freeze.json and re-raises. plan_path is in outputs/plans, a namespace shared with pool plans, so an id collision is caught by the link's FileExistsError and the rollback runs. Consumers that read freeze.json (experiment.pro_packets, comparison.py:26, 176) also load the plan, so a freeze.json left without a plan is never used.
+golden_pipeline/experiment.py freeze()에서: storage._read_json(...근거 manifest...)과 storage.snapshot(storage.PROMPTS)를 모든 쓰기 위로 옮깁니다. cli._config_file 방식(cli.py:147-155)을 다시 써서 `frozen`을 tempfile.TemporaryDirectory(dir=storage.guard(storage.OUTPUTS)) 안의 파일로 직렬화합니다. 그러면 임시 파일이 하드 링크에 필요한 outputs/plans와 같은 볼륨에 있고, 폴더가 임시 이름을 정리합니다. record['plan']['sha256']에는 그 파일을 storage._sha256으로 해시한 값을 씁니다. Windows 텍스트 모드 쓰기는 '\n'을 '\r\n'으로 바꾸므로, 메모리 문자열을 해시하면 load_plan의 파일 해시와 맞지 않습니다. freeze.json을 open('x')로 쓰고, 그다음 try/except 안에서 os.link(temp, plan_path)를 하며, 실패하면 freeze.json을 지우고 오류를 다시 냅니다. plan_path는 pool plan과 이름 공간을 함께 쓰는 outputs/plans에 있으므로, id 충돌은 link의 FileExistsError로 잡히고 되돌리기가 돕니다. freeze.json을 읽는 곳(experiment.pro_packets, comparison.py:26, 176)도 plan을 읽으므로, plan 없이 남은 freeze.json은 쓰이지 않습니다.
 
-## Hypothesis
+## 가설
 
-The cause is ordering. The artifact that consumers can see (the plan) is written first, and the steps that can still fail (the manifest read, the prompt snapshot, the freeze.json creation) run after it, with no rollback. The fix is to do every read before any write, and to make the plan the last thing published, using one no-overwrite step: write the plan bytes to a temporary file under OUTPUTS, record that file's SHA-256 in freeze.json, create freeze.json with open('x'), then os.link(temp, plan_path). If the link fails, delete freeze.json and re-raise. Then a plan file existing means its freeze record exists, and _plan_for needs no new check.
+원인은 순서입니다. 쓰는 쪽이 볼 수 있는 산출물(plan)을 먼저 쓰고, 아직 실패할 수 있는 단계(manifest 읽기, 프롬프트 스냅숏, freeze.json 만들기)를 그 뒤에 되돌리기 없이 돌립니다. 수정은 모든 읽기를 쓰기보다 먼저 하고, 덮어쓰지 않는 단계 하나로 plan을 마지막에 공개하는 것입니다. plan 바이트를 OUTPUTS 아래 임시 파일에 쓰고, 그 파일의 SHA-256을 freeze.json에 기록하고, open('x')로 freeze.json을 만든 뒤 os.link(temp, plan_path)를 합니다. 링크가 실패하면 freeze.json을 지우고 오류를 다시 냅니다. 그러면 plan 파일이 있다는 것은 freeze 기록이 있다는 뜻이 되고, _plan_for에는 새 확인이 필요 없습니다.
 
-## Counterevidence
+## 반대 근거
 
-- Hard links are NTFS-only on Windows (not ReFS) and need the same volume. The repository on a local Windows PC (NTFS) and the Linux VM (likely ext4) should be fine, but this is assumed, not checked.
-- If the process is killed (not an exception) between creating freeze.json and the link, no rollback runs. freeze.json is left without a plan and blocks a retry at open('x') until someone deletes it by hand. It cannot be used, but the experiment is not retryable in that case.
-- Repository rule 1.1 forbids speculative error handling. The rollback is justified only because the reviewer's reproduction (missing manifest) and a plan-id collision are real, reachable failures.
+- Windows의 하드 링크는 NTFS 전용이고(ReFS 아님) 같은 볼륨이 필요합니다. 로컬 Windows PC(NTFS)와 Linux VM(아마 ext4)의 저장소는 괜찮겠지만, 가정이지 확인한 것은 아닙니다.
+- freeze.json을 만든 뒤 링크 전에 프로세스가 (예외가 아니라) 강제로 죽으면 되돌리기가 돌지 않습니다. freeze.json이 plan 없이 남아, 누가 손으로 지울 때까지 open('x')에서 재시도를 막습니다. 쓸 수는 없지만, 그 경우 실험을 다시 시도할 수 없습니다.
+- 저장소 규칙 1.1은 근거 없는 예외 처리를 금지합니다. 되돌리기가 정당한 것은 리뷰어의 재현(manifest 없음)과 plan id 충돌이 실제로 일어날 수 있는 실패이기 때문입니다.
 
-## Alternatives
+## 다른 방법
 
-- Reorder only (all reads first, freeze.json then plan with open('x')) without temp+link: smaller, but a failure partway through writing the plan leaves a truncated plan, and the experiment cannot be retried. Acceptable fallback if hard links prove unavailable.
-- os.rename(temp, plan_path): refuses to overwrite on Windows (FileExistsError) but silently replaces on Linux, so it would clobber an existing pool plan on the team VM. Rejected.
-- os.replace: overwrites on every platform. Rejected because plans must never be overwritten (README.md:291).
-- Make _plan_for require freeze.json for experiment plans: needs a way to tell experiment plans from pool plans (the 'stratified_from' key) and adds a branch on every load, while leaving the retry deadlock. Rejected in favour of fixing the publication order.
-- Move the plan into experiments/{id}/ so one folder is the commit point: changes plan.load_plan and every consumer. Larger diff than the finding needs.
+- 임시 파일+링크 없이 순서만 바꾸기(읽기를 모두 먼저, 그다음 freeze.json, 그다음 open('x')로 plan): 더 작지만, plan을 쓰다가 실패하면 잘린 plan이 남고 실험을 다시 시도할 수 없습니다. 하드 링크를 쓸 수 없다고 밝혀지면 받아들일 만한 대안입니다.
+- os.rename(temp, plan_path): Windows에서는 덮어쓰기를 거부하지만(FileExistsError) Linux에서는 소리 없이 바꿔치므로, 팀 VM에서 기존 pool plan을 덮어씁니다. 택하지 않았습니다.
+- os.replace: 모든 플랫폼에서 덮어씁니다. plan은 절대 덮어쓰면 안 되므로(README.md:291) 택하지 않았습니다.
+- _plan_for가 실험 plan에 freeze.json을 요구하게 하기: 실험 plan과 pool plan을 구별할 방법('stratified_from' 키)이 필요하고, 읽을 때마다 분기가 늘며, 재시도 막힘은 그대로 남습니다. 공개 순서를 고치는 쪽을 택했습니다.
+- plan을 experiments/{id}/로 옮겨 폴더 하나를 확정 지점으로 삼기: plan.load_plan과 모든 사용처가 바뀝니다. 지적에 비해 변경이 큽니다.
 
-## Experiment
+## 실험
 
-Add to tests/golden/test_experiment.py: (1) build the pool with write_pool, delete outputs/evidence/ev/manifest.json, assert freeze('x1','pool') raises FileNotFoundError and that neither outputs/plans/x1.json nor outputs/experiments/x1/freeze.json exists; restore the manifest and assert freeze succeeds and record['plan']['sha256'] == storage._sha256(plan file). (2) Pre-create outputs/plans/x1.json with known bytes, assert freeze raises FileExistsError, freeze.json is absent and the existing plan bytes are unchanged. Before the fix, test (1) fails at the retry with FileExistsError and test (2) leaves freeze.json behind. Run the gate once on Windows. os.link on NTFS in tmp_path covers the Windows link path.
+tests/golden/test_experiment.py에 더합니다. (1) write_pool로 pool을 만들고 outputs/evidence/ev/manifest.json을 지운 뒤, freeze('x1','pool')가 FileNotFoundError를 내고 outputs/plans/x1.json과 outputs/experiments/x1/freeze.json이 모두 없는지 확인합니다. manifest를 되돌리고, freeze가 성공하며 record['plan']['sha256'] == storage._sha256(plan 파일)인지 확인합니다. (2) 알려진 바이트로 outputs/plans/x1.json을 미리 만들고, freeze가 FileExistsError를 내며 freeze.json이 없고 기존 plan 바이트가 그대로인지 확인합니다. 수정 전에는 (1)이 재시도에서 FileExistsError로 실패하고, (2)는 freeze.json을 남깁니다. Windows에서 검사를 한 번 돌립니다. tmp_path의 NTFS에서 os.link가 Windows 링크 경로를 다룹니다.
 
-## Result
+## 결과
 
-Ran the experiment as `tests/golden/test_experiment.py::test_a_freeze_that_fails_after_planning_leaves_nothing_and_can_be_retried` (1) and `::test_a_freeze_onto_an_existing_plan_id_keeps_that_plan_and_writes_no_record` (2). Before the fix (HEAD `12597db`), (1) failed: after the FileNotFoundError, `outputs/plans/x1.json` existed and `freeze.json` did not. A throwaway test (deleted afterwards) restored the manifest and retried, and got `FileExistsError [Errno 17] File exists: …\outputs\plans\x1.json`. (2) passed before the fix, not failed as predicted. In the old order the plan's `open("x")` came first and raised before freeze.json was written. It is kept because it guards the rollback in the new order. The fix follows the hypothesis. `freeze()` builds the plan bytes and reads the evidence manifest and prompt snapshot before any write. The plan SHA-256 is taken from those bytes, which are written as binary, so the file and the record hash the same bytes. It publishes freeze.json, then the plan, each with `experiment._publish` (temporary sibling file, then `os.link`, which never overwrites). If the plan cannot be linked, freeze.json is removed and the error re-raised. After the fix, (1) and (2) pass on Windows (NTFS tmp_path, so the hard-link path ran), as do the rest of `test_experiment.py` and `test_cli.py` (46 passed). Same rule elsewhere: `pro_packets` read topic specs and filled the template between its exclusive writes, and `review_packets` built `packet.md` after `mkdir()` and `key.json`. Both now finish every read and render before the first write. Results are in the commit that carries this page; the full gate is the server's and still pending.
+실험을 `tests/golden/test_experiment.py::test_a_freeze_that_fails_after_planning_leaves_nothing_and_can_be_retried`(1)와 `::test_a_freeze_onto_an_existing_plan_id_keeps_that_plan_and_writes_no_record`(2)로 돌렸습니다. 수정 전(HEAD `12597db`)에 (1)은 실패했습니다. FileNotFoundError 뒤에 `outputs/plans/x1.json`이 있었고 `freeze.json`은 없었습니다. 임시 테스트(뒤에 지움)로 manifest를 되돌리고 다시 시도하니 `FileExistsError [Errno 17] File exists: …\outputs\plans\x1.json`이 났습니다. (2)는 예측과 달리 수정 전에도 통과했습니다. 옛 순서에서는 plan의 `open("x")`가 먼저 와서 freeze.json을 쓰기 전에 오류를 냈습니다. 새 순서의 되돌리기를 막아 주므로 남겼습니다. 수정은 가설을 따릅니다. `freeze()`는 어떤 쓰기보다 먼저 plan 바이트를 만들고 근거 manifest와 프롬프트 스냅숏을 읽습니다. plan SHA-256은 바이너리로 쓰는 그 바이트에서 얻으므로, 파일과 기록이 같은 바이트를 해시합니다. freeze.json, 그다음 plan을 각각 `experiment._publish`(임시 형제 파일, 그다음 덮어쓰지 않는 `os.link`)로 공개합니다. plan을 링크할 수 없으면 freeze.json을 지우고 오류를 다시 냅니다. 수정 뒤 Windows에서 (1)과 (2)가 통과했고(NTFS tmp_path이므로 하드 링크 경로가 돎), `test_experiment.py`와 `test_cli.py`의 나머지도 통과했습니다(46 passed). 다른 곳에도 같은 규칙을 적용했습니다. `pro_packets`는 단독 쓰기 사이에 주제 명세를 읽고 틀을 채웠고, `review_packets`는 `mkdir()`과 `key.json` 뒤에 `packet.md`를 만들었습니다. 둘 다 이제 첫 쓰기 전에 모든 읽기와 렌더링을 끝냅니다. 결과는 이 문서를 담은 커밋에 있으며, 전체 검사는 서버가 돌리고 아직 기다리는 중입니다.
 
-## Unresolved limits
+## 남은 한계
 
-Not checked: the filesystem of the team VM's outputs directory supports hard links. A hard kill between creating freeze.json and the link still needs a manual delete. Two concurrent freeze() calls with the same id are not considered: it is a single-user CLI.
+확인하지 않음: 팀 VM의 outputs 디렉터리 파일 시스템이 하드 링크를 지원하는지. freeze.json을 만든 뒤 링크 전에 강제 종료되면 여전히 손으로 지워야 합니다. 같은 id로 freeze()를 동시에 두 번 부르는 경우는 생각하지 않았습니다. 혼자 쓰는 CLI이기 때문입니다.

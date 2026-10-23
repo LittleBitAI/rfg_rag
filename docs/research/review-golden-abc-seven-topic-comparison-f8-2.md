@@ -1,31 +1,31 @@
-# Review research — F8, cycle 2
+# 리뷰 조사 · F8, 2회차
 
-집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
+집계 결과와 측정 조건은 Git에 보관하고, 실제 질문·정답·근거·OCR 텍스트와 레코드별 내보내기는 Git에서 제외된 로컬 `artifacts/`에 보관합니다.
 
-복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행의 역사적 관측이며 이번 작업에서 재측정한 결과가 아니다.
+복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행에서 관측한 과거 기록이며, 이번 작업에서 다시 측정한 결과가 아닙니다.
 
-Draft research before the fix of review round 9 of PR #65, written 2026-10-18. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #65 리뷰 9회차의 수정 전에 2026-10-18에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-experiment.freeze() must leave either both artifacts (experiments/{id}/freeze.json and plans/{id}.json) or neither. A plan must never exist without its freeze record, because generation._plan_for loads plans by id without checking for freeze.json. A failed freeze must also be retryable. The round-9 reproduction breaks this: os.link() in _publish() (experiment.py:87) succeeds, then temp.unlink() in the finally (experiment.py:89) raises. When that happens on the plan, freeze() treats the exception as a link failure, deletes freeze.json and leaves the linked plan behind. A retry then fails on the plan collision. When it happens on freeze.json, freeze.json is left without a plan.
+experiment.freeze()는 두 산출물(experiments/{id}/freeze.json과 plans/{id}.json)을 모두 남기거나 하나도 남기지 않아야 합니다. generation._plan_for는 freeze.json을 확인하지 않고 id로 plan을 읽으므로, plan이 freeze 기록 없이 있으면 절대 안 됩니다. 실패한 고정은 다시 시도할 수도 있어야 합니다. 9회차 재현이 이를 깹니다. _publish()의 os.link()(experiment.py:87)가 성공한 뒤, finally 안의 temp.unlink()(experiment.py:89)가 오류를 냅니다. plan에서 이 일이 일어나면 freeze()는 이 예외를 링크 실패로 보고 freeze.json을 지우며, 링크된 plan을 남깁니다. 그러면 재시도가 plan 충돌로 실패합니다. freeze.json에서 일어나면 freeze.json이 plan 없이 남습니다.
 
-Trigger: repeat, rounds 8, 9.
+발생: 반복, 8·9회차.
 
-- [P1] [P1] golden_pipeline/experiment.py:89 — successful publication can be reported as failed / when temporary-link cleanup raises / F8’s split, non-retryable state returns
+- [P1] [P1] golden_pipeline/experiment.py:89 — 성공한 공개가 실패로 보고될 수 있습니다 / 임시 링크 정리가 오류를 낼 때 / F8의 갈라진, 다시 시도할 수 없는 상태가 돌아옵니다
 
-## Failed fixes
+## 실패한 수정
 
-- Cycle 1 (05c5196) moved every read (the evidence manifest, the prompt snapshot) before any write, published freeze.json first and the plan last through _publish() (temp sibling file + os.link + unlink in finally), and removed freeze.json if publishing the plan raised. The ordering was right. The rollback condition was wrong. It decides what to undo from 'an exception came out of _publish', but _publish has a fallible step after its commit point (temp.unlink after os.link). An exception therefore does not mean the destination was not created. Its tests covered a failure before publication (missing manifest) and a collision before linking (existing plan id), so neither exercised a failure after the link.
+- 1회차(05c5196)는 모든 읽기(근거 manifest, 프롬프트 스냅숏)를 쓰기보다 앞으로 옮기고, _publish()(임시 형제 파일 + os.link + finally 안의 unlink)로 freeze.json을 먼저, plan을 마지막에 공개했으며, plan 공개가 오류를 내면 freeze.json을 지웠습니다. 순서는 맞았습니다. 되돌리기 조건이 틀렸습니다. '_publish에서 예외가 나왔다'로 무엇을 되돌릴지 정하지만, _publish에는 확정 지점 뒤에 실패할 수 있는 단계(os.link 뒤의 temp.unlink)가 있습니다. 그래서 예외가 났다고 대상이 만들어지지 않았다는 뜻은 아닙니다. 그 테스트는 공개 전 실패(manifest 없음)와 링크 전 충돌(이미 있는 plan id)을 다뤘으므로, 어느 쪽도 링크 뒤의 실패를 시험하지 않았습니다.
 
-## Sources
+## 출처
 
-### S1 — golden_pipeline/experiment.py freeze() and _publish()
+### S1 — golden_pipeline/experiment.py freeze()와 _publish()
 
 - URL: golden_pipeline/experiment.py
-- Retrieved: 2026-10-18
-- Locator: lines 70-89
-- Fragment: _publish(root / "freeze.json", ...)
+- 확인일: 2026-10-18
+- 위치: 70-89행
+- 인용: _publish(root / "freeze.json", ...)
     try:
         _publish(plan_path, plan_bytes)
     except BaseException:
@@ -37,102 +37,102 @@ Trigger: repeat, rounds 8, 9.
         os.link(temp, path)
     finally:
         temp.unlink()
-- Applicability: The commit point (os.link) is followed by a fallible cleanup inside the same call, and the outer handler reads any exception as 'not published'.
-- Counterevidence: If unlink never fails in practice, the split state is only reachable by fault injection; the reviewer nonetheless treats it as P1.
-- Validation: After the fix, no statement that can raise runs after the plan's write completes, and the rollback deletes only the paths in `created`.
+- 적용: 같은 호출 안에서 확정 지점(os.link) 뒤에 실패할 수 있는 정리가 오고, 바깥 처리기는 어떤 예외든 '공개되지 않음'으로 읽습니다.
+- 반대 근거: 실제로 unlink가 절대 실패하지 않는다면, 갈라진 상태는 오류 주입으로만 닿을 수 있습니다. 그래도 리뷰어는 이를 P1로 봅니다.
+- 검증: 수정 뒤에는 plan 쓰기가 끝난 뒤 오류를 낼 수 있는 문장이 없고, 되돌리기는 `created`에 있는 경로만 지웁니다.
 
-### S2 — Python Language Reference: The try statement (finally clause)
+### S2 — Python Language Reference: The try statement(finally 절)
 
 - URL: https://docs.python.org/3/reference/compound_stmts.html
-- Retrieved: 2026-10-18
-- Locator: 8.4 The try statement, finally clause
-- Fragment: If an exception occurs in any of the clauses and is not handled, the exception is temporarily saved. The finally clause is executed. If there is a saved exception it is re-raised at the end of the finally clause. If the finally clause raises another exception, the saved exception is set as the context of the new exception. If the finally clause executes a return, break or continue statement, the saved exception is discarded.
-- Applicability: When os.link succeeds, there is no saved exception, so the exception from temp.unlink in the finally is the only one that propagates. To the caller, a successful link and a failed link look the same.
-- Counterevidence: Exception chaining keeps the context when both fail, but that does not help the success case.
-- Validation: The reviewer's fault injection (the unlink of the temp file raises after the link) reproduces the split on HEAD.
+- 확인일: 2026-10-18
+- 위치: 8.4 The try statement, finally 절
+- 인용: If an exception occurs in any of the clauses and is not handled, the exception is temporarily saved. The finally clause is executed. If there is a saved exception it is re-raised at the end of the finally clause. If the finally clause raises another exception, the saved exception is set as the context of the new exception. If the finally clause executes a return, break or continue statement, the saved exception is discarded.
+- 적용: os.link가 성공하면 저장된 예외가 없으므로, finally 안 temp.unlink의 예외만 전해집니다. 호출하는 쪽에서는 성공한 링크와 실패한 링크가 똑같아 보입니다.
+- 반대 근거: 둘 다 실패하면 예외 연결이 문맥을 남기지만, 성공한 경우에는 도움이 되지 않습니다.
+- 검증: 리뷰어의 오류 주입(링크 뒤 임시 파일 unlink가 오류를 냄)이 HEAD에서 갈라진 상태를 재현합니다.
 
-### S3 — atomicwrites source (_move_atomic, AtomicWriter)
+### S3 — atomicwrites 소스(_move_atomic, AtomicWriter)
 
 - URL: https://python-atomicwrites.readthedocs.io/en/latest/_modules/atomicwrites.html
-- Retrieved: 2026-10-18
-- Locator: _move_atomic POSIX branch; move_atomic docstring; AtomicWriter._open
-- Fragment: def _move_atomic(src, dst):
+- 확인일: 2026-10-18
+- 위치: _move_atomic POSIX 분기; move_atomic 설명; AtomicWriter._open
+- 인용: def _move_atomic(src, dst):
         os.link(src, dst)
         os.unlink(src)  ... "Move src to dst. There might a timewindow where both filesystem entries exist." "If dst already exists, FileExistsError will be raised." "Both paths must reside on the same filesystem for the operation to be atomic." rollback failures are suppressed: try: self.rollback(f) except Exception: pass
-- Applicability: The library cycle 1 cited as the model for link-then-unlink also unlinks after the link with nothing guarding it, so a cleanup failure after the link propagates from commit. The weakness belongs to the pattern, not just to this code. It suppresses exceptions only in rollback, not after commit.
-- Counterevidence: atomicwrites publishes a single file, so a post-link exception there does not split two artifacts. The project is unmaintained.
-- Validation: The ownership design has no step after the commit, so this weakness cannot apply.
+- 적용: 1회차가 '링크 뒤 unlink'의 본보기로 인용한 라이브러리도 링크 뒤에 아무 막이 없이 unlink하므로, 링크 뒤 정리 실패가 확정 단계에서 전해집니다. 약점은 이 코드만이 아니라 방식 자체에 있습니다. 예외를 삼키는 것은 되돌리기에서만이고, 확정 뒤에서는 아닙니다.
+- 반대 근거: atomicwrites는 파일 하나를 공개하므로, 링크 뒤 예외가 산출물 두 개를 가르지 않습니다. 이 프로젝트는 관리가 중단됐습니다.
+- 검증: 소유 기반 설계에는 확정 뒤 단계가 없으므로 이 약점이 해당하지 않습니다.
 
-### S4 — Python built-in open(): mode 'x'
+### S4 — Python 내장 open(): 'x' 모드
 
 - URL: https://docs.python.org/3/library/functions.html
-- Retrieved: 2026-10-18
-- Locator: open() mode table, 'x'
-- Fragment: 'x' open for exclusive creation, failing if the file already exists
-- Applicability: A successful open('xb') proves this call created the path, so the rollback may delete it. A failed open on an existing plan id leaves that plan alone.
-- Counterevidence: The docs do not state an atomicity guarantee directly; that comes from the underlying O_EXCL (S5). On NFSv2, O_EXCL is unreliable.
-- Validation: The existing test test_a_freeze_onto_an_existing_plan_id_keeps_that_plan_and_writes_no_record passes: FileExistsError, existing bytes unchanged, no freeze.json.
+- 확인일: 2026-10-18
+- 위치: open() 모드 표, 'x'
+- 인용: 'x' open for exclusive creation, failing if the file already exists
+- 적용: open('xb')가 성공하면 이 호출이 그 경로를 만들었다는 증거이므로, 되돌리기가 지워도 됩니다. 이미 있는 plan id에서 open이 실패하면 그 plan은 건드리지 않습니다.
+- 반대 근거: 이 문서는 원자성을 직접 보장하지 않으며, 그 보장은 바탕의 O_EXCL(S5)에서 옵니다. NFSv2에서는 O_EXCL을 믿을 수 없습니다.
+- 검증: 기존 테스트 test_a_freeze_onto_an_existing_plan_id_keeps_that_plan_and_writes_no_record가 통과합니다. FileExistsError, 기존 바이트 그대로, freeze.json 없음입니다.
 
-### S5 — open() O_CREAT|O_EXCL semantics (Open Group text quoted)
+### S5 — open() O_CREAT|O_EXCL 동작(Open Group 글 인용)
 
 - URL: https://zenn.dev/tn_a/articles/system-call-open
-- Retrieved: 2026-10-18
-- Locator: O_EXCL description quoting the Open Group open() page
-- Fragment: If O_CREAT and O_EXCL are set, open() shall fail if the file exists. The check for the existence of the file and the creation of the file if it does not exist shall be atomic with respect to other threads executing open() naming the same filename in the same directory with O_EXCL and O_CREAT set.
-- Applicability: This is the guarantee behind ownership: only one caller can create the path, and it knows it did.
-- Counterevidence: This is a secondary page quoting POSIX. Atomicity is guaranteed only against other O_EXCL opens, and NFSv2 does not support O_EXCL (SEI CERT).
-- Validation: As S4.
+- 확인일: 2026-10-18
+- 위치: Open Group open() 페이지를 인용한 O_EXCL 설명
+- 인용: If O_CREAT and O_EXCL are set, open() shall fail if the file exists. The check for the existence of the file and the creation of the file if it does not exist shall be atomic with respect to other threads executing open() naming the same filename in the same directory with O_EXCL and O_CREAT set.
+- 적용: 소유 판단 뒤에 있는 보장입니다. 경로를 만들 수 있는 호출은 하나뿐이고, 그 호출은 자기가 만들었다는 것을 압니다.
+- 반대 근거: POSIX를 인용한 2차 자료입니다. 원자성은 다른 O_EXCL 열기에 대해서만 보장되며, NFSv2는 O_EXCL을 지원하지 않습니다(SEI CERT).
+- 검증: S4와 같습니다.
 
-### S6 — golden_pipeline/plan.py pool-plan write
+### S6 — golden_pipeline/plan.py pool plan 쓰기
 
 - URL: golden_pipeline/plan.py
-- Retrieved: 2026-10-18
-- Locator: line 69
-- Fragment: with path.open("x", encoding="utf-8") as f:
-- Applicability: The repository already publishes plans by exclusive creation directly, with no temp file, so the fix reuses an existing idiom (written as binary 'xb' so that the recorded SHA-256 matches the bytes on disk).
-- Counterevidence: The pool-plan write has no rollback, because it writes only one artifact.
-- Validation: The plan's SHA-256 in freeze.json equals storage._sha256(plan file) in the retry test.
+- 확인일: 2026-10-18
+- 위치: 69행
+- 인용: with path.open("x", encoding="utf-8") as f:
+- 적용: 저장소는 이미 임시 파일 없이 단독 생성으로 plan을 바로 공개하므로, 수정은 기존 방식을 다시 씁니다(기록된 SHA-256이 디스크의 바이트와 맞도록 바이너리 'xb'로 씀).
+- 반대 근거: pool plan 쓰기는 산출물 하나만 쓰므로 되돌리기가 없습니다.
+- 검증: 재시도 테스트에서 freeze.json의 plan SHA-256이 storage._sha256(plan 파일)과 같습니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): freeze()'s rollback deletes freeze.json whenever _publish(plan_path) raises, but _publish can raise after os.link has already created the plan, so the rollback can delete the record of a plan that exists.
-- C2 (source; S1, S2): An exception raised in a finally clause after a successful step propagates as the only exception, so the caller cannot tell that the link succeeded.
-- C3 (interpretation; S3): Link-then-unlink in atomicwrites leaves the same unlink after commit unguarded, so the cycle-1 pattern carried this failure in with it.
-- C4 (interpretation; S4, S5, S6): Exclusive creation gives an ownership signal: if open('xb') returned, this call created the path and the rollback may remove exactly that path, while a pre-existing plan is never touched.
-- C5 (interpretation; S1, S6): Creating freeze.json then the plan with open('xb'), recording each in `created` and unlinking exactly those on any exception, leaves no fallible step after the last commit and removes the temp file, the hard link and _publish().
+- C1 (출처; S1): freeze()의 되돌리기는 _publish(plan_path)가 오류를 낼 때마다 freeze.json을 지우지만, _publish는 os.link가 이미 plan을 만든 뒤에도 오류를 낼 수 있으므로, 되돌리기가 있는 plan의 기록을 지울 수 있습니다.
+- C2 (출처; S1, S2): 성공한 단계 뒤 finally 절에서 난 예외는 유일한 예외로 전해지므로, 호출하는 쪽은 링크가 성공했다는 것을 알 수 없습니다.
+- C3 (해석; S3): atomicwrites의 '링크 뒤 unlink'도 확정 뒤의 같은 unlink를 막지 않으므로, 1회차 방식이 이 실패를 함께 들여왔습니다.
+- C4 (해석; S4, S5, S6): 단독 생성은 소유 신호를 줍니다. open('xb')가 돌아오면 이 호출이 경로를 만든 것이므로 되돌리기가 정확히 그 경로를 지울 수 있고, 이미 있던 plan은 절대 건드리지 않습니다.
+- C5 (해석; S1, S6): freeze.json, 그다음 plan을 open('xb')로 만들고, 각각을 `created`에 기록하며, 어떤 예외에서든 정확히 그것들을 지우면, 마지막 확정 뒤에 실패할 수 있는 단계가 없고 임시 파일, 하드 링크, _publish()가 사라집니다.
 
-## Core theory
+## 핵심 원리
 
-A commit-then-cleanup sequence must not report failure after the commit has happened, and a rollback must undo only what the operation is known to have created. Python's try statement re-raises a saved exception at the end of finally, but 'if the finally clause raises another exception, the saved exception is set as the context of the new exception'. An exception from a finally that runs after a successful step therefore looks exactly like a failure of that step. Exclusive creation ('x': 'open for exclusive creation, failing if the file already exists'; POSIX O_CREAT|O_EXCL fails if the file exists, and the check and the creation are atomic with respect to other O_EXCL opens) gives a clear ownership signal: if open returned, this call created the file and may delete it.
+'확정 후 정리' 순서는 확정이 일어난 뒤에 실패를 보고하면 안 되며, 되돌리기는 그 작업이 만들었다고 아는 것만 되돌려야 합니다. Python의 try 문은 finally 끝에서 저장된 예외를 다시 내지만, 'if the finally clause raises another exception, the saved exception is set as the context of the new exception'. 그래서 성공한 단계 뒤에 도는 finally에서 난 예외는 그 단계의 실패와 똑같아 보입니다. 단독 생성('x': 'open for exclusive creation, failing if the file already exists', POSIX O_CREAT|O_EXCL은 파일이 있으면 실패하고, 확인과 생성이 다른 O_EXCL 열기에 대해 원자적)은 분명한 소유 신호를 줍니다. open이 돌아오면 이 호출이 파일을 만들었고, 지워도 됩니다.
 
-## Applicability
+## 적용
 
-golden_pipeline/experiment.py:70-89. The commit point inside _publish is os.link at line 87, and the fallible step after it is temp.unlink at line 89. The outer handler at lines 71-75 maps any exception from _publish(plan_path) to 'plan not created' and deletes freeze.json. The same thing at line 70 leaves freeze.json without a plan. Rewriting lines 70-89 as one try block with a `created` list and two open('xb') writes removes both paths. No reader lists outputs/plans (a grep of golden_pipeline finds only plan.py:31,76 and experiment.py:65, all by id), so nothing depends on the temp files. Readers that load freeze.json (pro_packets, comparison.py) also load the plan and compare SHA-256 values, so a missing plan stops them.
+golden_pipeline/experiment.py:70-89입니다. _publish 안의 확정 지점은 87행의 os.link이고, 그 뒤의 실패할 수 있는 단계는 89행의 temp.unlink입니다. 71-75행의 바깥 처리기는 _publish(plan_path)의 어떤 예외든 'plan이 만들어지지 않음'으로 보고 freeze.json을 지웁니다. 70행에서 같은 일이 일어나면 freeze.json이 plan 없이 남습니다. 70-89행을 `created` 목록과 open('xb') 쓰기 두 개로 된 try 블록 하나로 다시 쓰면 두 경로가 모두 사라집니다. outputs/plans를 나열하는 곳은 없으므로(golden_pipeline을 grep하면 plan.py:31,76과 experiment.py:65뿐이고 모두 id로 읽음), 임시 파일에 기대는 것은 없습니다. freeze.json을 읽는 곳(pro_packets, comparison.py)은 plan도 읽고 SHA-256을 비교하므로, plan이 없으면 멈춥니다.
 
-## Hypothesis
+## 가설
 
-The rollback in freeze() infers which artifacts exist from where an exception came from, not from which artifacts this call actually created. _publish() has a fallible cleanup step after its commit point (os.link), so 'raised' does not mean 'not published'. The fix is to undo by ownership, with no step after the last commit. Create each file directly with exclusive creation (path.open('xb'), the idiom plan.py:69 already uses for pool plans), freeze.json first and the plan last. Append each path to a `created` list as soon as its open succeeds. On any exception, unlink exactly the paths in `created` and re-raise. That removes the temp file, the hard link and _publish(), so nothing can fail after a file is committed. If the plan id is already taken, open('xb') raises before the plan path is recorded, so only freeze.json is removed and the existing plan is untouched.
+freeze()의 되돌리기는 이 호출이 실제로 어떤 산출물을 만들었는지가 아니라 예외가 어디서 났는지로 어떤 산출물이 있는지 추론합니다. _publish()에는 확정 지점(os.link) 뒤에 실패할 수 있는 정리 단계가 있으므로, '오류가 났다'가 '공개되지 않았다'를 뜻하지 않습니다. 수정은 마지막 확정 뒤에 단계를 두지 않고 소유로 되돌리는 것입니다. 각 파일을 단독 생성으로 바로 만듭니다(path.open('xb'), plan.py:69가 pool plan에 이미 쓰는 방식). freeze.json을 먼저, plan을 마지막에 만듭니다. open이 성공하자마자 경로를 `created` 목록에 더합니다. 어떤 예외에서든 `created`에 있는 경로만 정확히 지우고 오류를 다시 냅니다. 그러면 임시 파일, 하드 링크, _publish()가 사라지므로, 파일이 확정된 뒤에 실패할 것이 없습니다. plan id가 이미 있으면 plan 경로를 기록하기 전에 open('xb')가 오류를 내므로, freeze.json만 지워지고 기존 plan은 건드리지 않습니다.
 
-## Counterevidence
+## 반대 근거
 
-- Without the temp file, a hard kill (not an exception) while the plan is being written leaves a truncated plan beside a complete freeze.json. load_plan parses the JSON, so a truncated object fails to load instead of being silently used. The one edge is a prefix that ends exactly at the closing brace, which _plan_for would accept even though its SHA-256 differs from the record. Under the cycle-1 design, a hard kill between the two links already left freeze.json behind and blocked retries, so neither design survives a hard kill cleanly.
-- If an unlink inside the rollback itself fails, the state is split again. That is a second failure during error handling, and neither design guards against it; rule 1.1 argues against adding more layers for it.
-- Cycle 1 rejected 'reorder only with open(x)' because a failure partway through writing leaves a truncated plan and blocks retries. That reasoning assumed no rollback of the plan. With ownership rollback, the plan this call created is removed on any exception, so the objection no longer applies.
+- 임시 파일이 없으면, plan을 쓰는 중에 (예외가 아니라) 강제 종료될 때 완전한 freeze.json 옆에 잘린 plan이 남습니다. load_plan은 JSON을 파싱하므로, 잘린 객체는 소리 없이 쓰이지 않고 읽기에 실패합니다. 단 하나의 예외는 정확히 닫는 중괄호에서 끝나는 앞부분으로, SHA-256이 기록과 달라도 _plan_for가 받아들입니다. 1회차 설계에서도 두 링크 사이에 강제 종료되면 freeze.json이 남아 재시도를 막았으므로, 어느 설계도 강제 종료를 깔끔하게 견디지 못합니다.
+- 되돌리기 안의 unlink 자체가 실패하면 상태가 다시 갈라집니다. 오류 처리 중의 두 번째 실패이며, 어느 설계도 이를 막지 않습니다. 규칙 1.1은 이를 위해 층을 더하는 데 반대합니다.
+- 1회차는 쓰는 도중 실패하면 잘린 plan이 남아 재시도를 막는다는 이유로 'open(x)로 순서만 바꾸기'를 택하지 않았습니다. 그 이유는 plan을 되돌리지 않는다고 가정했습니다. 소유 기반 되돌리기에서는 이 호출이 만든 plan이 어떤 예외에서든 지워지므로, 그 반대 이유가 더는 해당하지 않습니다.
 
-## Alternatives
+## 다른 방법
 
-- Keep _publish and make the cleanup after the link best-effort (`with contextlib.suppress(OSError): temp.unlink()`, applied after the link and on the failure path). It is a smaller diff and fixes the reviewer's reproduction, but it leaves a stray hidden hard link to the plan in outputs/plans/ and keeps the unchecked dependence on hard links (NTFS, same volume, the team VM's filesystem). It also suppresses only OSError, so a test that raises a different type would still split the state. This is the second choice.
-- Move temp.unlink out of _publish to after both links have succeeded in freeze(). freeze() would still raise after a complete, consistent publication (the 'reported as failed' half of the finding), and a retry would collide with its own successful freeze. Rejected.
-- Make _plan_for require freeze.json for experiment plans. That adds a branch on every load and does not restore retryability. Rejected, as in cycle 1.
+- _publish를 유지하고 링크 뒤 정리를 최선 노력으로 바꾸기(`with contextlib.suppress(OSError): temp.unlink()`를 링크 뒤와 실패 경로에 적용). 변경이 더 작고 리뷰어의 재현을 고치지만, outputs/plans/에 plan을 가리키는 숨은 하드 링크가 남고, 확인하지 않은 하드 링크 의존(NTFS, 같은 볼륨, 팀 VM 파일 시스템)도 남습니다. OSError만 삼키므로, 다른 형식을 내는 테스트에서는 여전히 상태가 갈라집니다. 두 번째 선택입니다.
+- temp.unlink를 _publish 밖, freeze()에서 두 링크가 모두 성공한 뒤로 옮기기. 완전하고 일관된 공개 뒤에도 freeze()가 여전히 오류를 내고(지적의 '실패로 보고됨' 절반), 재시도는 자기 성공한 고정과 충돌합니다. 택하지 않았습니다.
+- _plan_for가 실험 plan에 freeze.json을 요구하게 하기. 읽을 때마다 분기가 늘고 재시도 가능성을 되살리지 못합니다. 1회차처럼 택하지 않았습니다.
 
-## Experiment
+## 실험
 
-Replace the post-link scenario with one that fits the new design. In tests/golden/test_experiment.py, monkeypatch pathlib.Path.open so that for outputs/plans/x1.json it calls the real open with 'xb', closes the file and returns it. The file now exists, and the f.write that follows raises ValueError. Assert that freeze('x1','pool') raises, that neither plans/x1.json nor experiments/x1/freeze.json exists, then undo the patch and assert that a retry succeeds and record['plan']['sha256'] == storage._sha256(plan file). On the current HEAD 51ebc1b this test should fail: the patched open never touches plans/x1.json there (the plan comes from os.link), so make the temp unlink raise instead, as the reviewer described, and expect freeze.json to be gone and the plan to be present. Keep the two existing cycle-1 tests (missing manifest; existing plan id keeps its bytes and writes no record). They should pass unchanged. Run test_experiment.py once, then the gate.
+링크 뒤 상황을 새 설계에 맞는 것으로 바꿉니다. tests/golden/test_experiment.py에서 pathlib.Path.open을 바꿔, outputs/plans/x1.json이면 진짜 open을 'xb'로 부르고 파일을 닫은 뒤 돌려주게 합니다. 이제 파일은 있고, 뒤따르는 f.write가 ValueError를 냅니다. freeze('x1','pool')가 오류를 내고 plans/x1.json과 experiments/x1/freeze.json이 모두 없는지 확인한 뒤, 패치를 풀고 재시도가 성공하며 record['plan']['sha256'] == storage._sha256(plan 파일)인지 확인합니다. 지금 HEAD 51ebc1b에서는 이 테스트가 실패해야 합니다. 거기서는 바꾼 open이 plans/x1.json을 건드리지 않으므로(plan은 os.link에서 옴), 리뷰어가 설명한 대로 임시 파일 unlink가 오류를 내게 하고, freeze.json이 사라지고 plan이 남기를 예상합니다. 1회차의 기존 테스트 두 개(manifest 없음, 이미 있는 plan id는 바이트를 유지하고 기록을 쓰지 않음)는 그대로 둡니다. 바꾸지 않고 통과해야 합니다. test_experiment.py를 한 번 돌린 뒤 검사를 돌립니다.
 
-## Result
+## 결과
 
-Reproduced the reviewer's scenario on HEAD `065063a` (code as at `51ebc1b`) with a throwaway test, deleted afterwards. It patched `pathlib.Path.unlink` to raise only for the temporary `.x1.json.*.tmp`. `freeze()` raised PermissionError, the plan existed, and freeze.json did not. A retry raised `FileExistsError [WinError 183]` on `plans/x1.json`. The proposed experiment is `tests/golden/test_experiment.py::test_a_freeze_that_fails_after_creating_the_plan_removes_what_it_created_and_can_be_retried`. It patches `Path.open` to return the plan's file already closed. Run against the HEAD `experiment.py`, it failed with `DID NOT RAISE ValueError`, as predicted: the plan came from `os.link`, so the patched open never touched it. The fix follows the hypothesis. `_publish`, the temp file and the hard link are gone. `experiment.create_all({path: bytes})` creates each file with `open("xb")`, records the path as soon as the open returns, and on any exception unlinks exactly the recorded paths and re-raises. One deviation was needed: the path is recorded before entering `with`, not inside it. The experiment's closed file makes `with` itself raise, which would have left the plan unrecorded. After the fix the new test passes, and so do the two cycle-1 tests, unchanged (missing manifest; an existing plan id keeps its bytes and writes no record). Same rule elsewhere: `pro_packets` (14 exclusive files written in a loop) and `review_packets` (`key.json`, `packet.md`, `judgments.csv` after `mkdir`) now also publish through `create_all`, so a failed write leaves nothing that blocks a rerun. `tests/golden/test_experiment.py` and `test_cli.py` gave 47 passed, in the commit that carries this page; the full gate is the server's and still pending.
+HEAD `065063a`(코드는 `51ebc1b`와 같음)에서 임시 테스트(뒤에 지움)로 리뷰어의 상황을 재현했습니다. 임시 `.x1.json.*.tmp`에서만 오류를 내도록 `pathlib.Path.unlink`를 바꿨습니다. `freeze()`는 PermissionError를 냈고, plan은 있었고, freeze.json은 없었습니다. 재시도는 `plans/x1.json`에서 `FileExistsError [WinError 183]`을 냈습니다. 제안한 실험은 `tests/golden/test_experiment.py::test_a_freeze_that_fails_after_creating_the_plan_removes_what_it_created_and_can_be_retried`입니다. `Path.open`이 이미 닫힌 plan 파일을 돌려주도록 바꿉니다. HEAD의 `experiment.py`에 돌리면 예측대로 `DID NOT RAISE ValueError`로 실패했습니다. plan이 `os.link`에서 왔으므로 바꾼 open이 이를 건드리지 않았습니다. 수정은 가설을 따릅니다. `_publish`, 임시 파일, 하드 링크가 없어졌습니다. `experiment.create_all({path: bytes})`가 각 파일을 `open("xb")`로 만들고, open이 돌아오자마자 경로를 기록하며, 어떤 예외에서든 기록된 경로만 정확히 지우고 오류를 다시 냅니다. 한 가지는 바꿔야 했습니다. 경로는 `with` 안이 아니라 `with`에 들어가기 전에 기록합니다. 실험의 닫힌 파일 때문에 `with` 자체가 오류를 내서, 그대로라면 plan이 기록되지 않았을 것입니다. 수정 뒤 새 테스트가 통과하고, 1회차 테스트 두 개도 바꾸지 않고 통과합니다(manifest 없음, 이미 있는 plan id는 바이트를 유지하고 기록을 쓰지 않음). 다른 곳에도 같은 규칙을 적용했습니다. `pro_packets`(반복으로 쓰는 단독 파일 14개)와 `review_packets`(`mkdir` 뒤의 `key.json`, `packet.md`, `judgments.csv`)도 이제 `create_all`로 공개하므로, 쓰기가 실패해도 다시 돌리기를 막는 것이 남지 않습니다. `tests/golden/test_experiment.py`와 `test_cli.py`는 47 passed였으며, 이 문서를 담은 커밋에 있습니다. 전체 검사는 서버가 돌리고 아직 기다리는 중입니다.
 
-## Unresolved limits
+## 남은 한계
 
-A double failure (the rollback's unlink fails) is not covered. A hard kill during the plan write leaves freeze.json and a truncated plan that has to be deleted by hand before retrying. Concurrent freezes with the same id are not considered (single-user CLI). The prediction that the test fails on HEAD has not been run.
+이중 실패(되돌리기의 unlink가 실패)는 다루지 않습니다. plan을 쓰는 중에 강제 종료되면 freeze.json과 잘린 plan이 남고, 다시 시도하기 전에 손으로 지워야 합니다. 같은 id로 동시에 고정하는 경우는 생각하지 않았습니다(혼자 쓰는 CLI). 테스트가 HEAD에서 실패한다는 예측은 돌려 보지 않았습니다.

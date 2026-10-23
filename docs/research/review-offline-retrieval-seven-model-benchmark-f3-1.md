@@ -1,183 +1,183 @@
-# Review research — F3, cycle 1
+# 리뷰 조사 · F3, 1회차
 
-Draft research before the fix of review round 2 of PR #66, written 2026-10-19. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #66 리뷰 2회차의 수정 전에 2026-10-19에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-Publication scope was clarified by the owner after review round 4: actual dataset records stay private; aggregate measurements and reports may be published. The broader metadata/measurement exclusion quoted below describes the earlier rule and is not the current requirement. See AGENTS.md section 1.4 and the cycle 2 Result.
+공개 범위는 리뷰 4회차 뒤에 저장소 주인이 분명히 정했습니다. 실제 데이터셋 기록은 비공개로 두고, 집계 측정값과 보고서는 공개할 수 있습니다. 아래에 인용한, 메타데이터와 측정값까지 넓게 빼는 규칙은 예전 규칙이며 지금 요구 사항이 아닙니다. AGENTS.md 1.4절과 2회차 결과를 보십시오.
 
-아래 출처 설명은 수정 전 `714555e`의 관측이다. 이후 수정과 실험은 Result에 기록하며 이 페이지는 계속 초안으로 둔다.
+아래 출처 설명은 수정 전 `714555e`에서 관측한 내용입니다. 이후 수정과 실험은 결과 절에 적으며, 이 문서는 계속 초안으로 둡니다.
 
-## Problem
+## 문제
 
-F3 concerns a content boundary across the repository, not merely exclusion of eval/golden/. AGENTS.md forbids committing dataset content, metadata and derived reports, while permitting source, model configuration, generic instructions and synthetic fixtures. Tracked research quotations and evaluation reports still violate that boundary after removal of the original release files. [C1, C3]
+F3는 eval/golden/을 빼는 일에 그치지 않고, 저장소 전체의 내용 경계에 관한 문제입니다. AGENTS.md는 데이터셋 내용, 메타데이터, 거기서 나온 보고서를 커밋하지 못하게 하고, 소스, 모델 설정, 일반 지침, 합성 테스트 데이터는 허용합니다. 원래 릴리스 파일을 지운 뒤에도, 추적되는 조사 문서의 인용과 평가 보고서가 여전히 그 경계를 어깁니다. [C1, C3]
 
-Trigger: repeat, rounds 1, 2.
+발생: 반복, 1·2회차.
 
-- [P1] [P1] docs/research/review-feature-eval-golden-input-f4-1.md:76 — dataset content and derived reports remain tracked despite F3’s stated repository-wide boundary
+- [P1] [P1] docs/research/review-feature-eval-golden-input-f4-1.md:76 — F3가 밝힌 저장소 전체 경계와 달리, 데이터셋 내용과 거기서 나온 보고서가 여전히 추적됩니다
 
-## Failed fixes
+## 실패한 수정
 
-- At round 1, the ignore rule did not remove existing tracked datasets. Git explicitly distinguishes ignoring untracked paths from removing tracked files. [C2]
-- According to the supplied review chronology, the correction before round 2 removed the three eval/golden files. Current inspection agrees with that limited result, and tests/test_eval_items.py now creates synthetic temporary releases. This was useful, but demonstrated only removal of the original files and their test dependency. It did not demonstrate repository-wide removal of embedded copies and derived results. [C3, C4]
-- The benchmark protocol correctly places dataset records and measurements under ignored artifacts/, but existing research pages and older reports retain their own copies. Treating the new benchmark boundary as evidence that the entire repository satisfies section 1.4 allowed F3 to be marked fixed prematurely. The exact earlier patch could not be independently retrieved. [C3, C4, C5]
+- 1회차에서 ignore 규칙은 이미 추적되던 데이터셋을 지우지 못했습니다. Git은 추적되지 않은 경로를 무시하는 일과 추적되는 파일을 지우는 일을 분명히 구별합니다. [C2]
+- 받은 리뷰 시간 순서에 따르면, 2회차 전 정정은 eval/golden 파일 셋을 지웠습니다. 지금 살펴본 결과도 그 제한된 결과와 맞으며, tests/test_eval_items.py는 이제 합성 임시 릴리스를 만듭니다. 쓸모 있는 수정이었지만, 원래 파일과 그 테스트 의존을 없앴다는 것만 보였습니다. 문서 안에 들어간 사본과 거기서 나온 결과를 저장소 전체에서 지웠다는 것은 보이지 못했습니다. [C3, C4]
+- 벤치마크 절차는 데이터셋 기록과 측정값을 무시되는 artifacts/ 아래에 올바르게 두지만, 기존 조사 문서와 예전 보고서는 자기 사본을 그대로 갖고 있습니다. 새 벤치마크 경계를 저장소 전체가 1.4절을 지킨다는 증거로 여긴 탓에, F3가 너무 일찍 고쳐진 것으로 표시되었습니다. 앞선 정확한 패치는 따로 찾아 확인하지 못했습니다. [C3, C4, C5]
 
-## Sources
+## 출처
 
-### S1 — Repository dataset boundary
+### S1 — 저장소의 데이터셋 경계
 
 - URL: AGENTS.md
-- Retrieved: 2026-10-19
-- Locator: Section 1.4, lines 45-52
-- Fragment: "Never commit or upload dataset content or metadata"; the list includes "dataset-derived measurements and reports." "Keep these under ignored `artifacts/` locally. Commit only source code, model configuration, generic instructions, and synthetic test fixtures." "Ignore rules do not remove already tracked files".
-- Applicability: Defines the invariant and its permitted content categories across the repository.
-- Counterevidence: Allows generic instructions, model configuration and synthetic fixtures; it does not require deleting every document mentioning evaluation.
-- Validation: Classify all tracked content against these categories rather than checking only eval/golden/.
+- 확인일: 2026-10-19
+- 위치: 1.4절, 45-52행
+- 인용: "Never commit or upload dataset content or metadata"; 목록에 "dataset-derived measurements and reports."가 들어 있습니다. "Keep these under ignored `artifacts/` locally. Commit only source code, model configuration, generic instructions, and synthetic test fixtures." "Ignore rules do not remove already tracked files".
+- 적용: 저장소 전체에 걸친 불변 조건과 허용하는 내용 범주를 정합니다.
+- 반대 근거: 일반 지침, 모델 설정, 합성 테스트 데이터는 허용합니다. 평가를 언급하는 문서를 모두 지우라는 뜻은 아닙니다.
+- 검증: eval/golden/만 보지 말고, 추적되는 내용 전체를 이 범주로 나눕니다.
 
-### S2 — Current root ignore rules
+### S2 — 지금 루트 ignore 규칙
 
 - URL: .gitignore
-- Retrieved: 2026-10-19
-- Locator: Lines 4-10
-- Fragment: "artifacts/"; "# Benchmark records and dataset-derived reports remain local."; "/docs/benchmarks/seven_model/*" with exceptions for protocol.md and models.json; "/eval/golden/"; "data/".
-- Applicability: Shows path exclusions and the explicit distinction between benchmark records and permitted protocol/configuration.
-- Counterevidence: Patterns do not establish index removal or content cleanup in other files.
-- Validation: Check both tracked ignored paths and the contents of all remaining tracked files.
+- 확인일: 2026-10-19
+- 위치: 4-10행
+- 인용: "artifacts/"; "# Benchmark records and dataset-derived reports remain local."; protocol.md와 models.json을 예외로 둔 "/docs/benchmarks/seven_model/*"; "/eval/golden/"; "data/".
+- 적용: 경로 제외 규칙과, 벤치마크 기록과 허용된 절차·설정 사이의 분명한 구별을 보여 줍니다.
+- 반대 근거: 패턴만으로는 index에서 지웠다는 것도, 다른 파일의 내용을 정리했다는 것도 세울 수 없습니다.
+- 검증: 추적되는 무시 경로와, 남은 추적 파일 전체의 내용을 함께 확인합니다.
 
-### S3 — Synthetic evaluation regression tests
+### S3 — 합성 평가 회귀 테스트
 
 - URL: tests/test_eval_items.py
-- Retrieved: 2026-10-19
-- Locator: Lines 10-15, 29-35 and 60-75
-- Fragment: "def _release_row(topic: str, answer: str, structure: dict"; "def test_golden_release_row_becomes_eval_item(tmp_path, topic, answer, structure, key_facts):"; "def test_synthetic_multi_hop_facts_preserve_scoring_regressions(tmp_path, context, answer, question, expected):".
-- Applicability: Current tests construct synthetic releases in temporary directories instead of loading the tracked dev dataset.
-- Counterevidence: Functional extraction tests do not inspect tracked reports or research documents.
-- Validation: Preserve these behavioral tests and validate repository content separately.
+- 확인일: 2026-10-19
+- 위치: 10-15, 29-35, 60-75행
+- 인용: "def _release_row(topic: str, answer: str, structure: dict"; "def test_golden_release_row_becomes_eval_item(tmp_path, topic, answer, structure, key_facts):"; "def test_synthetic_multi_hop_facts_preserve_scoring_regressions(tmp_path, context, answer, question, expected):".
+- 적용: 지금 테스트는 추적되는 dev 데이터셋을 읽지 않고, 임시 폴더에 합성 릴리스를 만듭니다.
+- 반대 근거: 기능 추출 테스트는 추적되는 보고서나 조사 문서를 살피지 않습니다.
+- 검증: 이 동작 테스트는 유지하고, 저장소 내용은 따로 확인합니다.
 
-### S4 — Research document with embedded dataset evidence
+### S4 — 데이터셋 근거가 들어간 조사 문서
 
 - URL: docs/research/review-feature-eval-golden-input-f4-1.md
-- Retrieved: 2026-10-19
-- Locator: Lines 71-79, especially fragment at line 76; Result section, lines 119-132
-- Fragment: "- Locator: line 393, fields answer, context, structure"; "## Result"; "Observed, still a draft: these are measurements on eval/golden/dev.jsonl, not a verified rule." The dataset quotation and measurement values are deliberately not reproduced here.
-- Applicability: Directly confirms that removing the release file leaves evidence quotations and derived observations in a tracked document.
-- Counterevidence: The same document contains reusable literature and generic reasoning that can survive sanitization.
-- Validation: Remove original evidence and dataset-specific results while preserving generic reasoning with synthetic examples.
+- 확인일: 2026-10-19
+- 위치: 71-79행, 특히 76행의 인용; 결과 절 119-132행
+- 인용: "- Locator: line 393, fields answer, context, structure"; "## Result"; "Observed, still a draft: these are measurements on eval/golden/dev.jsonl, not a verified rule." 데이터셋 인용과 측정값은 일부러 여기에 옮기지 않습니다.
+- 적용: 릴리스 파일을 지워도 근거 인용과 거기서 나온 관측이 추적되는 문서에 남는다는 것을 직접 확인합니다.
+- 반대 근거: 같은 문서에는 정리 뒤에도 남길 수 있는 문헌과 일반 추론도 들어 있습니다.
+- 검증: 원래 근거와 데이터셋에 묶인 결과를 지우고, 일반 추론은 합성 예시와 함께 남깁니다.
 
-### S5 — Kiwi evaluation report
+### S5 — Kiwi 평가 보고서
 
 - URL: docs/kiwi_bm25_review.md
-- Retrieved: 2026-10-19
-- Locator: Lines 9-33, 116-132 and 153-200
-- Fragment: "## 범위와 입력"; "## 라벨 범위와 제외율"; "## 채택 판정"; "## 문서 순위 지표"; "## 청크 순위 지표". Dataset fingerprints and measured table entries are deliberately not reproduced.
-- Applicability: Contains dataset fingerprints, label coverage and measured ranking results outside the excluded release directory.
-- Counterevidence: Some tokenizer methodology and implementation criteria are generic and may remain.
-- Validation: Preserve the full report locally; retain only permitted generic material in Git.
+- 확인일: 2026-10-19
+- 위치: 9-33, 116-132, 153-200행
+- 인용: "## 범위와 입력"; "## 라벨 범위와 제외율"; "## 채택 판정"; "## 문서 순위 지표"; "## 청크 순위 지표". 데이터셋 지문과 측정 표 값은 일부러 옮기지 않습니다.
+- 적용: 제외된 릴리스 폴더 밖에 데이터셋 지문, 라벨 범위, 측정한 순위 결과가 들어 있습니다.
+- 반대 근거: 토크나이저 방법과 구현 기준 일부는 일반적이라 남길 수 있습니다.
+- 검증: 보고서 전체는 로컬에 보존하고, Git에는 허용된 일반 내용만 남깁니다.
 
-### S6 — IR evaluation sample report
+### S6 — IR 평가 표본 보고서
 
 - URL: docs/eval_ir_sample.md
-- Retrieved: 2026-10-19
-- Locator: Lines 8-48 and 88-139
-- Fragment: "## 입력과 표본"; "## 실제 비용과 심판 결과"; "문자열 지표는 의미적 정확성으로 해석하지 않습니다." Dataset fingerprints, sample statistics, measured scores and costs are deliberately not reproduced.
-- Applicability: Contains dataset metadata and derived results even though underlying artifacts are stored locally.
-- Counterevidence: It correctly limits interpretation of the experiment, but that limitation does not change the storage rule.
-- Validation: Move the measured report locally and retain generic procedures without dataset-specific values.
+- 확인일: 2026-10-19
+- 위치: 8-48, 88-139행
+- 인용: "## 입력과 표본"; "## 실제 비용과 심판 결과"; "문자열 지표는 의미적 정확성으로 해석하지 않습니다." 데이터셋 지문, 표본 통계, 측정 점수와 비용은 일부러 옮기지 않습니다.
+- 적용: 바탕 산출물은 로컬에 두었지만, 데이터셋 메타데이터와 거기서 나온 결과가 들어 있습니다.
+- 반대 근거: 실험 해석을 올바르게 제한하지만, 그 제한이 저장 규칙을 바꾸지는 않습니다.
+- 검증: 측정 보고서는 로컬로 옮기고, 데이터셋에 묶인 값이 없는 일반 절차만 남깁니다.
 
-### S7 — Tracked Kiwi metrics table
+### S7 — 추적되는 Kiwi 지표 표
 
 - URL: docs/kiwi_bm25_metrics.csv
-- Retrieved: 2026-10-19
-- Locator: Header and first result row, lines 1-2
-- Fragment: "variant,level,component,recall_at_5,recall_at_10,recall_at_20,mrr_at_5,mrr_at_10,mrr_at_20". The measured row values are deliberately not reproduced.
-- Applicability: Shows that cleanup must include structured reports as well as Markdown.
-- Counterevidence: The schema itself is generic; the measured rows are the relevant prohibited content.
-- Validation: Keep actual measured rows in ignored artifacts/ and inspect other structured outputs.
+- 확인일: 2026-10-19
+- 위치: 머리 행과 첫 결과 행, 1-2행
+- 인용: "variant,level,component,recall_at_5,recall_at_10,recall_at_20,mrr_at_5,mrr_at_10,mrr_at_20". 측정한 행 값은 일부러 옮기지 않습니다.
+- 적용: Markdown뿐 아니라 구조화된 보고서도 정리해야 한다는 것을 보여 줍니다.
+- 반대 근거: 열 구성 자체는 일반적이며, 문제가 되는 것은 측정한 행입니다.
+- 검증: 실제 측정 행은 무시되는 artifacts/에 두고, 다른 구조화 출력도 살핍니다.
 
-### S8 — Benchmark publication contract
+### S8 — 벤치마크 공개 약속
 
 - URL: docs/benchmarks/seven_model/protocol.md
-- Retrieved: 2026-10-19
-- Locator: Lines 3, 21, 50 and 60
-- Fragment: "데이터셋 내용·메타데이터·실측 결과는 Git에 넣지 않는다." "아래는 발행자의 설명과 라이선스이며 로컬 데이터셋의 실측 결과가 아니다." "실제 dev 행을 저장소 테스트 fixture로 사용하지 않는다."
-- Applicability: Demonstrates the intended local-record boundary and distinguishes public model information from local dataset results.
-- Counterevidence: A correct benchmark contract does not establish compliance of pre-existing reports elsewhere.
-- Validation: Apply its content distinction consistently across the entire tracked inventory.
+- 확인일: 2026-10-19
+- 위치: 3, 21, 50, 60행
+- 인용: "데이터셋 내용·메타데이터·실측 결과는 Git에 넣지 않는다." "아래는 발행자의 설명과 라이선스이며 로컬 데이터셋의 실측 결과가 아니다." "실제 dev 행을 저장소 테스트 fixture로 사용하지 않는다."
+- 적용: 의도한 로컬 기록 경계를 보여 주고, 공개 모델 정보와 로컬 데이터셋 결과를 구별합니다.
+- 반대 근거: 벤치마크 약속이 올바르다고 해서, 다른 곳의 기존 보고서가 규칙을 지킨다는 것이 세워지지는 않습니다.
+- 검증: 이 내용 구별을 추적되는 목록 전체에 똑같이 적용합니다.
 
-### S9 — Git gitignore documentation
+### S9 — Git gitignore 문서
 
 - URL: https://git-scm.com/docs/gitignore
-- Retrieved: 2026-10-19
-- Locator: DESCRIPTION and NOTES
-- Fragment: "Files already tracked by Git are not affected"; "To stop tracking a file that is currently tracked, use git rm --cached".
-- Applicability: Explains why the original ignore change could not remove committed data and why further patterns cannot sanitize embedded copies.
-- Counterevidence: Ignore patterns remain useful for preventing ordinary re-addition after files are removed from tracking.
-- Validation: Verify removal from the index as well as prevention of reintroduction.
+- 확인일: 2026-10-19
+- 위치: DESCRIPTION과 NOTES
+- 인용: "Files already tracked by Git are not affected"; "To stop tracking a file that is currently tracked, use git rm --cached".
+- 적용: 처음 ignore 변경이 커밋된 데이터를 지우지 못한 이유와, 패턴을 더해도 문서 안의 사본을 정리하지 못하는 이유를 설명합니다.
+- 반대 근거: 파일을 추적에서 뺀 뒤에는, ignore 패턴이 다시 더해지는 것을 막는 데 여전히 쓸모 있습니다.
+- 검증: index에서 빠졌는지와 다시 들어오지 못하는지를 함께 확인합니다.
 
-### S10 — Git git-ls-files documentation
+### S10 — Git git-ls-files 문서
 
 - URL: https://git-scm.com/docs/git-ls-files.html
-- Retrieved: 2026-10-19
-- Locator: OPTIONS: --cached, --ignored and --exclude-standard
-- Fragment: "Show all files cached in Git’s index, i.e. all tracked files." "Standard ignore rules are not automatically activated".
-- Applicability: Supports complete index enumeration and the separate git ls-files -ci --exclude-standard diagnostic.
-- Counterevidence: An ignored-path diagnostic cannot detect forbidden content embedded in an otherwise permitted tracked document.
-- Validation: Combine index enumeration with content classification and inspection of staged blobs.
+- 확인일: 2026-10-19
+- 위치: OPTIONS: --cached, --ignored, --exclude-standard
+- 인용: "Show all files cached in Git’s index, i.e. all tracked files." "Standard ignore rules are not automatically activated".
+- 적용: index 전체 목록 뽑기와, 따로 하는 git ls-files -ci --exclude-standard 진단을 뒷받침합니다.
+- 반대 근거: 무시 경로 진단은, 허용된 추적 문서 안에 들어간 금지 내용을 찾지 못합니다.
+- 검증: index 목록, 내용 분류, 스테이징된 blob 살피기를 함께 씁니다.
 
-### S11 — GitHub: Removing sensitive data from a repository
+### S11 — GitHub: 저장소에서 민감한 데이터 지우기
 
 - URL: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository
-- Retrieved: 2026-10-19
-- Locator: Side effects of rewriting history; About sensitive data exposure
-- Fragment: "You cannot remove sensitive data from other users' clones of your repository"; "GitHub Support won't remove non-sensitive data".
-- Applicability: Limits claims about historical removal and explains why publication history requires separate inspection.
-- Counterevidence: This guidance concerns sensitive-data removal. The dataset's sensitivity and remote exposure are unverified; rewriting also changes commit identities and requires coordination.
-- Validation: Inspect outgoing reachable history and document residual exposure without claiming recall of other clones, forks or cached references.
+- 확인일: 2026-10-19
+- 위치: Side effects of rewriting history; About sensitive data exposure
+- 인용: "You cannot remove sensitive data from other users' clones of your repository"; "GitHub Support won't remove non-sensitive data".
+- 적용: 과거 기록에서 지웠다는 주장을 제한하고, 공개 이력을 따로 살펴야 하는 이유를 설명합니다.
+- 반대 근거: 이 안내는 민감한 데이터 삭제에 관한 것입니다. 데이터셋이 민감한지와 원격에 노출되었는지는 확인하지 않았습니다. 이력을 다시 쓰면 커밋 ID도 바뀌므로 팀과 맞춰야 합니다.
+- 검증: 내보낼 이력 전체를 살피고, 다른 clone, fork, 캐시된 참조에서 거둬들였다고 주장하지 않은 채 남은 노출을 적습니다.
 
-## Claims
+## 주장
 
-- C1 (source; S1): Section 1.4 excludes dataset content, metadata and derived reports throughout Git, while permitting source, model configuration, generic instructions and synthetic fixtures.
-- C2 (interpretation; S2, S9): Ignore rules do not remove tracked files; the current exclusions therefore cannot establish removal of previously committed datasets or embedded copies.
-- C3 (interpretation; S1, S4, S5, S6, S7): The inspected research document, evaluation reports and metrics CSV retain dataset content or derived information prohibited by section 1.4.
-- C4 (interpretation; S2, S3, S4, S5, S6, S7): Current inspection supports a successful narrow release-file/test cleanup, not repository-wide compliance. Attribution to the earlier correction follows the supplied review chronology; its exact historical patch was unavailable.
-- C5 (interpretation; S2, S3, S4, S8): The benchmark protocol states the intended boundary correctly, but its scope and synthetic tests cannot demonstrate cleanup of older tracked documentation.
-- C6 (interpretation; S9, S10): Complete index enumeration and tracked-ignored-path detection are distinct checks; neither substitutes for examining file contents.
-- C7 (interpretation; S11): Current-tree deletion does not demonstrate historical erasure. Publication history and residual copies need separate assessment, and historical rewriting has coordination requirements and removal limits.
-- C8 (interpretation; S1, S3, S4, S5, S6, S7, S8, S10, S11): The appropriate next fix is a repository-wide content audit and cleanup, preserving local originals and permitted generic material, with synthetic behavioral tests and separate publication-history validation.
+- C1 (출처; S1): 1.4절은 Git 전체에서 데이터셋 내용, 메타데이터, 거기서 나온 보고서를 빼고, 소스, 모델 설정, 일반 지침, 합성 테스트 데이터는 허용합니다.
+- C2 (해석; S2, S9): ignore 규칙은 추적되는 파일을 지우지 않습니다. 그래서 지금 제외 규칙으로는 이미 커밋된 데이터셋이나 문서 안 사본을 지웠다고 세울 수 없습니다.
+- C3 (해석; S1, S4, S5, S6, S7): 살펴본 조사 문서, 평가 보고서, 지표 CSV에는 1.4절이 금지하는 데이터셋 내용이나 거기서 나온 정보가 남아 있습니다.
+- C4 (해석; S2, S3, S4, S5, S6, S7): 지금 살펴본 결과는 릴리스 파일과 테스트를 좁게 정리하는 데 성공했다는 것을 뒷받침할 뿐, 저장소 전체가 규칙을 지킨다는 것은 아닙니다. 앞선 정정에 귀속하는 것은 받은 리뷰 시간 순서에 따른 것이며, 그 정확한 과거 패치는 구하지 못했습니다.
+- C5 (해석; S2, S3, S4, S8): 벤치마크 절차는 의도한 경계를 올바르게 밝히지만, 그 범위와 합성 테스트로는 예전 추적 문서를 정리했다는 것을 보일 수 없습니다.
+- C6 (해석; S9, S10): index 전체 목록과 추적되는 무시 경로 찾기는 서로 다른 확인이며, 어느 쪽도 파일 내용 살피기를 대신하지 못합니다.
+- C7 (해석; S11): 지금 트리에서 지운다고 과거 기록에서 지워지지는 않습니다. 공개 이력과 남은 사본은 따로 평가해야 하고, 이력을 다시 쓰려면 팀과 맞춰야 하며 지울 수 있는 범위에도 한계가 있습니다.
+- C8 (해석; S1, S3, S4, S5, S6, S7, S8, S10, S11): 다음 수정은 저장소 전체 내용을 감사하고 정리하는 것입니다. 로컬 원본과 허용된 일반 내용은 보존하고, 동작 테스트는 합성 데이터로 하며, 공개 이력은 따로 확인합니다.
 
-## Core theory
+## 핵심 원리
 
-Git ignore patterns govern intentionally untracked paths; they do not inspect file contents or remove existing index entries. Git can enumerate the complete index and, separately, tracked paths matching ignore rules. Therefore neither an ignore match nor absence of files in one directory establishes a repository-wide content boundary. Removing content from the current tree also does not establish removal from published history or other copies. These Git mechanics support the diagnosis; the requirement to exclude dataset-derived documentation comes from this repository's rule. [C1, C2, C6, C7]
+Git ignore 패턴은 일부러 추적하지 않는 경로를 다룰 뿐, 파일 내용을 살피거나 기존 index 항목을 지우지 않습니다. Git은 index 전체와, ignore 규칙에 맞는 추적 경로를 따로 나열할 수 있습니다. 그래서 ignore에 맞는다는 것도, 한 폴더에 파일이 없다는 것도 저장소 전체의 내용 경계를 세우지 못합니다. 지금 트리에서 내용을 지워도 공개 이력이나 다른 사본에서 지워졌다고 할 수 없습니다. 이 Git 동작은 진단을 뒷받침할 뿐이고, 데이터셋에서 나온 문서를 빼라는 요구는 이 저장소의 규칙에서 옵니다. [C1, C2, C6, C7]
 
-## Applicability
+## 적용
 
-Apply cleanup to the complete tracked inventory, including docs/research/, Markdown reports, CSV reports, notebook outputs, tests and tracked .wiki records. The cited research page contains a dedicated original-evidence fragment and dataset-specific experimental results; the Kiwi and IR reports contain dataset fingerprints, mapping information and measured results; the Kiwi CSV stores measured metrics. These are separate copies even after eval/golden/ disappears. Preserve generic methodology, public model revisions, configuration and synthetic regression cases: their presence alone does not violate section 1.4. This research page must likewise cite locations without reproducing the prohibited payload. [C1, C3, C4, C5, C8]
+정리는 추적되는 목록 전체에 적용합니다. docs/research/, Markdown 보고서, CSV 보고서, 노트북 출력, 테스트, 추적되는 .wiki 기록이 모두 들어갑니다. 인용한 조사 문서에는 원래 근거를 옮긴 인용과 데이터셋에 묶인 실험 결과가 있습니다. Kiwi와 IR 보고서에는 데이터셋 지문, 연결 정보, 측정 결과가 있고, Kiwi CSV에는 측정 지표가 있습니다. eval/golden/이 사라진 뒤에도 이것들은 따로 남은 사본입니다. 일반 방법, 공개 모델 리비전, 설정, 합성 회귀 경우는 남깁니다. 있다는 것만으로 1.4절을 어기지는 않습니다. 이 조사 문서도 금지된 내용을 옮기지 않고 위치만 짚어야 합니다. [C1, C3, C4, C5, C8]
 
-## Hypothesis
+## 가설
 
-The fixes used a path-based completion criterion for a content-based invariant: absence of the named release files was mistaken for absence of dataset information throughout tracked content. Research quotations and measured reports were implicitly treated as documentation exceptions, although section 1.4 provides no such exception. The next fix should preserve local originals under artifacts/, remove tracked data-only reports, and replace embedded dataset examples with independently authored synthetic examples while retaining generic explanations. [C1, C3, C5]
+수정이 내용 기반 불변 조건에 경로 기반 완료 기준을 썼습니다. 이름 붙은 릴리스 파일이 없다는 것을, 추적되는 내용 전체에 데이터셋 정보가 없다는 것으로 착각했습니다. 조사 문서의 인용과 측정 보고서는 은연중에 문서 예외로 다뤘지만, 1.4절에는 그런 예외가 없습니다. 다음 수정은 로컬 원본을 artifacts/ 아래에 보존하고, 데이터만 담은 추적 보고서를 지우며, 문서 안의 데이터셋 예시를 따로 지은 합성 예시로 바꾸고 일반 설명은 남겨야 합니다. [C1, C3, C5]
 
-## Counterevidence
+## 반대 근거
 
-- The original-file cleanup appears effective at the current snapshot: the tracked eval listing contains only eval/eval_questions.yaml, and the inspected evaluation tests generate synthetic files. The first correction was incomplete rather than entirely ineffective. [C4]
-- The benchmark protocol explicitly excludes dataset content, metadata and measurements from Git. This argues against an absent or ambiguous intended boundary; it supports incomplete application of an already stated boundary. [C5]
-- A dataset path mentioned in instructions is not itself dataset content, and a hash may identify public model source rather than a dataset. Keyword or hash matches require classification rather than automatic deletion. [C1, C5, C8]
-- The available tools did not expose the historical patches or publication graph. The attribution of the narrow correction to the interval between the two supplied heads relies on the user's review record, not an independently inspected commit diff. [C4]
+- 원본 파일 정리는 지금 스냅숏에서 효과가 있어 보입니다. 추적되는 eval 목록에는 eval/eval_questions.yaml만 있고, 살펴본 평가 테스트는 합성 파일을 만듭니다. 첫 정정은 전혀 효과가 없었던 것이 아니라 불완전했던 것입니다. [C4]
+- 벤치마크 절차는 데이터셋 내용, 메타데이터, 측정값을 Git에서 빼라고 분명히 밝힙니다. 의도한 경계가 없거나 모호했다는 해석과 맞지 않고, 이미 밝힌 경계를 덜 적용했다는 해석을 뒷받침합니다. [C5]
+- 지침에 나오는 데이터셋 경로는 그 자체로 데이터셋 내용이 아니고, 해시는 데이터셋이 아니라 공개 모델 출처를 가리킬 수도 있습니다. 키워드나 해시가 맞으면 자동으로 지우지 말고 분류해야 합니다. [C1, C5, C8]
+- 쓸 수 있던 도구로는 과거 패치나 공개 그래프를 볼 수 없었습니다. 좁은 정정을 받은 두 head 사이에 귀속하는 것은, 따로 살핀 커밋 diff가 아니라 사용자의 리뷰 기록에 기댑니다. [C4]
 
-## Alternatives
+## 다른 방법
 
-- Add more ignore patterns: useful for preventing reintroduction after migration, but ineffective against already tracked files and embedded content. [C2]
-- Delete only the round-2 quoted evidence fragment: removes one violation while leaving derived statistics, fingerprints and other copies. [C3]
-- Keep aggregate results or hashes as anonymized documentation: section 1.4 explicitly includes dataset metadata and derived measurements; anonymization does not establish compliance with this contract. [C1]
-- Delete all documentation or ban every hash and number: would remove permitted methodology, configuration and public model information. Classify content by origin and meaning instead. [C1, C5, C8]
-- Start with a history rewrite: first identify and clean the current content and establish which historical objects would be published. Historical removal may also be necessary, but it has coordination costs and cannot recall other users' copies. An ordinary deletion commit must not be presented as historical erasure. [C7]
+- ignore 패턴 더하기. 옮긴 뒤 다시 들어오는 것을 막는 데는 쓸모 있지만, 이미 추적되는 파일과 문서 안 내용에는 효과가 없습니다. [C2]
+- 2회차에 인용된 근거 하나만 지우기. 위반 하나는 없애지만, 거기서 나온 통계, 지문, 다른 사본은 남습니다. [C3]
+- 집계 결과나 해시를 익명화한 문서로 남기기. 1.4절은 데이터셋 메타데이터와 거기서 나온 측정값을 분명히 포함하며, 익명화했다고 이 약속을 지킨다고 할 수 없습니다. [C1]
+- 문서를 모두 지우거나 해시와 숫자를 모두 금지하기. 허용된 방법, 설정, 공개 모델 정보까지 없앱니다. 대신 내용을 출처와 뜻으로 나눕니다. [C1, C5, C8]
+- 이력 재작성부터 하기. 먼저 지금 내용을 찾아 정리하고, 어떤 과거 객체가 공개될지 정합니다. 과거 기록 삭제도 필요할 수 있지만, 팀과 맞추는 비용이 있고 다른 사용자의 사본은 거둬들일 수 없습니다. 보통 삭제 커밋을 과거 기록 삭제로 내세우면 안 됩니다. [C7]
 
-## Experiment
+## 실험
 
-Have the implementation/server perform a before-and-after publication audit, keeping the inventory and findings under ignored artifacts/. First enumerate the complete index with git ls-files -z and identify tracked ignored paths with git ls-files -ci --exclude-standard; the latter is only a path check. Inspect all tracked content for original dataset material, embedded quotations, identifiers, fingerprints, split/mapping information and derived reports, including notebook outputs and .wiki records. Before cleanup, this must detect the research fragment and report locations cited here despite eval/golden/ being absent; otherwise it repeats the earlier blind spot. Preserve local originals under artifacts/, then remove data-only files from tracking and sanitize mixed documents with generic explanations or independently authored synthetic examples. Re-audit the staged content and resulting commit, including every before-audit location, and verify that preserved local artifacts remain untracked and ignored. Confirm the evaluation regressions still use synthetic temporary inputs, then have the server run the required repository checks. Separately inspect the commits and objects reachable through the proposed publication: if prohibited content remains in history that will be uploaded, a clean tip alone cannot satisfy the upload boundary, and a coordinated sanitized publication history is needed before publishing. Report current-tree compliance and historical exposure separately. Discovery only in the named release directory refutes the proposed audit's adequacy; detection and removal of the distributed copies supports the hypothesis. None of these commands or tests was executed in this research session. [C2, C3, C4, C6, C7, C8]
+구현 쪽이나 서버가 공개 전후 감사를 하고, 목록과 찾은 내용은 무시되는 artifacts/ 아래에 둡니다. 먼저 git ls-files -z로 index 전체를 나열하고, git ls-files -ci --exclude-standard로 추적되는 무시 경로를 찾습니다. 뒤의 것은 경로 확인일 뿐입니다. 추적되는 내용 전체에서 원래 데이터셋 자료, 문서 안 인용, 식별자, 지문, 분할·연결 정보, 거기서 나온 보고서를 살피며, 노트북 출력과 .wiki 기록도 포함합니다. 정리 전에, eval/golden/이 없는데도 여기서 짚은 조사 인용과 보고서 위치를 찾아내야 합니다. 그러지 못하면 앞선 맹점을 되풀이하는 것입니다. 로컬 원본을 artifacts/ 아래에 보존한 뒤, 데이터만 담은 파일은 추적에서 빼고, 섞인 문서는 일반 설명이나 따로 지은 합성 예시로 정리합니다. 스테이징된 내용과 만들어진 커밋을 다시 감사하되, 정리 전에 찾은 모든 위치를 포함하고, 보존한 로컬 산출물이 추적되지 않고 무시되는지 확인합니다. 평가 회귀 테스트가 여전히 합성 임시 입력을 쓰는지 확인하고, 서버가 저장소 필수 검사를 돌립니다. 공개하려는 이력으로 닿는 커밋과 객체를 따로 살핍니다. 올릴 이력에 금지 내용이 남아 있으면 끝 커밋이 깨끗한 것만으로는 업로드 경계를 지킬 수 없으므로, 공개 전에 팀과 맞춰 정리한 공개 이력이 필요합니다. 지금 트리의 준수 여부와 과거 노출은 따로 보고합니다. 이름 붙은 릴리스 폴더에서만 찾아낸다면 제안한 감사가 모자란 것이고, 퍼진 사본을 찾아 지우면 가설을 뒷받침합니다. 이 조사 세션에서는 이 명령이나 테스트를 하나도 돌리지 않았습니다. [C2, C3, C4, C6, C7, C8]
 
-## Result
+## 결과
 
-관측이며 여전히 초안이다. 수정 커밋은 `400f768` (`retrieval: restore private inputs and sanitize tracked content`, 부모 `714555e`)이다. 전체 index의 수정 전 실험은 릴리스 폴더 밖의 인용 연구와 두 실측 보고서를 검출했고, 원본 전체를 무시된 `artifacts/review-round2/originals/`에 바이트 그대로 보존했다. 생성 기록·자료·측정 파일은 추적을 중단하고 혼합 문서에는 일반 절차와 공개 문헌 원리만 남겼다. 실제 이미지 식별자 fixture는 기존의 독립적인 합성 상태 검사로 대체하고 중복 검사를 통합했으며 노트북은 출력과 실제 사업 질문을 남기지 않았다. 수정 후 전체 index와 모든 수정 전 검출 위치를 다시 검사했고 추적된 ignore 경로와 알려진 데이터셋 서명은 없었다. 소스·모델 설정·합성 fixture는 실제 결과와 구별해 분류했고 목록·분류·지문은 로컬에만 보관했다. `tests/test_local_inputs.py`, `tests/test_eval_items.py`, 네 benchmark 테스트 파일, `tests/test_evidence_mapping.py`, `tests/test_notebook_settings.py`, `tests/test_ocr_selection.py`, `tests/test_ir_metrics.py`, `tests/test_retrieval.py`의 집중 실행은 테스트 정리 후 171 passed와 기존 RAGAS 경고로 끝났다. 별도 깨끗한 base checkout의 업데이트에서 먼저 입력 소실을 재현한 뒤 `400f768`의 실제 코드로 다시 업데이트했다. 기존의 비공개 계획 입력을 제공한 상태에서 복원 명령, 검증 로더, `load_full_dev()`와 `verify_provenance()`가 오프라인으로 성공했고 복원된 파일은 원본 Git 바이트와 일치하며 작업 트리는 깨끗했다. 게시 예정 새 blob에는 알려진 데이터셋 서명이 없었고 제거한 과거 payload는 이미 원격 refs에 존재함을 따로 확인했다. 이는 새 게시 객체 검사이며 과거 노출을 지웠다는 주장이 아니다. 전체 gate는 서버 소유로 남아 있다. 이 관측을 독립 검증된 규칙으로 제시하지 않는다.
+관측이며 여전히 초안입니다. 수정 커밋은 `400f768`(`retrieval: restore private inputs and sanitize tracked content`, 부모 `714555e`)입니다. index 전체에 대한 수정 전 실험은 릴리스 폴더 밖의 인용 조사 문서와 실측 보고서 두 개를 찾아냈고, 원본 전체를 무시되는 `artifacts/review-round2/originals/`에 바이트 그대로 보존했습니다. 생성 기록, 자료, 측정 파일은 추적을 멈췄고, 섞인 문서에는 일반 절차와 공개 문헌의 원리만 남겼습니다. 실제 이미지 식별자를 쓰던 테스트 데이터는 기존의 독립된 합성 상태 검사로 바꾸고 겹치는 검사를 합쳤으며, 노트북에는 출력과 실제 사업 질문을 남기지 않았습니다. 수정 뒤 index 전체와 수정 전에 찾은 모든 위치를 다시 살폈고, 추적되는 무시 경로와 알려진 데이터셋 서명은 없었습니다. 소스, 모델 설정, 합성 테스트 데이터는 실제 결과와 구별해 분류했고, 목록, 분류, 지문은 로컬에만 두었습니다. `tests/test_local_inputs.py`, `tests/test_eval_items.py`, 벤치마크 테스트 파일 네 개, `tests/test_evidence_mapping.py`, `tests/test_notebook_settings.py`, `tests/test_ocr_selection.py`, `tests/test_ir_metrics.py`, `tests/test_retrieval.py`를 모아 돌린 결과는 테스트 정리 뒤 171 passed와 기존 RAGAS 경고였습니다. 따로 만든 깨끗한 base checkout을 업데이트해 먼저 입력이 사라지는 것을 재현한 뒤, `400f768`의 실제 코드로 다시 업데이트했습니다. 기존 비공개 계획 입력을 준 상태에서 복원 명령, 검증 로더, `load_full_dev()`, `verify_provenance()`가 오프라인으로 성공했고, 복원한 파일은 원본 Git 바이트와 같았으며 작업 트리는 깨끗했습니다. 공개할 새 blob에는 알려진 데이터셋 서명이 없었고, 지운 과거 내용이 이미 원격 refs에 있다는 것은 따로 확인했습니다. 이것은 새로 공개할 객체를 살핀 것이지, 과거 노출을 지웠다는 주장이 아닙니다. 전체 검사는 서버 몫으로 남아 있습니다. 이 관측을 따로 검증된 규칙으로 내세우지 않습니다.
 
-## Unresolved limits
+## 남은 한계
 
-초기 연구 세션에서는 도구 응답 일부가 잘렸고 실행·검증·이력 검사는 하지 않았다. 위 Result는 그 뒤 구현 세션에서 실행한 실험을 구분해 기록한다. 서명 검사는 알려진 원문을 찾는 수단이므로 의미별 내용 검토를 함께 사용했다. 원격의 기존 과거 노출은 남아 있으며 공유 이력은 재작성하지 않았다. 다른 clone이나 캐시의 삭제, GitHub Support의 처리 가능성은 입증하지 않았다. 새로운 v3 GPU 실측과 전체 저장소 gate도 이 문서의 통과 주장에 포함하지 않는다. [C4, C7, C8]
+처음 조사 세션에서는 도구 응답 일부가 잘렸고, 실행, 검증, 이력 확인은 하지 않았습니다. 위 결과 절은 그 뒤 구현 세션에서 돌린 실험을 따로 적은 것입니다. 서명 확인은 알려진 원문을 찾는 수단이므로, 뜻에 따른 내용 검토를 함께 썼습니다. 원격에 이미 있는 과거 노출은 남아 있으며, 공유 이력은 다시 쓰지 않았습니다. 다른 clone이나 캐시에서 지워졌는지, GitHub Support가 처리할 수 있는지는 확인하지 않았습니다. 새 v3 GPU 실측과 저장소 전체 검사도 이 문서의 통과 주장에 들어가지 않습니다. [C4, C7, C8]

@@ -1,128 +1,128 @@
-# Review research — F1, cycle 1
+# 리뷰 조사 · F1, 1회차
 
-집계 결과와 측정 조건은 Git에 보관하고, 원시 질문·정답·근거·OCR 전사와 레코드별 내보내기는 무시된 로컬 `artifacts/`에 보관한다.
+집계 결과와 측정 조건은 Git에 보관하고, 실제 질문·정답·근거·OCR 텍스트와 레코드별 내보내기는 Git에서 제외된 로컬 `artifacts/`에 보관합니다.
 
-복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행의 역사적 관측이며 이번 작업에서 재측정한 결과가 아니다.
+복원 출처: 정리 전 `artifacts/review-round2/originals/` 또는 `d7d1682^`. 아래 수치와 검증 기록은 당시 실행에서 관측한 과거 기록이며, 이번 작업에서 다시 측정한 결과가 아닙니다.
 
-Draft research before the fix of review round 2 of PR #24, written 2026-10-14. It is not a verified fact or a shared rule: the review reads it with the fix.
+PR #24 리뷰 2회차의 수정 전에 2026-10-14에 쓴 조사 초안입니다. 검증된 사실이나 공용 규칙이 아니며, 리뷰는 이 문서를 수정과 함께 읽습니다.
 
-## Problem
+## 문제
 
-F1: a numeric candidate must carry a value and unit that appear in the cited evidence (and in the answer) as one complete numeric expression: the whole number and the whole unit. golden_pipeline/generation.py `_numeric` checks this by finding `_norm(value+unit)` as a substring with `_contains`. Round 1 showed the number could be the tail of a longer number (30,000,000원 inside 130,000,000원, 2개월 inside 12개월). Round 2 shows the unit can be the start of a longer unit (`12개` inside `12개월`), so an unsupported unit reaches candidates.jsonl.
+F1: 수치 후보의 값과 단위는 인용한 근거(와 답)에 하나의 완전한 수치 표현, 즉 수 전체와 단위 전체로 나와야 합니다. golden_pipeline/generation.py의 `_numeric`은 `_contains`로 `_norm(value+unit)`을 부분 문자열로 찾아 이를 확인합니다. 1회차는 수가 더 긴 수의 끝부분일 수 있음을 보였습니다(130,000,000원 안의 30,000,000원, 12개월 안의 2개월). 2회차는 단위가 더 긴 단위의 앞부분일 수 있음을 보였습니다(`12개월` 안의 `12개`). 그래서 근거에 없는 단위가 candidates.jsonl까지 갑니다.
 
-Trigger: repeat, rounds 1, 2.
+발생: 반복, 1·2회차.
 
-- [P1] [P1] golden_pipeline/generation.py:164 — Numeric matching still accepts a different unit from the evidence
+- [P1] [P1] golden_pipeline/generation.py:164 — 수치 대조가 여전히 근거와 다른 단위를 받아들입니다
 
-## Failed fixes
+## 실패한 수정
 
-- a1c573b (original): `_numeric` checked `_norm(value+unit)` as a plain substring of the normalized answer and evidence. Removing commas makes a shorter number a substring of a longer one, so 30000000원 matched inside 130000000원.
-- 18ce4bd (review 1 fix): `_contains` got `(?<!\d)(?<!\d\.)` when the quote starts with a digit and `(?!\.?\d)` when it ends with one. That closes the digit edges only. A numeric quote is value+unit, so it always ends in a unit character such as 개, 원 or %, and the end check never runs. The fix was written in the shared helper, which knows nothing about units, and the added tests covered only the digit-prefix cases the review named (30,000,000원, 2개월). No test checked a unit that is a prefix of a longer unit.
+- a1c573b(처음): `_numeric`은 `_norm(value+unit)`이 정규화한 답과 근거의 단순 부분 문자열인지 확인했습니다. 쉼표를 지우면 짧은 수가 긴 수의 부분 문자열이 되므로, 30000000원이 130000000원 안에서 맞았습니다.
+- 18ce4bd(리뷰 1 수정): `_contains`에 인용이 숫자로 시작하면 `(?<!\d)(?<!\d\.)`, 숫자로 끝나면 `(?!\.?\d)`를 붙였습니다. 이는 숫자 가장자리만 막습니다. 수치 인용은 값+단위라 늘 개, 원, % 같은 단위 글자로 끝나므로, 끝 확인은 한 번도 실행되지 않습니다. 수정은 단위를 모르는 공용 함수에 들어갔고, 더한 테스트는 리뷰가 짚은 숫자 앞부분 경우(30,000,000원, 2개월)만 다뤘습니다. 단위가 더 긴 단위의 앞부분인 경우를 확인한 테스트는 없었습니다.
 
-## Sources
+## 출처
 
-### S1 — re — Regular expression operations (Python 3 documentation)
+### S1 — re — Regular expression operations (Python 3 문서)
 
 - URL: https://docs.python.org/3/library/re.html
-- Retrieved: 2026-10-14
-- Locator: Regular Expression Syntax: '|', '\b', '\w', '(?!...)'
-- Fragment: As the target string is scanned, REs separated by '|' are tried from left to right. When one pattern completely matches, that branch is accepted. This means that once A matches, B will not be tested further, even if it would produce a longer overall match. In other words, the '|' operator is never greedy. / \b ... is defined as the boundary between a \w and a \W character ... The default word characters in Unicode (str) patterns are Unicode alphanumerics and the underscore, but this can be changed by using the ASCII flag. / (?!...) Matches if ... doesn't match next.
-- Applicability: Hangul syllables are alphanumeric, so `\b` finds no boundary inside 12개월 or 12개월이다. Any unit alternation built for pair extraction has to list longer units first, or be sorted longest first, because '|' takes the first branch that matches.
-- Counterevidence: A bug-tracker discussion found in the same search notes that the 'succeeds' check covers the rest of the pattern, so backtracking can pick a later branch when an earlier one makes the overall match fail. With nothing after the unit group this does not apply.
-- Validation: With numeric.json's order (개월 before 개), pairs from '12개월이다' must yield ('12', '개월') and never ('12', '개').
+- 확인일: 2026-10-14
+- 위치: Regular Expression Syntax: '|', '\b', '\w', '(?!...)'
+- 인용: As the target string is scanned, REs separated by '|' are tried from left to right. When one pattern completely matches, that branch is accepted. This means that once A matches, B will not be tested further, even if it would produce a longer overall match. In other words, the '|' operator is never greedy. / \b ... is defined as the boundary between a \w and a \W character ... The default word characters in Unicode (str) patterns are Unicode alphanumerics and the underscore, but this can be changed by using the ASCII flag. / (?!...) Matches if ... doesn't match next.
+- 적용: 한글 음절은 문자·숫자 글자이므로, `\b`는 12개월이나 12개월이다 안에서 경계를 찾지 못합니다. '|'는 처음 맞는 갈래를 고르므로, 쌍을 뽑는 단위 목록은 긴 단위를 먼저 쓰거나 긴 순서로 정렬해야 합니다.
+- 반대 근거: 같은 검색에서 찾은 버그 트래커 논의는 '성공' 확인이 패턴의 나머지까지 포함하므로, 앞 갈래 때문에 전체가 실패하면 되돌아가 뒤 갈래를 고를 수 있다고 말합니다. 단위 묶음 뒤에 아무것도 없으면 해당하지 않습니다.
+- 검증: numeric.json의 순서(개월이 개보다 먼저)로 '12개월이다'에서 쌍을 뽑으면 ('12', '개월')이 나와야 하고, ('12', '개')는 절대 나오면 안 됩니다.
 
 ### S2 — 단위를 나타내는 명사와 수 단위 띄어쓰기 (한국교육신문)
 
 - URL: https://hangyo.com/mobile/article.html?no=60347
-- Retrieved: 2026-10-14
-- Locator: quotation of 한글 맞춤법 제43항 and its numeral examples
-- Fragment: "단위를 나타내는 명사는 띄어 쓴다." ... "붙여 써도 의미에 혼란이 오지 않기 때문에 붙여 쓰는 것을 허용했다." Examples: 3 년(3년), 6 개월(6개월), 1 개월(1개월), 10 개(10개), 90 원(90원), 3 개년(3개년). Exception noted: when the number is written in Hangul the words are not closed up: '삼 (개)년, 육 (개)월'.
-- Applicability: Explains why RFP text writes 12개월 and 130,000,000원 with no delimiter between number and unit, and why 3개년 (unit 개년) can sit next to 개 in the list. The rule's base form is spaced ('6 개월'); `_norm` removes whitespace, so both forms normalize alike.
-- Counterevidence: Secondary source (newspaper column), not the National Institute of Korean Language text; the 다만 clause was not quoted verbatim.
-- Validation: The fixture u1 and the v11 run text show numbers and units written together; pair extraction must accept them.
+- 확인일: 2026-10-14
+- 위치: 한글 맞춤법 제43항 인용과 수 예시
+- 인용: "단위를 나타내는 명사는 띄어 쓴다." ... "붙여 써도 의미에 혼란이 오지 않기 때문에 붙여 쓰는 것을 허용했다." 예: 3 년(3년), 6 개월(6개월), 1 개월(1개월), 10 개(10개), 90 원(90원), 3 개년(3개년). 예외: 수를 한글로 쓸 때는 붙이지 않는다: '삼 (개)년, 육 (개)월'.
+- 적용: RFP 글이 12개월이나 130,000,000원처럼 수와 단위 사이에 구분 없이 쓰는 이유, 그리고 3개년(단위 개년)이 목록의 개 옆에 올 수 있는 이유를 설명합니다. 규칙의 기본형은 띄어 쓴 형태('6 개월')이지만, `_norm`이 공백을 지우므로 두 형태가 똑같이 정규화됩니다.
+- 반대 근거: 국립국어원 원문이 아닌 2차 출처(신문 칼럼)이며, '다만' 조항은 그대로 인용하지 않았습니다.
+- 검증: 테스트 데이터 u1과 v11 실행 글은 수와 단위를 붙여 쓰며, 쌍 뽑기가 이를 받아들여야 합니다.
 
 ### S3 — 조사와 의존 명사 띄어쓰기 (한국교육신문)
 
 - URL: https://hangyo.com/mobile/article.html?no=60332
-- Retrieved: 2026-10-14
-- Locator: 제41항 (search result summary; page not fetched)
-- Fragment: 제41항 '조사는 그 앞말에 붙여 쓴다.' 예: 꽃이, 꽃마저, 꽃밖에, 꽃에서부터 ... 조사는 앞에 무슨 말이 와도 예외 없이 붙여 쓴다. Exception discussed: '같이' and '만큼' are particles (attached) or adverb/dependent noun (spaced) depending on use.
-- Applicability: Particles such as 이다, 으로, 의 attach directly to the unit (12개월이다, 130,000,000원으로). So a Hangul character after a unit does not mean the unit continues, and a Hangul lookahead cannot be the boundary rule.
-- Counterevidence: I read this through the search tool's summary of the page, not a fetched copy. The wording should be checked against the primary text before being cited as a rule.
-- Validation: The accepted control '계약 기간은 12개월이다' with unit 개월 must still pass after the fix.
+- 확인일: 2026-10-14
+- 위치: 제41항(검색 결과 요약, 페이지는 받지 않음)
+- 인용: 제41항 '조사는 그 앞말에 붙여 쓴다.' 예: 꽃이, 꽃마저, 꽃밖에, 꽃에서부터 ... 조사는 앞에 무슨 말이 와도 예외 없이 붙여 쓴다. 다룬 예외: '같이'와 '만큼'은 쓰임에 따라 조사(붙임)이거나 부사/의존 명사(띄움)입니다.
+- 적용: 이다, 으로, 의 같은 조사는 단위에 바로 붙습니다(12개월이다, 130,000,000원으로). 그래서 단위 뒤의 한글 글자가 단위가 이어진다는 뜻은 아니며, 한글 미리보기는 경계 규칙이 될 수 없습니다.
+- 반대 근거: 받아 온 사본이 아니라 검색 도구의 요약으로 읽었습니다. 규칙으로 인용하기 전에 원문과 맞춰 봐야 합니다.
+- 검증: 단위 개월을 쓴 정상 대조군 '계약 기간은 12개월이다'는 수정 뒤에도 통과해야 합니다.
 
-### S4 — golden_pipeline/generation.py at 18ce4bd
+### S4 — 18ce4bd 시점의 golden_pipeline/generation.py
 
 - URL: golden_pipeline/generation.py
-- Retrieved: 2026-10-14
-- Locator: _numeric lines 111-120; _contains lines 158-165
-- Fragment: quote = _norm(value + unit) ... if not any(_contains(text, quote) for text in texts) ... head = r"(?<!\d)(?<!\d\.)" if quote[:1].isdigit() else "" / tail = r"(?!\.?\d)" if quote[-1:].isdigit() else ""
-- Applicability: The tail lookahead exists only for quotes ending in a digit. Numeric quotes end in a unit, so the unit edge is never checked, in the answer check or the evidence check.
-- Counterevidence: none given
-- Validation: After the fix, `_numeric` no longer relies on `_contains` for the unit edge.
+- 확인일: 2026-10-14
+- 위치: _numeric 111-120행; _contains 158-165행
+- 인용: quote = _norm(value + unit) ... if not any(_contains(text, quote) for text in texts) ... head = r"(?<!\d)(?<!\d\.)" if quote[:1].isdigit() else "" / tail = r"(?!\.?\d)" if quote[-1:].isdigit() else ""
+- 적용: 끝 미리보기는 숫자로 끝나는 인용에만 있습니다. 수치 인용은 단위로 끝나므로, 답 확인이든 근거 확인이든 단위 가장자리는 확인하지 않습니다.
+- 반대 근거: 없음
+- 검증: 수정 뒤 `_numeric`은 단위 가장자리를 `_contains`에 기대지 않습니다.
 
 ### S5 — golden_pipeline/configs/topics/numeric.json
 
 - URL: golden_pipeline/configs/topics/numeric.json
-- Retrieved: 2026-10-14
-- Locator: "pattern"
-- Fragment: "pattern": "\\d[\\d,.]*\\s*(원|천원|만원|억원|%|개월|년|일|시간|명|건|개|회|식|MB|GB|TB)"; used by plan.py:113-119 to choose numeric bundles.
-- Applicability: An existing unit list, already pinned by plan topic_spec SHA, with 개월 ordered before 개. Reusing it means the same list chooses numeric bundles and validates them.
-- Counterevidence: Missing units (개년, 년간, %p, mixed Korean number forms) are read with a shorter unit or not at all, as listed in counterevidence.
-- Validation: The reviewer's case is rejected and the 12개월이다 control is accepted with the units read from this pattern.
+- 확인일: 2026-10-14
+- 위치: "pattern"
+- 인용: "pattern": "\\d[\\d,.]*\\s*(원|천원|만원|억원|%|개월|년|일|시간|명|건|개|회|식|MB|GB|TB)"; plan.py:113-119에서 수치 근거 묶음을 고를 때 씁니다.
+- 적용: 기존 단위 목록이며 plan의 topic_spec SHA로 이미 고정돼 있고, 개월이 개보다 앞에 있습니다. 이를 다시 쓰면 수치 근거 묶음을 고르는 목록과 검증하는 목록이 같아집니다.
+- 반대 근거: 빠진 단위(개년, 년간, %p, 한글이 섞인 수 표기)는 반대 근거 절에 적은 대로 더 짧은 단위로 읽히거나 아예 읽히지 않습니다.
+- 검증: 이 패턴으로 단위를 읽었을 때 리뷰어의 경우는 거부되고 12개월이다 대조군은 받아들여집니다.
 
-### S6 — tests/golden/conftest.py evidence fixture
+### S6 — tests/golden/conftest.py 근거 테스트 데이터
 
 - URL: tests/golden/conftest.py
-- Retrieved: 2026-10-14
-- Locator: line 81, unit u1
-- Fragment: ("u1", DOC_1, "사업 예산은 130,000,000원(부가세 포함)이며 계약 기간은 12개월이다.", "eligible")
-- Applicability: One cited unit contains both the reviewer's repro (12개 vs 12개월) and a unit followed by a particle (12개월이다). It is the natural fixture for a negative case and an accepted control.
-- Counterevidence: none given
-- Validation: Both new parametrized cases use evidence ['E1'] from the existing `planned` fixture.
+- 확인일: 2026-10-14
+- 위치: 81행, 단위 u1
+- 인용: ("u1", DOC_1, "사업 예산은 130,000,000원(부가세 포함)이며 계약 기간은 12개월이다.", "eligible")
+- 적용: 인용한 단위 하나에 리뷰어의 재현(12개 대 12개월)과 조사가 뒤따르는 단위(12개월이다)가 함께 들어 있습니다. 거부 사례와 정상 대조군 모두에 알맞은 테스트 데이터입니다.
+- 반대 근거: 없음
+- 검증: 새 매개변수 사례 둘 다 기존 `planned` 테스트 데이터의 근거 ['E1']을 씁니다.
 
-## Claims
+## 주장
 
-- C1 (source; S4): The 18ce4bd fix checks the end of the match only when the quote ends in a digit, so a value+unit quote is never checked at its unit edge.
-- C2 (source; S1): Python regex alternation takes the first branch that matches, not the longest, so a unit list must put longer units before their prefixes.
-- C3 (interpretation; S1, S2, S3): In Korean text, units attach to Arabic numerals and particles attach to units, and `\b` treats Hangul as word characters. So no character-class boundary separates a longer unit from a unit plus particle.
-- C4 (interpretation; S3, S6): A Hangul negative lookahead after the unit would reject the fixture's valid '12개월이다', so it cannot be the fix.
-- C5 (interpretation; S2, S5): Extracting number+unit pairs with the pinned numeric spec pattern, and requiring an exact (value, unit) pair in the answer and in a cited text, enforces the whole-number and whole-unit rule for listed units.
+- C1 (출처; S4): 18ce4bd 수정은 인용이 숫자로 끝날 때만 일치의 끝을 확인하므로, 값+단위 인용은 단위 가장자리를 한 번도 확인받지 않습니다.
+- C2 (출처; S1): 파이썬 정규식의 '|'는 가장 긴 갈래가 아니라 처음 맞는 갈래를 고르므로, 단위 목록은 긴 단위를 그 앞부분보다 먼저 둬야 합니다.
+- C3 (해석; S1, S2, S3): 한국어 글에서 단위는 아라비아 숫자에 붙고 조사는 단위에 붙으며, `\b`는 한글을 단어 글자로 봅니다. 그래서 어떤 글자 종류 경계로도 '더 긴 단위'와 '단위+조사'를 가를 수 없습니다.
+- C4 (해석; S3, S6): 단위 뒤에 한글 부정 미리보기를 두면 테스트 데이터의 정상인 '12개월이다'를 거부하므로 수정이 될 수 없습니다.
+- C5 (해석; S2, S5): 고정된 수치 명세 패턴으로 수+단위 쌍을 뽑고, 답과 인용 글 모두에 정확한 (값, 단위) 쌍을 요구하면, 목록에 있는 단위에 대해 '수 전체, 단위 전체' 규칙이 지켜집니다.
 
-## Core theory
+## 핵심 원리
 
-Python `re` alternation tries branches left to right and is 'never greedy', so a unit list must put longer units before their prefixes (개월 before 개). Unicode `\b`/`\w` counts Hangul syllables as word characters, so `\b` sees no boundary between 개 and 월, or between 월 and a following particle. Hangul spelling article 41 attaches particles to the preceding word. Article 43 allows unit nouns to be written attached to Arabic numerals (6개월, 90원, 10개, 3개년). Together these mean a unit can be followed directly by more Hangul, either a longer unit or a particle, with no delimiter.
+파이썬 `re`의 '|'는 왼쪽부터 갈래를 시도하며 '절대 탐욕적이지 않으므로', 단위 목록은 긴 단위를 그 앞부분보다 먼저 둬야 합니다(개월이 개보다 먼저). 유니코드 `\b`/`\w`는 한글 음절을 단어 글자로 세므로, `\b`는 개와 월 사이, 월과 뒤따르는 조사 사이에서 경계를 보지 못합니다. 한글 맞춤법 제41항은 조사를 앞말에 붙여 씁니다. 제43항은 단위 명사를 아라비아 숫자에 붙여 쓰는 것을 허용합니다(6개월, 90원, 10개, 3개년). 이를 합치면, 단위 바로 뒤에 더 긴 단위든 조사든 한글이 구분 없이 더 올 수 있습니다.
 
-## Applicability
+## 적용
 
-Applies to `_numeric` (generation.py:111-120), which calls `_contains(_norm(answer), quote)` and `_contains(text, quote)` for each cited text, and to the tail branch of `_contains` (generation.py:163-165), which only checks digits. The fixture evidence u1 is '사업 예산은 130,000,000원(부가세 포함)이며 계약 기간은 12개월이다.' (tests/golden/conftest.py:81). It holds both the reviewer's case (12개 vs 12개월) and the trap for a naive fix (12개월 followed by the particle 이다). The fix belongs in `_numeric` because both checks run through it. `_contains`/`_quoted` serve table, condition and comparison, which have no unit concept, so they should stay as they are.
+`_numeric`(generation.py:111-120)에 적용합니다. 이 함수는 `_contains(_norm(answer), quote)`와 인용 글마다 `_contains(text, quote)`를 부릅니다. 숫자만 확인하는 `_contains`의 끝 갈래(generation.py:163-165)도 해당합니다. 테스트 데이터 근거 u1은 '사업 예산은 130,000,000원(부가세 포함)이며 계약 기간은 12개월이다.'입니다(tests/golden/conftest.py:81). 리뷰어의 경우(12개 대 12개월)와 단순한 수정의 함정(조사 이다가 뒤따르는 12개월)을 함께 담습니다. 두 확인 모두 `_numeric`을 거치므로 수정은 거기에 둡니다. `_contains`/`_quoted`는 단위 개념이 없는 표, 조건, 비교에서 쓰므로 그대로 둡니다.
 
-## Hypothesis
+## 가설
 
-This is not a missing lookahead in `_contains`. Substring matching on Korean text cannot tell where a unit ends. Units attach to numerals and particles attach to units, so `12개|월` (a longer unit) and `12개월|이다` (a particle) look the same to any character-class boundary. Ending a unit correctly needs a list of known units, matched longest first, applied in `_numeric` to both the answer and the evidence. The list already exists: the numeric topic spec's `pattern`, which plan building uses to choose numeric bundles and whose SHA the plan pins. The fix: extract every number+unit pair from the normalized answer and from each cited text with that pattern. Accept only when `(_norm(value), _norm(unit))` equals one extracted pair in the answer and in at least one cited text.
+`_contains`에 미리보기가 빠진 문제가 아닙니다. 한국어 글에서 부분 문자열 대조로는 단위가 어디서 끝나는지 알 수 없습니다. 단위는 숫자에 붙고 조사는 단위에 붙으므로, `12개|월`(더 긴 단위)과 `12개월|이다`(조사)는 어떤 글자 종류 경계로도 똑같아 보입니다. 단위의 끝을 바르게 정하려면 알려진 단위 목록을 가장 긴 것부터 맞추고, `_numeric`에서 답과 근거 모두에 적용해야 합니다. 목록은 이미 있습니다. 수치 주제 명세의 `pattern`으로, plan 만들기가 수치 근거 묶음을 고를 때 쓰고 plan이 그 SHA를 고정합니다. 수정: 그 패턴으로 정규화한 답과 인용 글마다 모든 수+단위 쌍을 뽑습니다. `(_norm(value), _norm(unit))`이 답에서 뽑은 쌍 하나, 그리고 적어도 한 인용 글에서 뽑은 쌍 하나와 같을 때만 받아들입니다.
 
-## Counterevidence
+## 반대 근거
 
-- The unit list is closed. numeric.json lists 원|천원|만원|억원|%|개월|년|일|시간|명|건|개|회|식|MB|GB|TB. Units outside it (개년, 년간, 일간, %p, 천만원 written as 3천만원) would either be read with a shorter unit (3개년 read as 3 + 개, 5%p read as 5 + %) or yield no pair, so the candidate is rejected. Rejection is the safe direction, but the mis-read cases (3개년 → 개, 5%p → %) would accept a wrong unit, the same class of bug.
-- Korean number forms like 1억 3천만원 or 3천만원 have no pair under `\d[\d,.]*(unit)`, so candidates the current check accepts would become rejections. That loses recall, not correctness.
-- Tying validation to the selection `pattern` means any later edit to that pattern changes what validation accepts. The plan pins topic_spec_sha256, and generation refuses a changed spec, so this is tracked but still a coupling.
+- 단위 목록은 닫혀 있습니다. numeric.json은 원|천원|만원|억원|%|개월|년|일|시간|명|건|개|회|식|MB|GB|TB를 나열합니다. 목록 밖의 단위(개년, 년간, 일간, %p, 3천만원처럼 쓴 천만원)는 더 짧은 단위로 읽히거나(3개년이 3 + 개, 5%p가 5 + %) 쌍이 나오지 않아 후보가 거부됩니다. 거부는 안전한 쪽이지만, 잘못 읽는 경우(3개년 → 개, 5%p → %)는 틀린 단위를 받아들이므로 같은 종류의 버그입니다.
+- 1억 3천만원이나 3천만원 같은 한글 수 표기는 `\d[\d,.]*(unit)`로는 쌍이 없으므로, 지금 확인이 받아들이는 후보가 거부로 바뀝니다. 정확성이 아니라 재현율을 잃는 것입니다.
+- 검증을 고르기용 `pattern`에 묶으면, 나중에 그 패턴을 고칠 때 검증이 받아들이는 것도 바뀝니다. plan이 topic_spec_sha256을 고정하고 생성이 바뀐 명세를 거부하므로 추적은 되지만, 여전히 서로 묶인 관계입니다.
 
-## Alternatives
+## 다른 방법
 
-- Hangul lookahead `(?![가-힣])` after the unit: rejected. It would also reject valid evidence and answers where a particle follows (12개월이다, 130,000,000원으로). The fixture's 12개월이다 breaks it immediately.
-- Unit-continuation lookahead: after the unit, reject only text that would extend it into a longer listed unit (after 개, forbid 월). Smallest diff, and particles still pass. It needs the same unit list, and it does not stop a wrong value/unit split (value '12개', unit '월' still forms 12개월). Acceptable fallback if pair extraction turns out too strict.
-- Kiwi morphological analysis (kiwipiepy is already in requirements.txt and golden_pipeline may import it, just not rag/): would split number, unit and particle without a hand-written list. Not first, because nothing here confirms how Kiwi tags units like 개월, %, MB, and it adds a heavy model load to a check that is currently pure regex.
-- Reuse rag/evaluation key-fact matching from PR #11 (meaning-based number/unit comparison): rejected. golden_pipeline must import nothing from rag/, and golden numeric wants the value as written, not meaning-equivalence.
-- A deeper digit fix in `_contains`: rejected. The digit edges already pass the review-1 tests. The failure is at the unit edge.
+- 단위 뒤에 한글 미리보기 `(?![가-힣])`: 거부합니다. 조사가 뒤따르는 정상 근거와 답(12개월이다, 130,000,000원으로)도 거부하게 됩니다. 테스트 데이터의 12개월이다가 바로 깨뜨립니다.
+- 단위 이어짐 미리보기: 단위 뒤에서, 목록의 더 긴 단위로 이어지는 글만 거부합니다(개 뒤에 월 금지). 바뀌는 코드가 가장 적고 조사는 계속 통과합니다. 같은 단위 목록이 필요하며, 잘못된 값/단위 나누기는 막지 못합니다(값 '12개', 단위 '월'도 12개월이 됨). 쌍 뽑기가 너무 엄격하다고 드러나면 쓸 만한 대비책입니다.
+- Kiwi 형태소 분석(kiwipiepy는 이미 requirements.txt에 있고, golden_pipeline은 쓸 수 있으며 rag/만 안 됨): 손으로 쓴 목록 없이 수, 단위, 조사를 나눌 수 있습니다. 먼저 하지 않는 이유는 Kiwi가 개월, %, MB 같은 단위에 어떤 품사를 붙이는지 여기서 확인한 것이 없고, 지금은 순수 정규식인 확인에 무거운 모델 읽기를 더하기 때문입니다.
+- PR #11의 rag/evaluation 핵심 사실 대조(뜻 기준 수/단위 비교) 다시 쓰기: 거부합니다. golden_pipeline은 rag/에서 아무것도 가져오면 안 되고, 골든 수치는 뜻이 같은 값이 아니라 적힌 그대로의 값을 원합니다.
+- `_contains`의 숫자 쪽을 더 깊이 고치기: 거부합니다. 숫자 가장자리는 이미 리뷰 1 테스트를 통과합니다. 실패는 단위 가장자리에 있습니다.
 
-## Experiment
+## 실험
 
-Extend `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch` with ('기간은 12개이다', {'value': '12', 'unit': '개'}), the reviewer's case, which must be rejected. Add an accepted control, ('계약 기간은 12개월이다', {'value': '12', 'unit': '개월'}) with evidence ['E1'], which must land in candidates.jsonl. This control refutes any fix that rejects units followed by a particle. Optionally add {'value': '12개', 'unit': '월'} to decide whether a wrong value/unit split is rejected. Pair extraction rejects it; the lookahead fallback does not. Run the existing review-1 cases (30,000,000원, 2개월) and the 130,000,000원(부가세 포함) positive case unchanged. The hypothesis holds if the new rejection and the 12개월이다 control both pass with the change confined to `_numeric`.
+`test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch`에 리뷰어의 경우인 ('기간은 12개이다', {'value': '12', 'unit': '개'})를 더하며, 거부돼야 합니다. 정상 대조군으로 근거 ['E1']과 ('계약 기간은 12개월이다', {'value': '12', 'unit': '개월'})를 더하며, candidates.jsonl에 들어가야 합니다. 이 대조군은 조사가 뒤따르는 단위를 거부하는 모든 수정을 반박합니다. 잘못된 값/단위 나누기를 거부하는지 정하려면 {'value': '12개', 'unit': '월'}을 선택적으로 더합니다. 쌍 뽑기는 이를 거부하고, 미리보기 대비책은 거부하지 않습니다. 기존 리뷰 1 사례(30,000,000원, 2개월)와 130,000,000원(부가세 포함) 정상 사례는 바꾸지 않고 돌립니다. 변경을 `_numeric` 안에 가둔 채 새 거부와 12개월이다 대조군이 모두 통과하면 가설이 맞습니다.
 
-## Result
+## 결과
 
-Observed in the commit that adds this Result (parent `d92eceb`). Before the fix, `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch` failed for both new cases: `('기간은 12개이다', 12/개)` and the wrong split `('기간은 12개월이다', 12개/월)` each landed in `candidates.jsonl`. The accepted control `test_numeric_unit_followed_by_a_particle_is_accepted` (`계약 기간은 12개월이다`, 12/개월, evidence E1) already passed, as predicted. The fix follows the hypothesis: `_numeric` extracts (number, unit) pairs with the numeric spec `pattern` (`_pairs`) from the normalized answer and each cited text, and accepts only an exact `(_norm(value), _norm(unit))` pair. Both new rejections and the control pass, and the review-1 cases (30,000,000원, 2개월) and the 130,000,000원(부가세 포함) positive case pass unchanged. The change is confined to `_numeric`; the topic checks now also receive `spec` so `_numeric` can read the pattern. `_contains` stays for `_quoted` (condition, table, comparison). Full gate: `.venv\Scripts\python -m pytest -q tests` 331 passed. The unit-list limits under Counterevidence and Unresolved limits still hold and were not tested.
+이 결과를 더한 커밋(부모 `d92eceb`)에서 관측했습니다. 수정 전에는 `test_numeric_candidate_without_a_value_from_evidence_is_rejected_as_type_mismatch`가 새 사례 둘 모두에서 실패했습니다. `('기간은 12개이다', 12/개)`와 잘못된 나누기 `('기간은 12개월이다', 12개/월)`가 각각 `candidates.jsonl`에 들어갔습니다. 정상 대조군 `test_numeric_unit_followed_by_a_particle_is_accepted`(`계약 기간은 12개월이다`, 12/개월, 근거 E1)는 예측대로 이미 통과했습니다. 수정은 가설을 따릅니다. `_numeric`은 수치 명세 `pattern`으로 정규화한 답과 인용 글마다 (수, 단위) 쌍을 뽑고(`_pairs`), 정확한 `(_norm(value), _norm(unit))` 쌍만 받아들입니다. 새 거부 둘과 대조군이 통과하고, 리뷰 1 사례(30,000,000원, 2개월)와 130,000,000원(부가세 포함) 정상 사례도 그대로 통과합니다. 변경은 `_numeric` 안에 머물며, `_numeric`이 패턴을 읽을 수 있도록 주제 확인 함수들이 이제 `spec`도 받습니다. `_contains`는 `_quoted`(조건, 표, 비교)용으로 남습니다. 전체 게이트: `.venv\Scripts\python -m pytest -q tests` 331 passed. 반대 근거와 남은 한계 절의 단위 목록 한계는 여전히 남아 있고 시험하지 않았습니다.
 
-## Unresolved limits
+## 남은 한계
 
-Not executed: I had no shell, so the test behaviour above is predicted, not observed. The unit list is incomplete (개년, 년간, %p, mixed Korean number forms), so the invariant holds only for listed units. Sibling exposure is not addressed: `_quoted` (condition, table, comparison) also accepts a Hangul-ending quote that is a prefix of a longer word (예산 in 예산액, 않는다 in 않는다면). That is out of F1's scope and may come up in a later review. The Korean spelling sources are secondary explanations (newspaper column, search summary), not the National Institute of Korean Language text itself.
+조사 단계에서는 셸이 없어 위 테스트 동작은 관측이 아니라 예측이었습니다. 단위 목록이 불완전하므로(개년, 년간, %p, 한글이 섞인 수 표기) 규칙은 목록에 있는 단위에서만 지켜집니다. 같은 종류의 다른 노출은 다루지 않습니다. `_quoted`(조건, 표, 비교)도 한글로 끝나는 인용이 더 긴 단어의 앞부분인 경우(예산액 안의 예산, 않는다면 안의 않는다)를 받아들입니다. F1 범위 밖이며 나중 리뷰에서 나올 수 있습니다. 한국어 맞춤법 출처는 국립국어원 원문이 아니라 2차 설명(신문 칼럼, 검색 요약)입니다.
