@@ -1,8 +1,8 @@
 agents = ["claude", "codex"]
 
 [slots]
-gate_cmd = '.venv\Scripts\python -m pytest -q tests'
+gate_cmd = '.venv\Scripts\python -m ruff check . && .venv\Scripts\python -m pytest -q tests && git diff --no-index --quiet CLAUDE.md AGENTS.md'
 review_dir = "artifacts/review"
 scratch_dirs = "artifacts/"
-live_cmd = ""
+live_cmd = 'frontend\start.cmd'
 server_stop = ""
