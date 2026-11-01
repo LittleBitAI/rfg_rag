@@ -35,12 +35,7 @@
   },
   {
    "a": "README.md",
-   "b": "docs/craft_ocr_selection.md",
-   "kind": "link"
-  },
-  {
-   "a": "README.md",
-   "b": "docs/eval_ir_sample.md",
+   "b": "docs/evaluation.md",
    "kind": "link"
   },
   {
@@ -50,17 +45,27 @@
   },
   {
    "a": "README.md",
-   "b": "docs/ocr_benchmark.md",
+   "b": "docs/ocr.md",
    "kind": "link"
   },
   {
    "a": "README.md",
-   "b": "docs/quantity_filter_estimate.md",
+   "b": "docs/ocr_screens.md",
    "kind": "link"
   },
   {
    "a": "README.md",
-   "b": "docs/quantity_filter_validation.md",
+   "b": "docs/preprocessing_package.md",
+   "kind": "link"
+  },
+  {
+   "a": "README.md",
+   "b": "docs/quantity_filter.md",
+   "kind": "link"
+  },
+  {
+   "a": "README.md",
+   "b": "docs/retrieval.md",
    "kind": "link"
   },
   {
@@ -71,6 +76,11 @@
   {
    "a": "docs/benchmarks/seven_model/anchor/report.md",
    "b": "docs/benchmarks/seven_model/protocol.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/benchmarks/seven_model/full_dev/report.md",
+   "b": "docs/benchmarks/seven_model/anchor/report.md",
    "kind": "link"
   },
   {
@@ -85,6 +95,11 @@
   },
   {
    "a": "docs/benchmarks/seven_model/historical/report.md",
+   "b": "docs/benchmarks/seven_model/anchor/report.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/benchmarks/seven_model/historical/report.md",
    "b": "docs/benchmarks/seven_model/full_dev/report.md",
    "kind": "link"
   },
@@ -95,7 +110,7 @@
   },
   {
    "a": "docs/benchmarks/seven_model/protocol.md",
-   "b": "README.md",
+   "b": "docs/evaluation.md",
    "kind": "link"
   },
   {
@@ -115,7 +130,17 @@
   },
   {
    "a": "docs/craft_ocr_selection.md",
+   "b": "docs/ocr.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/evaluation.md",
    "b": "README.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/evaluation.md",
+   "b": "docs/eval_ir_sample.md",
    "kind": "link"
   },
   {
@@ -134,8 +159,38 @@
    "kind": "link"
   },
   {
-   "a": "docs/kiwi_bm25_review.md",
-   "b": "docs/research/review-review-kiwi-bm25-tokenizer-f1-1.md",
+   "a": "docs/ocr.md",
+   "b": "docs/craft_ocr_selection.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/ocr.md",
+   "b": "docs/ocr_benchmark.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/ocr_benchmark.md",
+   "b": "docs/ocr_screens.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/ocr_screens.md",
+   "b": "docs/evaluation.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/quantity_filter.md",
+   "b": "docs/quantity_filter_estimate.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/quantity_filter.md",
+   "b": "docs/quantity_filter_exclusions.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/quantity_filter.md",
+   "b": "docs/quantity_filter_validation.md",
    "kind": "link"
   },
   {
@@ -150,27 +205,7 @@
   },
   {
    "a": "docs/quantity_filter_validation.md",
-   "b": "AGENTS.md",
-   "kind": "link"
-  },
-  {
-   "a": "docs/quantity_filter_validation.md",
-   "b": "CLAUDE.md",
-   "kind": "link"
-  },
-  {
-   "a": "docs/quantity_filter_validation.md",
-   "b": "docs/research/review-fix-quantity-filter-questions-f2-1.md",
-   "kind": "link"
-  },
-  {
-   "a": "docs/quantity_filter_validation.md",
-   "b": "docs/research/review-fix-quantity-filter-questions-f2-2.md",
-   "kind": "link"
-  },
-  {
-   "a": "docs/quantity_filter_validation.md",
-   "b": "docs/research/review-fix-quantity-filter-questions-f4-1.md",
+   "b": "docs/index_rollback.md",
    "kind": "link"
   },
   {
@@ -247,6 +282,26 @@
    "a": "docs/research/review-restore-aggregate-measurements-f1-1.md",
    "b": "docs/research/review-feature-golden-absent-premise-f2-2.md",
    "kind": "link"
+  },
+  {
+   "a": "docs/retrieval.md",
+   "b": "docs/evaluation.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/retrieval.md",
+   "b": "docs/index_rollback.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/retrieval.md",
+   "b": "docs/quantity_filter.md",
+   "kind": "link"
+  },
+  {
+   "a": "docs/retrieval.md",
+   "b": "docs/quantity_filter_estimate.md",
+   "kind": "link"
   }
  ],
  "orphans": [
@@ -257,6 +312,9 @@
   "docs/research/review-feature-golden-data-self-improvement-f2-1.md",
   "docs/research/review-feature-golden-data-validation-f1-1.md",
   "docs/research/review-feature-golden-data-validation-f1-2.md",
+  "docs/research/review-fix-quantity-filter-questions-f2-1.md",
+  "docs/research/review-fix-quantity-filter-questions-f2-2.md",
+  "docs/research/review-fix-quantity-filter-questions-f4-1.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f2-1.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f4-1.md",
   "docs/research/review-golden-abc-seven-topic-comparison-f8-1.md",
@@ -271,13 +329,14 @@
   "docs/research/review-restore-aggregate-measurements-f1-2.md",
   "docs/research/review-retrieval-port-requirement-links-f4-1.md",
   "docs/research/review-retrieval-port-requirement-links-f7-1.md",
-  "docs/research/review-retrieval-port-requirement-links-f7-2.md"
+  "docs/research/review-retrieval-port-requirement-links-f7-2.md",
+  "docs/research/review-review-kiwi-bm25-tokenizer-f1-1.md"
  ],
  "counts": {
-  "docs": 48,
-  "linked": 26,
+  "docs": 54,
+  "linked": 28,
   "read": 0,
-  "orphans": 22,
+  "orphans": 26,
   "pages": 1,
   "decisions": 0,
   "injectable_decisions": 0
